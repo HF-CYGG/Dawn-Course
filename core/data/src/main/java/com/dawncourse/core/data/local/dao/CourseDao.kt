@@ -20,6 +20,12 @@ interface CourseDao {
      */
     @Query("SELECT * FROM courses")
     fun getAllCourses(): Flow<List<CourseEntity>>
+
+    /**
+     * 根据学期 ID 查询课程
+     */
+    @Query("SELECT * FROM courses WHERE semesterId = :semesterId")
+    fun getCoursesBySemester(semesterId: Long): Flow<List<CourseEntity>>
     
     /**
      * 根据 ID 查询单门课程

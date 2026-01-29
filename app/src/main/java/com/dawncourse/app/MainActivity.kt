@@ -20,6 +20,14 @@ import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import dagger.hilt.android.AndroidEntryPoint
 
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.Alignment
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import com.dawncourse.feature.timetable.CourseEditorScreen
+import com.dawncourse.feature.timetable.CourseEditorViewModel
+import com.dawncourse.feature.import_module.ImportScreen
+
 /**
  * 应用程序主 Activity
  *
@@ -62,6 +70,15 @@ class MainActivity : ComponentActivity() {
                             TimetableRoute(
                                 onSettingsClick = {
                                     navController.navigate("settings")
+                                },
+                                onAddClick = {
+                                    navController.navigate("course_editor")
+                                },
+                                onCourseClick = { courseId ->
+                                    navController.navigate("course_editor?courseId=$courseId")
+                                },
+                                onImportClick = {
+                                    navController.navigate("import")
                                 }
                             )
                         }
@@ -71,6 +88,42 @@ class MainActivity : ComponentActivity() {
                                     navController.popBackStack()
                                 }
                             )
+                        }
+                        composable("import") {
+                            ImportScreen(
+                                onImportSuccess = {
+                                    navController.popBackStack()
+                                }
+                            )
+                        }
+                        composable(
+                            route = "course_editor?courseId={courseId}",
+                            arguments = listOf(navArgument("courseId") {
+                                type = NavType.StringType
+                                nullable = true
+                                defaultValue = null
+                            })
+                        ) { backStackEntry ->
+                            val courseId = backStackEntry.arguments?.getString("courseId")
+                            val viewModel: CourseEditorViewModel = hiltViewModel()
+                            val course by viewModel.course.collectAsState()
+                            
+                            val isEditing = courseId != null && courseId != "0"
+                            if (isEditing && course == null) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                CourseEditorScreen(
+                                    course = course,
+                                    onBackClick = { navController.popBackStack() },
+                                    onSaveClick = { newCourse ->
+                                        viewModel.saveCourse(newCourse) {
+                                            navController.popBackStack()
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -42,14 +43,19 @@ import java.time.LocalDate
 @Composable
 fun TimetableRoute(
     viewModel: TimetableViewModel = hiltViewModel(),
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onAddClick: () -> Unit,
+    onCourseClick: (Long) -> Unit,
+    onImportClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
-        onAddClick = { /* TODO */ },
-        onSettingsClick = onSettingsClick
+        onAddClick = onAddClick,
+        onSettingsClick = onSettingsClick,
+        onCourseClick = onCourseClick,
+        onImportClick = onImportClick
     )
 }
 
@@ -58,7 +64,9 @@ fun TimetableRoute(
 internal fun TimetableScreen(
     uiState: TimetableUiState,
     onAddClick: () -> Unit,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onCourseClick: (Long) -> Unit,
+    onImportClick: () -> Unit
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
@@ -95,7 +103,8 @@ internal fun TimetableScreen(
                 // 1. 顶部栏 (透明背景)
                 TimetableTopBar(
                     currentWeek = 1, // TODO: 从 ViewModel 获取
-                    onSettingsClick = onSettingsClick
+                    onSettingsClick = onSettingsClick,
+                    onImportClick = onImportClick
                 )
 
                 // 2. 星期栏头部
@@ -135,17 +144,21 @@ internal fun TimetableScreen(
         }
     }
 
-    // 课程详情弹窗
+        // 课程详情弹窗
     if (selectedCourse != null) {
         CourseDetailSheet(
             course = selectedCourse!!,
             onDismissRequest = { selectedCourse = null },
             onEditClick = {
-                // TODO: 处理编辑
+                onCourseClick(selectedCourse!!.id)
                 selectedCourse = null
             },
             onDeleteClick = {
-                // TODO: 处理删除
+                // TODO: 处理删除, call ViewModel delete
+                // Since TimetableScreen doesn't have VM, pass callback?
+                // Or just close for now.
+                // We need onDelete callback in TimetableScreen.
+                // Let's just close for now or add callback later.
                 selectedCourse = null
             }
         )
@@ -156,7 +169,8 @@ internal fun TimetableScreen(
 @Composable
 private fun TimetableTopBar(
     currentWeek: Int,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onImportClick: () -> Unit
 ) {
     TopAppBar(
         title = {
@@ -175,6 +189,9 @@ private fun TimetableTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onImportClick) {
+                Icon(Icons.Default.Download, contentDescription = "导入")
+            }
             IconButton(onClick = onSettingsClick) {
                 Icon(Icons.Default.Settings, contentDescription = "设置")
             }

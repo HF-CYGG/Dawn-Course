@@ -8,6 +8,9 @@ import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.data.local.dao.SemesterDao
+import com.dawncourse.core.data.repository.SemesterRepositoryImpl
+import com.dawncourse.core.domain.repository.SemesterRepository
 import dagger.Module
 import dagger.Provides
 import dagger.Binds
@@ -39,7 +42,9 @@ object DatabaseModule {
             context,
             AppDatabase::class.java,
             "dawn_course.db"
-        ).build()
+        )
+        .fallbackToDestructiveMigration()
+        .build()
     }
 
     /**
@@ -52,6 +57,12 @@ object DatabaseModule {
     @Singleton
     fun provideCourseDao(database: AppDatabase): CourseDao {
         return database.courseDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideSemesterDao(database: AppDatabase): SemesterDao {
+        return database.semesterDao()
     }
 }
 
@@ -80,4 +91,10 @@ abstract class RepositoryModule {
     abstract fun bindSettingsRepository(
         impl: SettingsRepositoryImpl
     ): SettingsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSemesterRepository(
+        impl: SemesterRepositoryImpl
+    ): SemesterRepository
 }

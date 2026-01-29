@@ -55,6 +55,7 @@ dependencies {
     implementation(project(":feature:timetable"))
     implementation(project(":feature:widget"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:import"))
 
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)

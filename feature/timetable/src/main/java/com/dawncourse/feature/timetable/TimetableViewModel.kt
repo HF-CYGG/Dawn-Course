@@ -49,21 +49,23 @@ class TimetableViewModel @Inject constructor(
      * 用于演示和测试数据库插入功能。
      * 在协程中调用 Repository 的 insert 方法。
      */
-    fun addCourse() {
+    fun saveCourse(course: Course) {
         viewModelScope.launch {
-            // 构建测试数据
-            repository.insertCourse(
-                Course(
-                    name = "测试课程 ${System.currentTimeMillis() % 1000}",
-                    dayOfWeek = 1, // 周一
-                    startSection = 1, // 第1节
-                    duration = 2, // 2节课
-                    startWeek = 1, // 第1周
-                    endWeek = 16, // 第16周
-                    teacher = "测试教师",
-                    location = "教学楼 101"
-                )
-            )
+            if (course.id == 0L) {
+                repository.insertCourse(course)
+            } else {
+                repository.updateCourse(course)
+            }
         }
+    }
+
+    fun deleteCourse(course: Course) {
+        viewModelScope.launch {
+            repository.deleteCourse(course)
+        }
+    }
+
+    suspend fun getCourse(id: Long): Course? {
+        return repository.getCourseById(id)
     }
 }

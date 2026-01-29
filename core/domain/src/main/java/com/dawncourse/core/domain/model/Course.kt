@@ -20,6 +20,7 @@ package com.dawncourse.core.domain.model
  */
 data class Course(
     val id: Long = 0,
+    val semesterId: Long = 1, // Default to 1 for now
     val name: String,
     val teacher: String = "",
     val location: String = "",

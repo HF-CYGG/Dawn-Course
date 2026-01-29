@@ -31,6 +31,12 @@ class CourseRepositoryImpl @Inject constructor(
         }
     }
 
+    override fun getCoursesBySemester(semesterId: Long): Flow<List<Course>> {
+        return courseDao.getCoursesBySemester(semesterId).map { entities ->
+            entities.map { it.toDomain() }
+        }
+    }
+
     /**
      * 根据 ID 获取课程
      * 将数据库实体转换为领域模型。

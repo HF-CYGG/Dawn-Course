@@ -3,7 +3,9 @@ package com.dawncourse.core.data.local
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
+import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.local.entity.CourseEntity
+import com.dawncourse.core.data.local.entity.SemesterEntity
 
 /**
  * 应用程序主数据库
@@ -15,7 +17,7 @@ import com.dawncourse.core.data.local.entity.CourseEntity
  * @property version 数据库版本号，当表结构变更时需升级版本并提供迁移策略
  * @property exportSchema 是否导出 schema 文件（用于版本控制），此处设为 false 简化配置
  */
-@Database(entities = [CourseEntity::class], version = 1, exportSchema = false)
+@Database(entities = [CourseEntity::class, SemesterEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     /**
      * 获取 CourseDao 实例
@@ -23,4 +25,5 @@ abstract class AppDatabase : RoomDatabase() {
      * Room 会自动实现此抽象方法。
      */
     abstract fun courseDao(): CourseDao
+    abstract fun semesterDao(): SemesterDao
 }

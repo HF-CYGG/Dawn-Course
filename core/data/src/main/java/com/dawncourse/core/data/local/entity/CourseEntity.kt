@@ -16,6 +16,8 @@ data class CourseEntity(
     /** 主键 ID，自增长 */
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+    /** 学期 ID */
+    val semesterId: Long = 1,
     /** 课程名称 */
     val name: String,
     /** 教师姓名 */
@@ -49,6 +51,7 @@ data class CourseEntity(
  */
 fun CourseEntity.toDomain() = Course(
     id = id,
+    semesterId = semesterId,
     name = name,
     teacher = teacher,
     location = location,
@@ -67,6 +70,7 @@ fun CourseEntity.toDomain() = Course(
  */
 fun Course.toEntity() = CourseEntity(
     id = id,
+    semesterId = semesterId,
     name = name,
     teacher = teacher,
     location = location,

@@ -18,6 +18,8 @@ interface CourseRepository {
      * 使用 Flow 可以实现响应式 UI 更新。
      */
     fun getAllCourses(): Flow<List<Course>>
+
+    fun getCoursesBySemester(semesterId: Long): Flow<List<Course>>
     
     /**
      * 根据 ID 获取单个课程
