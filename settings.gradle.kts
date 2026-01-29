@@ -19,5 +19,5 @@ include(":core:data")
 include(":core:domain")
 include(":core:ui")
 include(":feature:timetable")
-// include(":feature:import") // Phase 2
+include(":feature:import")
 // include(":feature:widget") // Phase 3

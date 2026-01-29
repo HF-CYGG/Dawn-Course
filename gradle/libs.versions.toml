@@ -66,6 +66,7 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 
 # Misc
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
+quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
 
 # Future Phases (Widget & WorkManager)
 glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
