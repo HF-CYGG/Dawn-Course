@@ -54,6 +54,7 @@ import com.dawncourse.feature.timetable.util.CourseColorUtils
 import java.time.LocalDate
 import kotlin.math.roundToInt
 
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 
@@ -77,31 +78,35 @@ fun WeekHeader(modifier: Modifier = Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .padding(start = 32.dp) // Time column offset
-            .padding(vertical = 8.dp)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         days.forEachIndexed { index, day ->
             val dayValue = index + 1
             val isToday = dayValue == today
             
-            Column(
-                modifier = Modifier
-                    .weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally
+            Box(
+                modifier = Modifier.weight(1f),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = day,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                )
+                // Capsule Background for Today
                 if (isToday) {
                     Box(
                         modifier = Modifier
-                            .padding(top = 2.dp)
-                            .size(4.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
+                            .width(36.dp)
+                            .height(28.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
                     )
                 }
+                
+                Text(
+                    text = day,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                    ),
+                    color = if (isToday) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
             }
         }
     }
@@ -125,19 +130,22 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
         for (i in 1..12) {
             Column(
                 modifier = Modifier.height(NODE_HEIGHT),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
                 Text(
                     text = i.toString(),
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.titleMedium, // Slightly larger/bolder number
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    fontFamily = FontFamily.SansSerif, // Google Sans-like (System Sans)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
                 Text(
                     text = "${TIMETABLE_START_HOUR + i - 1}:00",
                     style = MaterialTheme.typography.labelSmall,
-                    fontSize = 8.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    fontSize = 9.sp, // Smaller
+                    fontFamily = FontFamily.Monospace, // Monospace for time
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
         }
@@ -165,7 +173,6 @@ fun TimetableGrid(
         Color(android.graphics.Color.parseColor(settings.dividerColor))
     } catch (e: Exception) { Color(0xFFE5E7EB) }.copy(alpha = settings.dividerAlpha)
     
-    val strokeWidth = with(androidx.compose.ui.platform.LocalDensity.current) { settings.dividerWidth.dp.toPx() }
     val pathEffect = when (settings.dividerType) {
         DividerType.SOLID -> null
         DividerType.DASHED -> PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
@@ -218,28 +225,15 @@ fun TimetableGrid(
             .height(totalHeight)
             .drawBehind {
                 val width = size.width
-                val height = size.height
-                val cellWidth = width / 7
                 val nodeHeightPx = NODE_HEIGHT.toPx()
 
-                // Draw vertical lines
-                for (i in 1..7) {
-                    drawLine(
-                        color = dividerColor,
-                        start = Offset(i * cellWidth, 0f),
-                        end = Offset(i * cellWidth, height),
-                        strokeWidth = strokeWidth,
-                        pathEffect = pathEffect
-                    )
-                }
-                
-                // Draw horizontal lines
+                // Draw horizontal lines only (Very faint)
                 for (i in 0..maxNodes) {
                     drawLine(
-                        color = dividerColor,
+                        color = dividerColor.copy(alpha = 0.1f), // Faint
                         start = Offset(0f, i * nodeHeightPx),
                         end = Offset(width, i * nodeHeightPx),
-                        strokeWidth = strokeWidth,
+                        strokeWidth = 0.5.dp.toPx(), // Thin
                         pathEffect = pathEffect
                     )
                 }
@@ -256,8 +250,8 @@ fun TimetableGrid(
             val span = course.duration
             val height = (span * nodeHeightPx).roundToInt()
             
-            // 宽度略微减小以留出间隙
-            val placeableWidth = (cellWidth * 0.96f).roundToInt()
+            // 使用完整宽度，间距由 Card 内部 padding 控制
+            val placeableWidth = cellWidth
             
             measurable.measure(
                 constraints.copy(
@@ -275,7 +269,7 @@ fun TimetableGrid(
                 
                 // 计算位置
                 // X: (dayOfWeek - 1) * cellWidth
-                val x = ((course.dayOfWeek - 1) * cellWidth) + (cellWidth * 0.02f).roundToInt()
+                val x = (course.dayOfWeek - 1) * cellWidth
                 
                 // Y: (startSection - 1) * nodeHeight
                 val y = ((course.startSection - 1) * nodeHeightPx).roundToInt()
@@ -310,15 +304,15 @@ fun CourseCard(
     Card(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = containerColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isCurrentWeek) 2.dp else 0.dp),
-        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp), // Flat
+        shape = RoundedCornerShape(16.dp), // Big round corner
         modifier = Modifier
             .fillMaxSize()
-            .padding(2.dp)
+            .padding(3.dp) // Breathing room
     ) {
         Column(
             modifier = Modifier
-                .padding(6.dp)
+                .padding(8.dp) // Internal padding
                 .fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
@@ -327,7 +321,7 @@ fun CourseCard(
                 style = MaterialTheme.typography.titleSmall.copy(
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
-                    lineHeight = 16.sp
+                    lineHeight = 15.sp
                 ),
                 color = contentColor,
                 maxLines = 3,
@@ -335,22 +329,31 @@ fun CourseCard(
             )
             
             Column(verticalArrangement = Arrangement.Bottom) {
-                // Location (Priority 2: Display above teacher, allow 2 lines)
+                // Location with Icon
                 if (course.location.isNotEmpty()) {
-                    Text(
-                        text = "@${course.location}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold, // Bold for visibility
-                        color = contentColor, // Full opacity
-                        maxLines = 2, // Allow wrapping
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 13.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Place,
+                            contentDescription = null,
+                            tint = contentColor.copy(alpha = 0.8f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = course.location,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Normal, // Changed from Bold to Normal/Light as requested
+                            color = contentColor,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = 13.sp
+                        )
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                 }
 
-                // Teacher (Priority 3: Smaller, below location)
+                // Teacher
                 if (course.teacher.isNotEmpty()) {
                     Text(
                         text = course.teacher,

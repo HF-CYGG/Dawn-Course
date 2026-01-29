@@ -41,6 +41,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 
 /**
  * 课表功能入口路由 (Composable Route)
@@ -76,63 +81,85 @@ internal fun TimetableScreen(
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
-    onImportClick: () -> Unit,
-    viewModel: TimetableViewModel = hiltViewModel() // Optional injection for internal state updates
+    onImportClick: () -> Unit
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
     
     val settings = LocalAppSettings.current
-    val containerColor = if (settings.wallpaperUri != null) {
-        MaterialTheme.colorScheme.background.copy(alpha = 1f - settings.transparency)
-    } else {
-        MaterialTheme.colorScheme.background
-    }
+    val isDarkTheme = isSystemInDarkTheme()
+    
+    // Determine current week (Real world week)
+    val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
+    val maxWeeks = 30 // Fixed max weeks for semester
+    
+    // Pager State
+    val pagerState = rememberPagerState(
+        initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
+        pageCount = { maxWeeks }
+    )
+    
+    // Calculate displayed week from pager state
+    val displayedWeek = pagerState.currentPage + 1
 
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddClick,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "添加课程")
-            }
-        },
-        // 沉浸式设计：背景延伸到全屏，TopBar 背景透明
-        containerColor = containerColor
-    ) { padding ->
-        // 使用 Box 容纳背景和内容
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding) // 这里的 padding 包含了 SystemBars 的 inset
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Determine current week (Real world week)
-                val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
-                val maxWeeks = 30 // Fixed max weeks for semester
-                
-                // Pager State
-                // Initial page is set to realCurrentWeek - 1. 
-                // We use a key to ensure it only resets if the semester changes (not implemented yet, so effectively once)
-                val pagerState = rememberPagerState(
-                    initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
-                    pageCount = { maxWeeks }
-                )
-                
-                // Calculate displayed week from pager state
-                val displayedWeek = pagerState.currentPage + 1
-                
+    Box(modifier = Modifier.fillMaxSize()) {
+        // 1. 背景图 (沉浸式)
+        if (settings.wallpaperUri != null) {
+            AsyncImage(
+                model = settings.wallpaperUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(20.dp) // 高斯模糊
+            )
+            
+            // 2. 遮罩层
+            val overlayAlpha = (1f - settings.transparency).coerceIn(0f, 1f)
+            val overlayColor = if (isDarkTheme) Color.Black else Color.White
+            
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(overlayColor.copy(alpha = overlayAlpha))
+            )
+        } else {
+            // 无壁纸时使用默认背景
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            )
+        }
+
+        // 3. 内容层 (Scaffold)
+        Scaffold(
+            topBar = {
                 // 1. 顶部栏 (透明背景)
                 TimetableTopBar(
                     currentWeek = displayedWeek,
                     onSettingsClick = onSettingsClick,
                     onImportClick = onImportClick
                 )
-
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = onAddClick,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "添加课程")
+                }
+            },
+            // 设为透明，让底下的背景透出来
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onBackground
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
                 // 2. 星期栏头部
                 WeekHeader()
 
@@ -178,7 +205,7 @@ internal fun TimetableScreen(
         }
     }
 
-        // 课程详情弹窗
+    // 课程详情弹窗
     if (selectedCourse != null) {
         CourseDetailSheet(
             course = selectedCourse!!,
@@ -188,11 +215,7 @@ internal fun TimetableScreen(
                 selectedCourse = null
             },
             onDeleteClick = {
-                // TODO: 处理删除, call ViewModel delete
-                // Since TimetableScreen doesn't have VM, pass callback?
-                // Or just close for now.
-                // We need onDelete callback in TimetableScreen.
-                // Let's just close for now or add callback later.
+                // TODO: 处理删除
                 selectedCourse = null
             }
         )
@@ -215,11 +238,7 @@ private fun TimetableTopBar(
                         fontWeight = FontWeight.Bold
                     )
                 )
-                Text(
-                    text = LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("M月d日 EEEE", java.util.Locale.CHINA)),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // 移除具体日期显示，仅保留周次，更加简洁
             }
         },
         actions = {
@@ -234,9 +253,6 @@ private fun TimetableTopBar(
             containerColor = Color.Transparent,
             scrolledContainerColor = Color.Transparent
         ),
-        // 由于我们在 Activity 中开启了 edge-to-edge，这里 TopAppBar 内部会自动处理 status bar padding吗？
-        // 通常 TopAppBar 会处理。但在 Scaffold 中，padding 参数已经包含了这些。
-        // 为了安全起见，我们信任 Scaffold 传递的 padding。
         modifier = Modifier
     )
 }

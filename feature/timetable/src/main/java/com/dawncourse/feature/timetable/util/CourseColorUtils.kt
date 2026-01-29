@@ -11,21 +11,23 @@ import kotlin.math.abs
  */
 object CourseColorUtils {
 
-    // 12 套预设配色方案 (Material 3 Tone based, adjusted for distinctiveness)
-    // 同时也考虑了色盲友好性 (High contrast)
+    // 12 套预设配色方案 (Macaron / Morandi Style)
+    // 低饱和度、高明度，视觉舒适
     private val PRESET_COLORS = listOf(
-        "#F44336", // Red
-        "#E91E63", // Pink
-        "#9C27B0", // Purple
-        "#673AB7", // Deep Purple
-        "#3F51B5", // Indigo
-        "#2196F3", // Blue
-        "#03A9F4", // Light Blue
-        "#00BCD4", // Cyan
-        "#009688", // Teal
-        "#4CAF50", // Green
-        "#8BC34A", // Light Green
-        "#FFC107"  // Amber
+        "#F48FB1", // Pink
+        "#CE93D8", // Purple
+        "#B39DDB", // Deep Purple
+        "#9FA8DA", // Indigo
+        "#90CAF9", // Blue
+        "#81D4FA", // Light Blue
+        "#80CBC4", // Teal
+        "#A5D6A7", // Green
+        "#C5E1A5", // Light Green
+        "#E6EE9C", // Lime
+        "#FFF59D", // Yellow
+        "#FFCC80", // Orange
+        "#BCAAA4", // Brown
+        "#B0BEC5"  // Blue Grey
     )
 
     /**

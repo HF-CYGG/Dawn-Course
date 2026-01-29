@@ -45,4 +45,5 @@ dependencies {
     implementation(libs.material.icons.extended)
 
     implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.coil.compose)
 }
