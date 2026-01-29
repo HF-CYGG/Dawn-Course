@@ -2,6 +2,10 @@ package com.dawncourse.feature.import_module
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.webkit.CookieManager
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -45,7 +49,6 @@ fun ImportScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val viewModel: ImportViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsState()
     
@@ -216,6 +219,7 @@ private fun WebViewStep(
     var webView: WebView? by remember { mutableStateOf(null) }
     var urlText by remember { mutableStateOf(uiState.webUrl) }
     var canImport by remember { mutableStateOf(false) } // Simple detection
+    var hasRetried by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -234,9 +238,45 @@ private fun WebViewStep(
                         }
                         Button(
                             onClick = {
-                                webView?.evaluateJavascript(
-                                    "(function() { return document.documentElement.outerHTML; })();"
-                                ) { html ->
+                                val target = webView
+                                if (target == null) {
+                                    viewModel.updateResultText("浏览器未就绪，请稍后再试")
+                                    return@Button
+                                }
+                                if (script.isBlank()) {
+                                    viewModel.updateResultText("解析脚本为空，无法导入")
+                                    return@Button
+                                }
+                                viewModel.updateResultText("正在提取页面内容...")
+                                target.post {
+                                    target.evaluateJavascript(
+                                        """
+                                        (function() {
+                                            function getAllHtml(doc) {
+                                                if (!doc) doc = document;
+                                                var html = doc.documentElement.outerHTML;
+                                                var iframes = doc.querySelectorAll("iframe");
+                                                for (var i = 0; i < iframes.length; i++) {
+                                                    try {
+                                                        var iframe = iframes[i];
+                                                        var innerDoc = iframe.contentDocument || iframe.contentWindow.document;
+                                                        html += getAllHtml(innerDoc);
+                                                    } catch (e) {}
+                                                }
+                                                var frames = doc.querySelectorAll("frame");
+                                                for (var i = 0; i < frames.length; i++) {
+                                                    try {
+                                                        var frame = frames[i];
+                                                        var innerDoc = frame.contentDocument || frame.contentWindow.document;
+                                                        html += getAllHtml(innerDoc);
+                                                    } catch (e) {}
+                                                }
+                                                return html;
+                                            }
+                                            return getAllHtml(document);
+                                        })();
+                                        """.trimIndent()
+                                    ) { html ->
                                     // HTML comes back as a JSON string (e.g. "\u003Chtml...")
                                     // We need to unescape it roughly or just pass it.
                                     // evaluateJavascript returns the result as a JSON string.
@@ -261,7 +301,12 @@ private fun WebViewStep(
                                     } else {
                                         html
                                     }
+                                    if (cleanHtml.isBlank() || cleanHtml == "null") {
+                                        viewModel.updateResultText("页面内容为空，请确认已完成登录")
+                                        return@evaluateJavascript
+                                    }
                                     viewModel.parseHtmlFromWebView(cleanHtml, script)
+                                }
                                 }
                             },
                             // Always enabled for manual trigger, or highlight when detected
@@ -291,6 +336,16 @@ private fun WebViewStep(
                     },
                     placeholder = { Text("输入教务系统网址") }
                 )
+                if (uiState.resultText.isNotBlank()) {
+                    Text(
+                        text = uiState.resultText,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     ) { padding ->
@@ -306,10 +361,45 @@ private fun WebViewStep(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.builtInZoomControls = true
+                        settings.cacheMode = WebSettings.LOAD_DEFAULT
+                        settings.setSupportZoom(true)
+                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 url?.let { urlText = it }
+                            }
+                            override fun onReceivedError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                error: WebResourceError?
+                            ) {
+                                super.onReceivedError(view, request, error)
+                                if (request?.isForMainFrame != true) return
+                                val isCacheMiss = error?.description?.toString()?.contains("ERR_CACHE_MISS") == true
+                                if (isCacheMiss && !hasRetried) {
+                                    hasRetried = true
+                                    val retryUrl = urlText.ifBlank { uiState.webUrl }
+                                    view?.stopLoading()
+                                    view?.clearCache(true)
+                                    view?.clearHistory()
+                                    view?.settings?.cacheMode = WebSettings.LOAD_DEFAULT
+                                    CookieManager.getInstance().flush()
+                                    view?.post {
+                                        view.loadUrl(
+                                            retryUrl,
+                                            mapOf(
+                                                "Cache-Control" to "no-cache",
+                                                "Pragma" to "no-cache"
+                                            )
+                                        )
+                                    }
+                                }
                             }
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)

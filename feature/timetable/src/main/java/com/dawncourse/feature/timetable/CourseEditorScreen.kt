@@ -49,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -349,6 +350,12 @@ fun TimeGridSelector(
     duration: Int,
     onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit
 ) {
+    val density = LocalDensity.current
+    val rowHeightPx = with(density) { 28.dp.toPx() }
+    var dragAnchorDay by remember { mutableStateOf<Int?>(null) }
+    var dragAnchorNode by remember { mutableStateOf<Int?>(null) }
+    var dragAnchorOffsetY by remember { mutableStateOf(0f) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -433,6 +440,34 @@ fun TimeGridSelector(
                                         onSelectionChange(day, node, 1)
                                     }
                                 }
+                            }
+                            .pointerInput(day, node) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        dragAnchorDay = day
+                                        dragAnchorNode = node
+                                        dragAnchorOffsetY = offset.y
+                                        onSelectionChange(day, node, 1)
+                                    },
+                                    onDrag = { change, _ ->
+                                        val anchorDay = dragAnchorDay ?: day
+                                        val anchorNode = dragAnchorNode ?: node
+                                        val deltaRows = ((change.position.y - dragAnchorOffsetY) / rowHeightPx).toInt()
+                                        val currentNode = (anchorNode + deltaRows).coerceIn(1, 12)
+                                        val start = min(anchorNode, currentNode)
+                                        val end = max(anchorNode, currentNode)
+                                        onSelectionChange(anchorDay, start, end - start + 1)
+                                        change.consume()
+                                    },
+                                    onDragEnd = {
+                                        dragAnchorDay = null
+                                        dragAnchorNode = null
+                                    },
+                                    onDragCancel = {
+                                        dragAnchorDay = null
+                                        dragAnchorNode = null
+                                    }
+                                )
                             }
                     )
                 }

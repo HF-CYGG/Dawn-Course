@@ -161,6 +161,56 @@ fun parseXiaoaiProviderResult(raw: String): XiaoaiProviderResult {
     return XiaoaiProviderResult(courses, timetableJson)
 }
 
+fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> {
+    val trimmed = raw.trim()
+    if (trimmed.isBlank() || trimmed == "do not continue") return emptyList()
+    return try {
+        if (trimmed.startsWith("[")) {
+            val array = org.json.JSONArray(trimmed)
+            parseParsedCourseArray(array)
+        } else {
+            val obj = org.json.JSONObject(trimmed)
+            val courseArray = obj.optJSONArray("courses") ?: org.json.JSONArray()
+            parseParsedCourseArray(courseArray)
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+private fun parseParsedCourseArray(array: org.json.JSONArray): List<ParsedCourse> {
+    val list = mutableListOf<ParsedCourse>()
+    for (i in 0 until array.length()) {
+        val item = array.optJSONObject(i) ?: continue
+        val name = item.optString("name")
+        val teacher = item.optString("teacher")
+        val location = item.optString("location")
+        val dayOfWeek = item.optInt("dayOfWeek", -1)
+        val startSection = item.optInt("startSection", -1)
+        val duration = item.optInt("duration", -1)
+        val startWeek = item.optInt("startWeek", -1)
+        val endWeek = item.optInt("endWeek", -1)
+        val weekType = item.optInt("weekType", 0)
+        if (name.isBlank() || dayOfWeek <= 0 || startSection <= 0 || duration <= 0 || startWeek <= 0 || endWeek <= 0) {
+            continue
+        }
+        list.add(
+            ParsedCourse(
+                name = name,
+                teacher = teacher,
+                location = location,
+                dayOfWeek = dayOfWeek,
+                startSection = startSection,
+                duration = duration,
+                startWeek = startWeek,
+                endWeek = endWeek,
+                weekType = weekType
+            )
+        )
+    }
+    return list
+}
+
 /**
  * 将小爱课程结构转换为 Dawn Course 的导入课程
  *

@@ -9,6 +9,7 @@ import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.convertXiaoaiCoursesToParsedCourses
 import com.dawncourse.feature.import_module.model.parseIcsToParsedCourses
+import com.dawncourse.feature.import_module.model.parseParsedCoursesFromRaw
 import com.dawncourse.feature.import_module.model.parseXiaoaiProviderResult
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -81,9 +82,46 @@ class ImportViewModel @Inject constructor(
     fun updateHtmlContent(value: String) {
         _uiState.update { it.copy(htmlContent = value) }
     }
+
+    fun updateResultText(value: String) {
+        _uiState.update { it.copy(resultText = value) }
+    }
     
     fun updateSemesterSettings(startDate: Long, weeks: Int) {
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
+    }
+
+    /**
+     * 解析 WebView 返回的 JSON 结果
+     */
+    fun parseResultFromWebView(raw: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, resultText = "") }
+            try {
+                val parsedFromRaw = parseParsedCoursesFromRaw(raw)
+                val parsedFromXiaoai = if (parsedFromRaw.isEmpty()) {
+                    val xiaoaiResult = parseXiaoaiProviderResult(raw)
+                    convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
+                } else {
+                    emptyList()
+                }
+                val parsed = if (parsedFromRaw.isNotEmpty()) parsedFromRaw else parsedFromXiaoai
+                if (parsed.isEmpty()) {
+                    _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = parsed,
+                            step = ImportStep.Review,
+                            resultText = "成功解析 ${parsed.size} 个课程段"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = "解析失败: ${e.message}") }
+            }
+        }
     }
 
     /**
@@ -100,7 +138,12 @@ class ImportViewModel @Inject constructor(
                 val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
                 
                 // 3. Convert to ParsedCourse
-                val parsed = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
+                val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
+                val parsed = if (parsedFromXiaoai.isNotEmpty()) {
+                    parsedFromXiaoai
+                } else {
+                    parseParsedCoursesFromRaw(jsonResult)
+                }
                 
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
