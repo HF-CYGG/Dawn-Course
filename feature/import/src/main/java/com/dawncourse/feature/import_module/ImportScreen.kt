@@ -7,6 +7,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,7 +15,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -116,31 +119,87 @@ private fun InputStep(
         ) {
             Text(
                 text = "请选择导入方式",
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 8.dp)
             )
             
-            Button(
-                onClick = { viewModel.setStep(ImportStep.WebView) },
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) {
-                Text("教务系统导入 (WebView)")
-            }
+            ImportOptionCard(
+                title = "教务系统导入",
+                description = "内置浏览器登录教务系统，自动抓取课表",
+                icon = Icons.Default.Search,
+                onClick = { viewModel.setStep(ImportStep.WebView) }
+            )
             
-            OutlinedButton(
-                onClick = { icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*")) },
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) {
-                Text("导入 ICS 日历文件")
-            }
+            ImportOptionCard(
+                title = "ICS 日历文件导入",
+                description = "导入导出的 .ics 日历文件",
+                icon = Icons.Default.DateRange,
+                onClick = { icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*")) }
+            )
             
             if (uiState.isLoading) {
+                Spacer(modifier = Modifier.height(32.dp))
                 CircularProgressIndicator()
+                Text("正在处理...", modifier = Modifier.padding(top = 16.dp))
             }
             
             if (uiState.resultText.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (uiState.resultText.contains("失败")) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = uiState.resultText,
+                        modifier = Modifier.padding(16.dp),
+                        color = if (uiState.resultText.contains("失败")) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ImportOptionCard(
+    title: String,
+    description: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(16.dp)
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
                 Text(
-                    text = uiState.resultText,
-                    color = if (uiState.resultText.contains("失败")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -292,9 +351,6 @@ private fun ReviewStep(
             { _, year, month, dayOfMonth ->
                 val selected = java.util.Calendar.getInstance()
                 selected.set(year, month, dayOfMonth, 0, 0, 0)
-                // Adjust to Monday? The prompt says "Force user to select start date (Monday)".
-                // We should check if it's Monday or auto-adjust.
-                // Let's just set it.
                 viewModel.updateSemesterSettings(selected.timeInMillis, uiState.weekCount)
             },
             calendar.get(java.util.Calendar.YEAR),
@@ -315,6 +371,8 @@ private fun ReviewStep(
                 },
                 actions = {
                     Button(onClick = { viewModel.confirmImport() }) {
+                        Icon(Icons.Default.Check, null)
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("确认导入")
                     }
                 }
@@ -333,10 +391,19 @@ private fun ReviewStep(
                 }
             } else {
                 // Settings Card
-                Card(modifier = Modifier.fillMaxWidth()) {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("学期设置", style = MaterialTheme.typography.titleMedium)
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "学期设置", 
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
                         
                         // Start Date
                         OutlinedButton(
@@ -346,13 +413,18 @@ private fun ReviewStep(
                             val date = Instant.ofEpochMilli(uiState.semesterStartDate)
                                 .atZone(ZoneId.systemDefault())
                                 .toLocalDate()
+                            Icon(Icons.Default.DateRange, null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text("开学日期 (第一周周一): ${date.format(DateTimeFormatter.ISO_LOCAL_DATE)}")
                         }
                         
                         Spacer(modifier = Modifier.height(16.dp))
                         
                         // Week Count
-                        Text("学期周数: ${uiState.weekCount}周")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("学期周数: ${uiState.weekCount}周", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
                         Slider(
                             value = uiState.weekCount.toFloat(),
                             onValueChange = { viewModel.updateSemesterSettings(uiState.semesterStartDate, it.toInt()) },
@@ -366,26 +438,45 @@ private fun ReviewStep(
                 
                 Text(
                     text = "解析结果: ${uiState.parsedCourses.size} 个课程段",
-                    style = MaterialTheme.typography.titleSmall
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                
+                Spacer(modifier = Modifier.height(8.dp))
                 
                 // Course List Preview
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     items(uiState.parsedCourses) { course ->
-                        Card {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(course.name, style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    "${course.teacher} | ${course.location}",
-                                    style = MaterialTheme.typography.bodyMedium
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                // Color indicator
+                                Box(
+                                    modifier = Modifier
+                                        .size(4.dp, 40.dp)
+                                        .background(MaterialTheme.colorScheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
                                 )
-                                Text(
-                                    "周${getDayText(course.dayOfWeek)} ${course.startSection}-${course.startSection + course.duration - 1}节 | ${course.startWeek}-${course.endWeek}周",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(course.name, style = MaterialTheme.typography.titleMedium)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "${course.teacher} | ${course.location}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "周${getDayText(course.dayOfWeek)} ${course.startSection}-${course.startSection + course.duration - 1}节 | ${course.startWeek}-${course.endWeek}周",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
