@@ -114,31 +114,16 @@ internal fun TimetableScreen(
                     .blur(30.dp) // 高斯模糊 (20-30dp)
             )
             
-            // 2. 遮罩层 (固定半透明遮罩，不再受settings.transparency完全控制，而是叠加效果)
-            // 用户建议：Color.White.copy(alpha = 0.6f) or Color.Black.copy(alpha = 0.4f)
-            // settings.transparency 依然可以作为微调，但基础遮罩必须存在以保证可读性
-            val baseOverlayAlpha = if (isDarkTheme) 0.4f else 0.6f
-            val userTransparency = settings.transparency // 0.0(不透) - 1.0(全透) -> 实际上是控制背景图的可见度
-            // 这里我们保持原逻辑：settings.transparency 越高，背景图越清晰（遮罩越淡）？
-            // 或者 settings.transparency 越高，遮罩越透明？
-            // 通常 transparency = 1.0f 意味着背景完全可见（遮罩 alpha = 0）。
-            // 用户现在给出了明确建议值，我们优先使用建议值作为基准。
-            // 我们可以让 settings.transparency 微调这个 alpha 值。
-            // 简化起见，直接使用用户建议的固定值，或者允许微调。
-            // 让我们使用固定建议值 + settings.transparency 作为混合因子。
-            // 假设 settings.transparency (0-1) 控制遮罩的不透明度：1.0=完全透明(不遮)，0.0=完全不透明(全遮)。
-            // 用户建议 0.6f (白) / 0.4f (黑)。
+            // 2. 遮罩层
+            val defaultAlpha = if (isDarkTheme) 0.4f else 0.6f
+            val overlayAlpha = if (settings.transparency == 0f) defaultAlpha else settings.transparency
             
-            // 实际上，为了效果好，我们直接用用户建议的值作为默认效果。
-            // 如果用户之前设置了 transparency，我们暂时忽略或重新映射。
-            // 但为了兼容，我们假设 transparency 控制的是“背景图的清晰度”。
-            // 这里直接采用用户建议的固定值效果最好。
             val overlayColor = if (isDarkTheme) Color.Black else Color.White
             
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(overlayColor.copy(alpha = baseOverlayAlpha))
+                    .background(overlayColor.copy(alpha = overlayAlpha))
             )
         } else {
             // 无壁纸时使用默认背景

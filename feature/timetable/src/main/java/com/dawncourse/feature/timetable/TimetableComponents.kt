@@ -239,20 +239,13 @@ fun TimetableGrid(
                 val width = size.width
                 val nodeHeightPx = NODE_HEIGHT.toPx()
 
-                // Draw horizontal lines only (Very faint)
+                // Draw horizontal lines
                 for (i in 0..maxNodes) {
-                    // 隐藏竖线，只画极细的横线，或者完全去掉（这里保留极细横线以维持网格感，但非常淡）
-                    // 用户说"去掉所有分割线"指的是 Header，但对于 Grid，"隐形网格"是指去掉竖线，横线极细。
-                    // 用户在Step 3中说 "去掉所有分割线" 是针对Header。
-                    // 对于Grid，Step 3说 "网格与时间轴：做减法...横向分割线...设为极细...或者干脆也去掉"
-                    // 既然用户提到"或者干脆也去掉"，且希望"通透感"，我们可以尝试去掉横线，或者留一个极淡的。
-                    // 这里我们保留极淡的横线 (alpha 0.05) 供参考，或者如果用户觉得太乱可以设为 0。
-                    // 暂时保留极淡横线。
                     drawLine(
-                        color = dividerColor.copy(alpha = 0.05f), // Very faint
+                        color = dividerColor, // Use color from settings (includes alpha)
                         start = Offset(0f, i * nodeHeightPx),
                         end = Offset(width, i * nodeHeightPx),
-                        strokeWidth = 0.5.dp.toPx(), // Thin
+                        strokeWidth = settings.dividerWidth.toFloat(), // Use width from settings (px)
                         pathEffect = pathEffect
                     )
                 }
