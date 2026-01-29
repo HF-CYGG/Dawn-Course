@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -52,6 +53,7 @@ import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.feature.timetable.util.CourseColorUtils
 import java.time.LocalDate
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 import androidx.compose.ui.text.font.FontFamily
@@ -61,6 +63,7 @@ import androidx.compose.material3.CardDefaults
 // 常量定义
 val NODE_HEIGHT = 56.dp // 单节课高度
 val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
+val TIME_COLUMN_WIDTH = 30.dp // 左侧时间轴宽度
 
 /**
  * 周次头部栏组件
@@ -77,7 +80,7 @@ fun WeekHeader(modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 32.dp) // Time column offset
+            .padding(start = TIME_COLUMN_WIDTH) // Time column offset
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -96,16 +99,17 @@ fun WeekHeader(modifier: Modifier = Modifier) {
                             .width(36.dp)
                             .height(28.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)) // 变淡
                     )
                 }
                 
                 Text(
                     text = day,
                     style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = if (isToday) 14.sp else 12.sp // 选中放大
                     ),
-                    color = if (isToday) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f) // 选中色
                 )
             }
         }
@@ -127,6 +131,7 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxHeight()
+            .width(TIME_COLUMN_WIDTH) // 限制宽度
             .padding(top = 4.dp), // Align with grid
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -138,22 +143,26 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
             ) {
                 Text(
                     text = i.toString(),
-                    style = MaterialTheme.typography.titleMedium, // Slightly larger/bolder number
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 12.sp), // Smaller
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.SansSerif, // Google Sans-like (System Sans)
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) // Darker grey
                 )
+                // Optional: Show time in very small font if needed, or remove it as requested
+                // User said: "remove specific time or make it tiny (8sp)"
+                // Let's keep it tiny for now as it's useful
                 Text(
                     text = "${TIMETABLE_START_HOUR + i - 1}:00",
                     style = MaterialTheme.typography.labelSmall,
-                    fontSize = 9.sp, // Smaller
-                    fontFamily = FontFamily.Monospace, // Monospace for time
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    fontSize = 8.sp, // Tiny
+                    fontFamily = FontFamily.Monospace,
+                    color = Color.Gray
                 )
             }
         }
     }
 }
+
 
 /**
  * 课表网格布局
@@ -232,8 +241,15 @@ fun TimetableGrid(
 
                 // Draw horizontal lines only (Very faint)
                 for (i in 0..maxNodes) {
+                    // 隐藏竖线，只画极细的横线，或者完全去掉（这里保留极细横线以维持网格感，但非常淡）
+                    // 用户说"去掉所有分割线"指的是 Header，但对于 Grid，"隐形网格"是指去掉竖线，横线极细。
+                    // 用户在Step 3中说 "去掉所有分割线" 是针对Header。
+                    // 对于Grid，Step 3说 "网格与时间轴：做减法...横向分割线...设为极细...或者干脆也去掉"
+                    // 既然用户提到"或者干脆也去掉"，且希望"通透感"，我们可以尝试去掉横线，或者留一个极淡的。
+                    // 这里我们保留极淡的横线 (alpha 0.05) 供参考，或者如果用户觉得太乱可以设为 0。
+                    // 暂时保留极淡横线。
                     drawLine(
-                        color = dividerColor.copy(alpha = 0.1f), // Faint
+                        color = dividerColor.copy(alpha = 0.05f), // Very faint
                         start = Offset(0f, i * nodeHeightPx),
                         end = Offset(width, i * nodeHeightPx),
                         strokeWidth = 0.5.dp.toPx(), // Thin
@@ -299,72 +315,69 @@ fun CourseCard(
     onClick: () -> Unit
 ) {
     val backgroundColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
-    val containerColor = backgroundColor.copy(alpha = if (isCurrentWeek) 1f else 0.4f)
+    val containerColor = backgroundColor.copy(alpha = if (isCurrentWeek) 0.9f else 0.4f) // Use alpha 0.9 as requested
     
-    // 根据背景色（不透明）计算最佳文本颜色，确保对比度
-    val contentColor = CourseColorUtils.getBestContentColor(backgroundColor)
-
+    // 扁平化，无阴影
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp), // Flat
-        shape = RoundedCornerShape(8.dp), // Smaller round corner
         modifier = Modifier
             .fillMaxSize()
-            .padding(2.dp) // Smaller breathing room to save space
+            .padding(2.dp), // 卡片之间的空隙
+        shape = RoundedCornerShape(12.dp), // 大圆角
+        colors = CardDefaults.cardColors(
+            containerColor = containerColor
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
-                .padding(4.dp) // Smaller internal padding
-                .fillMaxSize(),
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // 1. 课程名
             Text(
                 text = course.name,
-                style = MaterialTheme.typography.titleSmall.copy(
+                style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp, // Smaller font
-                    lineHeight = 13.sp // Tighter line height
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = Color(0xFF333333) // 深灰
                 ),
-                color = contentColor,
-                maxLines = 4, // Allow more lines since font is smaller
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
             
-            Column(verticalArrangement = Arrangement.Bottom) {
-                // Location with Icon
-                if (course.location.isNotEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Place,
-                            contentDescription = null,
-                            tint = contentColor.copy(alpha = 0.8f),
-                            modifier = Modifier.size(10.dp) // Smaller icon
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(
-                            text = course.location,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 10.sp, // Smaller font
-                            fontWeight = FontWeight.Normal,
-                            color = contentColor,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            lineHeight = 11.sp // Tighter line height
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(2.dp))
+            // 2. 底部信息块
+            Column {
+                // 教室：带小图标
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Rounded.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = Color(0xFF49454F) // 次级文本色
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = course.location,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 10.sp,
+                            color = Color(0xFF49454F)
+                        ),
+                        maxLines = 1
+                    )
                 }
-
-                // Teacher
+                
+                // 老师
                 if (course.teacher.isNotEmpty()) {
                     Text(
                         text = course.teacher,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 9.sp, // Smaller font
-                        color = contentColor.copy(alpha = 0.8f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 10.sp,
+                            color = Color(0xFF49454F)
+                        ),
+                        modifier = Modifier.padding(top = 2.dp)
                     )
                 }
             }
