@@ -41,4 +41,7 @@ interface SettingsRepository {
     suspend fun setDividerWidth(width: Int)
     suspend fun setDividerColor(color: String)
     suspend fun setDividerAlpha(alpha: Float)
+
+    suspend fun setMaxDailySections(count: Int)
+    suspend fun setDefaultCourseDuration(duration: Int)
 }

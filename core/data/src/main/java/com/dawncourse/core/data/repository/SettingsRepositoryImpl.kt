@@ -42,6 +42,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val DIVIDER_WIDTH = intPreferencesKey("divider_width")
         val DIVIDER_COLOR = stringPreferencesKey("divider_color")
         val DIVIDER_ALPHA = floatPreferencesKey("divider_alpha")
+        val MAX_DAILY_SECTIONS = intPreferencesKey("max_daily_sections")
+        val DEFAULT_COURSE_DURATION = intPreferencesKey("default_course_duration")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -62,6 +64,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val dividerWidth = preferences[PreferencesKeys.DIVIDER_WIDTH] ?: 1
         val dividerColor = preferences[PreferencesKeys.DIVIDER_COLOR] ?: "#E5E7EB"
         val dividerAlpha = preferences[PreferencesKeys.DIVIDER_ALPHA] ?: 1.0f
+        val maxDailySections = preferences[PreferencesKeys.MAX_DAILY_SECTIONS] ?: 12
+        val defaultCourseDuration = preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] ?: 2
 
         AppSettings(
             dynamicColor = dynamicColor,
@@ -71,7 +75,9 @@ class SettingsRepositoryImpl @Inject constructor(
             dividerType = dividerType,
             dividerWidth = dividerWidth,
             dividerColor = dividerColor,
-            dividerAlpha = dividerAlpha
+            dividerAlpha = dividerAlpha,
+            maxDailySections = maxDailySections,
+            defaultCourseDuration = defaultCourseDuration
         )
     }
 
@@ -124,6 +130,18 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setDividerAlpha(alpha: Float) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.DIVIDER_ALPHA] = alpha
+        }
+    }
+
+    override suspend fun setMaxDailySections(count: Int) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.MAX_DAILY_SECTIONS] = count
+        }
+    }
+
+    override suspend fun setDefaultCourseDuration(duration: Int) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] = duration
         }
     }
 }

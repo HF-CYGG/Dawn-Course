@@ -126,4 +126,26 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setDividerAlpha(alpha)
         }
     }
+
+    /**
+     * 设置每天最大节数
+     *
+     * @param count 节数 (8-16)
+     */
+    fun setMaxDailySections(count: Int) {
+        viewModelScope.launch {
+            settingsRepository.setMaxDailySections(count)
+        }
+    }
+
+    /**
+     * 设置默认课程时长
+     *
+     * @param duration 节数 (1-4)
+     */
+    fun setDefaultCourseDuration(duration: Int) {
+        viewModelScope.launch {
+            settingsRepository.setDefaultCourseDuration(duration)
+        }
+    }
 }

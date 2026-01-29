@@ -14,20 +14,17 @@ object CourseColorUtils {
     // 12 套预设配色方案 (Macaron / Morandi Style)
     // 低饱和度、高明度，视觉舒适
     private val PRESET_COLORS = listOf(
-        "#F48FB1", // Pink
-        "#CE93D8", // Purple
-        "#B39DDB", // Deep Purple
-        "#9FA8DA", // Indigo
-        "#90CAF9", // Blue
-        "#81D4FA", // Light Blue
-        "#80CBC4", // Teal
-        "#A5D6A7", // Green
-        "#C5E1A5", // Light Green
-        "#E6EE9C", // Lime
-        "#FFF59D", // Yellow
-        "#FFCC80", // Orange
-        "#BCAAA4", // Brown
-        "#B0BEC5"  // Blue Grey
+        "#E8DEF8", // 浅紫
+        "#F2E7FE",
+        "#C4E7FF", // 浅蓝
+        "#C3EED0", // 浅绿
+        "#FDE2E4", // 浅粉
+        "#FFF4DE", // 浅黄
+        "#D7E8CD", // 莫兰迪绿
+        "#EAD5D5", // 莫兰迪粉
+        "#D8E2DC", // 莫兰迪青
+        "#FFE5D9", // 莫兰迪橙
+        "#ECE4DB"  // 莫兰迪灰
     )
 
     /**

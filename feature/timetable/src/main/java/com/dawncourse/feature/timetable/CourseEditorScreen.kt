@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.ui.theme.LocalAppSettings
 import kotlin.math.max
 import kotlin.math.min
 
@@ -79,9 +80,10 @@ fun CourseEditorScreen(
     var teacher by remember(course) { mutableStateOf(course?.teacher ?: "") }
     
     // Time selection state
+    val defaultDuration = LocalAppSettings.current.defaultCourseDuration
     var selectedDay by remember(course) { mutableStateOf(course?.dayOfWeek ?: 1) }
     var startNode by remember(course) { mutableStateOf(course?.startSection ?: 1) }
-    var duration by remember(course) { mutableStateOf(course?.duration ?: 2) }
+    var duration by remember(course) { mutableStateOf(course?.duration ?: defaultDuration) }
     
     // Week selection state
     var startWeek by remember(course) { mutableStateOf(course?.startWeek ?: 1) }

@@ -121,13 +121,16 @@ fun WeekHeader(modifier: Modifier = Modifier) {
  */
 @Composable
 fun TimeColumnIndicator(modifier: Modifier = Modifier) {
+    val settings = LocalAppSettings.current
+    val maxNodes = settings.maxDailySections
+
     Column(
         modifier = modifier
             .fillMaxHeight()
             .padding(top = 4.dp), // Align with grid
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        for (i in 1..12) {
+        for (i in 1..maxNodes) {
             Column(
                 modifier = Modifier.height(NODE_HEIGHT),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -164,11 +167,11 @@ fun TimetableGrid(
     modifier: Modifier = Modifier,
     onCourseClick: (Course) -> Unit
 ) {
+    val settings = LocalAppSettings.current
     // 假设每天最多 12 节课
-    val maxNodes = 12
+    val maxNodes = settings.maxDailySections
     val totalHeight = NODE_HEIGHT * maxNodes
     
-    val settings = LocalAppSettings.current
     val dividerColor = try {
         Color(android.graphics.Color.parseColor(settings.dividerColor))
     } catch (e: Exception) { Color(0xFFE5E7EB) }.copy(alpha = settings.dividerAlpha)
@@ -305,14 +308,14 @@ fun CourseCard(
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp), // Flat
-        shape = RoundedCornerShape(16.dp), // Big round corner
+        shape = RoundedCornerShape(8.dp), // Smaller round corner
         modifier = Modifier
             .fillMaxSize()
-            .padding(3.dp) // Breathing room
+            .padding(2.dp) // Smaller breathing room to save space
     ) {
         Column(
             modifier = Modifier
-                .padding(8.dp) // Internal padding
+                .padding(4.dp) // Smaller internal padding
                 .fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
@@ -320,11 +323,11 @@ fun CourseCard(
                 text = course.name,
                 style = MaterialTheme.typography.titleSmall.copy(
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    lineHeight = 15.sp
+                    fontSize = 11.sp, // Smaller font
+                    lineHeight = 13.sp // Tighter line height
                 ),
                 color = contentColor,
-                maxLines = 3,
+                maxLines = 4, // Allow more lines since font is smaller
                 overflow = TextOverflow.Ellipsis
             )
             
@@ -336,18 +339,18 @@ fun CourseCard(
                             imageVector = Icons.Default.Place,
                             contentDescription = null,
                             tint = contentColor.copy(alpha = 0.8f),
-                            modifier = Modifier.size(12.dp)
+                            modifier = Modifier.size(10.dp) // Smaller icon
                         )
                         Spacer(modifier = Modifier.width(2.dp))
                         Text(
                             text = course.location,
                             style = MaterialTheme.typography.labelSmall,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Normal, // Changed from Bold to Normal/Light as requested
+                            fontSize = 10.sp, // Smaller font
+                            fontWeight = FontWeight.Normal,
                             color = contentColor,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            lineHeight = 13.sp
+                            lineHeight = 11.sp // Tighter line height
                         )
                     }
                     Spacer(modifier = Modifier.height(2.dp))
@@ -358,7 +361,7 @@ fun CourseCard(
                     Text(
                         text = course.teacher,
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp, // Smaller font
                         color = contentColor.copy(alpha = 0.8f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

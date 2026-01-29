@@ -36,7 +36,11 @@ data class AppSettings(
     val dividerType: DividerType = DividerType.SOLID,
     val dividerWidth: Int = 1,
     val dividerColor: String = "#E5E7EB",
-    val dividerAlpha: Float = 1.0f
+    val dividerAlpha: Float = 1.0f,
+    
+    // Course Settings
+    val maxDailySections: Int = 12,
+    val defaultCourseDuration: Int = 2
 )
 
 enum class DividerType {

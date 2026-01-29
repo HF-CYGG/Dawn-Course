@@ -195,6 +195,33 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Course Settings
+            Text(
+                text = "课程设置",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Max Daily Sections
+            Text("每天总节数: ${settings.maxDailySections}", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = settings.maxDailySections.toFloat(),
+                onValueChange = { viewModel.setMaxDailySections(it.toInt()) },
+                valueRange = 8f..16f,
+                steps = 7 // (16-8)/1 - 1 = 7 steps (8,9,10,11,12,13,14,15,16)
+            )
+
+            // Default Course Duration
+            Text("默认课程时长: ${settings.defaultCourseDuration} 节", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = settings.defaultCourseDuration.toFloat(),
+                onValueChange = { viewModel.setDefaultCourseDuration(it.toInt()) },
+                valueRange = 1f..4f,
+                steps = 2 // (4-1)/1 - 1 = 2 steps (1,2,3,4)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // Wallpaper
             Text(
                 text = "自定义壁纸",
