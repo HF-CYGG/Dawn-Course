@@ -1,6 +1,7 @@
 package com.dawncourse.feature.import_module.engine
 
 import app.cash.quickjs.QuickJs
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -21,49 +22,200 @@ class ScriptEngine @Inject constructor() {
      * @return 解析后的 JSON 字符串（后续可反序列化为 Course 列表）
      */
     fun parseHtml(script: String, html: String): String {
-        // 创建 QuickJS 上下文
         val quickJs = QuickJs.create()
-        
         return try {
-            // 1. 注入解析所需的上下文对象 (可选)
-            // quickJs.set("context", ...) 
-            
-            // 2. 编译并执行脚本
-            // 假设脚本中定义了一个全局函数 parse(html: String): String
+            setupRuntime(quickJs)
             quickJs.evaluate(script)
-            
-            // 3. 调用解析函数
-            // 注意：这里需要 JS 脚本必须提供一个名为 'main' 或 'parse' 的入口函数
-            // 为了通用性，我们约定脚本必须返回一个函数，或者定义一个名为 'parse' 的全局函数
-            
-            // 获取全局对象中的 parse 方法
-            // 方式一：直接执行调用语句
-            // val result = quickJs.evaluate("parse('$html')") 
-            
-            // 方式二：更安全的方式是将 HTML 作为参数传递，避免字符串拼接带来的转义问题
-            // 这里我们定义一个简单的接口映射
-            val parser = quickJs.get(ParserInterface::class.java, "globalThis")
-            parser.parse(html)
-            
+            executeScript(quickJs, html)
         } catch (e: Exception) {
             e.printStackTrace()
             throw RuntimeException("Script execution failed: ${e.message}")
         } finally {
-            // 必须释放 QuickJS 资源，防止内存泄漏
             quickJs.close()
         }
     }
-    
-    /**
-     * JS 脚本与 Kotlin 交互的接口定义
-     * 脚本环境中的 globalThis 必须实现此接口（即定义对应的 parse 函数）
-     */
-    interface ParserInterface {
-        /**
-         * 解析 HTML 字符串
-         * @param html 教务系统页面的 HTML 源码
-         * @return 解析结果的 JSON 字符串
-         */
-        fun parse(html: String): String
+
+    private fun setupRuntime(quickJs: QuickJs) {
+        quickJs.evaluate(
+            """
+            (function() {
+              if (!globalThis.console) {
+                globalThis.console = { log: function(){}, error: function(){}, warn: function(){} };
+              }
+              if (!globalThis.setTimeout) {
+                globalThis.setTimeout = function(fn, ms) { if (typeof fn === 'function') { fn(); } return 0; };
+              }
+              if (!globalThis.clearTimeout) {
+                globalThis.clearTimeout = function() {};
+              }
+              if (!globalThis.window) {
+                globalThis.window = globalThis;
+              }
+              if (!globalThis.document) {
+                globalThis.document = {};
+              }
+              if (!globalThis.__dc_normalize) {
+                globalThis.__dc_normalize = function(v) {
+                  if (typeof v === 'string') return v;
+                  if (v === undefined || v === null) return '';
+                  try { return JSON.stringify(v); } catch (e) { return String(v); }
+                };
+              }
+            })();
+            """.trimIndent()
+        )
+    }
+
+    private fun executeScript(quickJs: QuickJs, html: String): String {
+        val htmlJson = JSONObject.quote(html)
+        val isPromise = quickJs.evaluate(
+            """
+            (function() {
+              const __dc_html = $htmlJson;
+              const __dc_hasProvider = typeof scheduleHtmlProvider === 'function';
+              const __dc_hasParser = typeof scheduleHtmlParser === 'function';
+              const __dc_hasTimer = typeof scheduleTimer === 'function' && __dc_hasProvider;
+              const __dc_hasParse = typeof parse === 'function';
+              function __dc_isPromise(v) {
+                return v && typeof v.then === 'function';
+              }
+              function __dc_normalizeProvider(providerValue, timerValue) {
+                const providerStr = globalThis.__dc_normalize(providerValue);
+                if (!providerStr || providerStr === "do not continue" || timerValue === undefined) return providerStr;
+                try {
+                  const obj = JSON.parse(providerStr);
+                  if (obj && typeof obj === "object" && obj.timetable === undefined) {
+                    obj.timetable = timerValue;
+                    return JSON.stringify(obj);
+                  }
+                } catch (e) {}
+                return providerStr;
+              }
+              function __dc_finalize(providerValue, parserValue, timerValue) {
+                if (providerValue !== undefined) {
+                  return __dc_normalizeProvider(providerValue, timerValue);
+                }
+                if (parserValue !== undefined) {
+                  return globalThis.__dc_normalize(parserValue);
+                }
+                return globalThis.__dc_normalize(providerValue);
+              }
+              function __dc_runAfterProvider(providerValue) {
+                let parserValue = __dc_hasParser ? scheduleHtmlParser(providerValue) : undefined;
+                if (__dc_isPromise(parserValue)) {
+                  return Promise.resolve(parserValue).then(function(parserResolved) {
+                    const timerValue = __dc_hasTimer
+                      ? scheduleTimer({ providerRes: globalThis.__dc_normalize(providerValue), parserRes: parserResolved })
+                      : undefined;
+                    if (__dc_isPromise(timerValue)) {
+                      return Promise.resolve(timerValue).then(function(timerResolved) {
+                        return __dc_finalize(providerValue, parserResolved, timerResolved);
+                      });
+                    }
+                    return __dc_finalize(providerValue, parserResolved, timerValue);
+                  });
+                }
+                let timerValue = __dc_hasTimer
+                  ? scheduleTimer({ providerRes: globalThis.__dc_normalize(providerValue), parserRes: parserValue })
+                  : undefined;
+                if (__dc_isPromise(timerValue)) {
+                  return Promise.resolve(timerValue).then(function(timerResolved) {
+                    return __dc_finalize(providerValue, parserValue, timerResolved);
+                  });
+                }
+                return __dc_finalize(providerValue, parserValue, timerValue);
+              }
+              let __dc_entryResult;
+              if (__dc_hasProvider) {
+                __dc_entryResult = scheduleHtmlProvider(__dc_html, "", null);
+              } else if (__dc_hasParser) {
+                __dc_entryResult = scheduleHtmlParser(__dc_html);
+              } else if (__dc_hasParse) {
+                __dc_entryResult = parse(__dc_html);
+              } else {
+                throw new Error("No compatible entry function found");
+              }
+              globalThis.__dc_error = undefined;
+              globalThis.__dc_flowResolved = false;
+              globalThis.__dc_flowValue = "";
+              if (__dc_isPromise(__dc_entryResult)) {
+                Promise.resolve(__dc_entryResult)
+                  .then(function(resolvedEntry) {
+                    if (__dc_hasProvider) {
+                      const flowResult = __dc_runAfterProvider(resolvedEntry);
+                      if (__dc_isPromise(flowResult)) {
+                        return Promise.resolve(flowResult).then(function(finalResult) {
+                          globalThis.__dc_flowValue = finalResult;
+                          globalThis.__dc_flowResolved = true;
+                        });
+                      }
+                      globalThis.__dc_flowValue = flowResult;
+                      globalThis.__dc_flowResolved = true;
+                      return;
+                    }
+                    globalThis.__dc_flowValue = globalThis.__dc_normalize(resolvedEntry);
+                    globalThis.__dc_flowResolved = true;
+                  })
+                  .catch(function(e) {
+                    globalThis.__dc_error = String(e);
+                    globalThis.__dc_flowResolved = true;
+                  });
+                return true;
+              }
+              if (__dc_hasProvider) {
+                const flowResult = __dc_runAfterProvider(__dc_entryResult);
+                if (__dc_isPromise(flowResult)) {
+                  Promise.resolve(flowResult)
+                    .then(function(finalResult) {
+                      globalThis.__dc_flowValue = finalResult;
+                      globalThis.__dc_flowResolved = true;
+                    })
+                    .catch(function(e) {
+                      globalThis.__dc_error = String(e);
+                      globalThis.__dc_flowResolved = true;
+                    });
+                  return true;
+                }
+                globalThis.__dc_flowValue = flowResult;
+                globalThis.__dc_flowResolved = true;
+                return false;
+              }
+              globalThis.__dc_flowValue = globalThis.__dc_normalize(__dc_entryResult);
+              globalThis.__dc_flowResolved = true;
+              return false;
+            })();
+            """.trimIndent()
+        )
+        if (isPromise is Boolean && isPromise) {
+            if (hasPendingJobsSupport(quickJs)) {
+                repeat(200) {
+                    executePendingJobs(quickJs)
+                    val resolved = quickJs.evaluate("globalThis.__dc_flowResolved === true")
+                    if (resolved is Boolean && resolved) return@repeat
+                }
+            }
+        }
+        val error = quickJs.evaluate("globalThis.__dc_error")?.toString()
+        if (!error.isNullOrBlank()) {
+            throw RuntimeException(error)
+        }
+        return quickJs.evaluate("globalThis.__dc_flowValue")?.toString() ?: ""
+    }
+
+    private fun executePendingJobs(quickJs: QuickJs) {
+        val method = quickJs.javaClass.methods.firstOrNull {
+            it.name == "executePendingJobs" && it.parameterCount == 0
+        } ?: return
+        repeat(100) {
+            val result = method.invoke(quickJs)
+            when (result) {
+                is Boolean -> if (!result) return
+                is Int -> if (result == 0) return
+            }
+        }
+    }
+
+    private fun hasPendingJobsSupport(quickJs: QuickJs): Boolean {
+        return quickJs.javaClass.methods.any { it.name == "executePendingJobs" && it.parameterCount == 0 }
     }
 }

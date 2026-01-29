@@ -2,10 +2,8 @@ package com.dawncourse.feature.import_module
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -14,17 +12,18 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.dawncourse.feature.import_module.engine.ScriptEngine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -36,12 +35,23 @@ fun ImportScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // TODO: 使用 ViewModel 管理状态
-    val scriptEngine = remember { ScriptEngine() }
-    
-    var htmlContent by remember { mutableStateOf("") }
-    var resultText by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
+    val viewModel: ImportViewModel = hiltViewModel()
+    val uiState by viewModel.uiState.collectAsState()
+    val icsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            viewModel.runIcsImport(text)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collectLatest { event ->
+            if (event is ImportEvent.Success) {
+                onImportSuccess()
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -63,8 +73,8 @@ fun ImportScreen(
             Text("粘贴 HTML 源码或点击测试按钮：")
             
             OutlinedTextField(
-                value = htmlContent,
-                onValueChange = { htmlContent = it },
+                value = uiState.htmlContent,
+                onValueChange = { viewModel.updateHtmlContent(it) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -74,39 +84,40 @@ fun ImportScreen(
             Button(
                 onClick = {
                     scope.launch {
-                        isLoading = true
                         try {
-                            // 读取 assets 中的示例脚本
                             val script = context.assets.open("parsers/zhengfang.js").use { inputStream ->
                                 BufferedReader(InputStreamReader(inputStream)).readText()
                             }
-                            
-                            // 执行解析
-                            val result = scriptEngine.parseHtml(script, htmlContent)
-                            resultText = "解析成功:\n$result"
-                            onImportSuccess()
-                        } catch (e: Exception) {
-                            resultText = "解析失败: ${e.message}"
-                        } finally {
-                            isLoading = false
+                            viewModel.runImport(script)
+                        } catch (_: Exception) {
                         }
                     }
                 },
-                enabled = !isLoading,
+                enabled = !uiState.isLoading,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                if (isLoading) {
+                if (uiState.isLoading) {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterVertically))
                 } else {
                     Text("执行正方系统适配脚本")
                 }
             }
+
+            Button(
+                onClick = {
+                    icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*"))
+                },
+                enabled = !uiState.isLoading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("导入 ICS 文件")
+            }
             
-            if (resultText.isNotEmpty()) {
+            if (uiState.resultText.isNotEmpty()) {
                 Text(
-                    text = resultText,
+                    text = uiState.resultText,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (resultText.startsWith("解析失败")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    color = if (uiState.resultText.startsWith("解析失败")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                 )
             }
         }
