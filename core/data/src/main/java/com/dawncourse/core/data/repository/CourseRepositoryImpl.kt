@@ -53,6 +53,10 @@ class CourseRepositoryImpl @Inject constructor(
         return courseDao.insertCourse(course.toEntity())
     }
 
+    override suspend fun insertCourses(courses: List<Course>): List<Long> {
+        return courseDao.insertCourses(courses.map { it.toEntity() })
+    }
+
     /**
      * 更新课程
      */

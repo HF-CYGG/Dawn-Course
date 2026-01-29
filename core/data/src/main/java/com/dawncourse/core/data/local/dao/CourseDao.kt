@@ -45,6 +45,15 @@ interface CourseDao {
      */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCourse(course: CourseEntity): Long
+
+    /**
+     * 批量插入课程
+     *
+     * @param courses 课程列表
+     * @return 插入的主键列表
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCourses(courses: List<CourseEntity>): List<Long>
     
     /**
      * 更新课程

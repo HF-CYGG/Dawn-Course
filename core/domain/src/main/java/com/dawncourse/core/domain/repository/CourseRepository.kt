@@ -36,6 +36,14 @@ interface CourseRepository {
      * @return 返回新插入课程的 ID
      */
     suspend fun insertCourse(course: Course): Long
+
+    /**
+     * 批量插入课程
+     *
+     * @param courses 课程列表
+     * @return 插入的主键列表
+     */
+    suspend fun insertCourses(courses: List<Course>): List<Long>
     
     /**
      * 更新已有课程信息
