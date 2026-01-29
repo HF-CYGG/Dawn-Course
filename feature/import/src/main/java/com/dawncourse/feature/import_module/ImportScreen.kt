@@ -28,6 +28,16 @@ import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+/**
+ * 课程导入页面
+ *
+ * 提供多种课程导入方式：
+ * 1. 通过 HTML 源码配合 QuickJS 脚本解析导入（适配正方教务系统）
+ * 2. 通过 ICS (iCalendar) 文件导入
+ *
+ * @param onImportSuccess 导入成功后的回调
+ * @param modifier 修饰符
+ */
 @Composable
 fun ImportScreen(
     onImportSuccess: () -> Unit,

@@ -59,6 +59,17 @@ fun TimetableRoute(
     )
 }
 
+/**
+ * 课表界面 (Screen)
+ *
+ * 课表功能的主界面，包含顶部栏、周次头部、时间轴和课程网格。
+ *
+ * @param uiState UI 状态
+ * @param onAddClick 添加课程按钮点击回调
+ * @param onSettingsClick 设置按钮点击回调
+ * @param onCourseClick 课程点击回调，传入课程 ID
+ * @param onImportClick 导入按钮点击回调
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TimetableScreen(

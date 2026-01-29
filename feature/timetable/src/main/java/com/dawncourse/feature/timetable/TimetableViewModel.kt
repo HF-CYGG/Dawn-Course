@@ -59,12 +59,23 @@ class TimetableViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 删除课程
+     *
+     * @param course 要删除的课程对象
+     */
     fun deleteCourse(course: Course) {
         viewModelScope.launch {
             repository.deleteCourse(course)
         }
     }
 
+    /**
+     * 根据 ID 获取课程
+     *
+     * @param id 课程 ID
+     * @return 课程对象，若不存在返回 null
+     */
     suspend fun getCourse(id: Long): Course? {
         return repository.getCourseById(id)
     }

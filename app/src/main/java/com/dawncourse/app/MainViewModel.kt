@@ -9,10 +9,22 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
+/**
+ * 主 Activity 的 ViewModel
+ *
+ * 负责为 MainActivity 提供应用级别的状态，例如全局主题设置。
+ *
+ * @property settingsRepository 设置仓库，用于获取应用设置
+ */
 @HiltViewModel
 class MainViewModel @Inject constructor(
     settingsRepository: SettingsRepository
 ) : ViewModel() {
+    /**
+     * 全局应用设置状态流
+     *
+     * 用于在应用启动时应用用户偏好的主题（如动态取色、字体等）。
+     */
     val settings = settingsRepository.settings
         .stateIn(
             scope = viewModelScope,

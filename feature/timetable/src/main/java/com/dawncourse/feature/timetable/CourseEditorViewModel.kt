@@ -13,6 +13,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * 课程编辑器 ViewModel
+ *
+ * 负责管理课程编辑界面的状态，处理数据加载和保存逻辑。
+ *
+ * @property repository 课程数据仓库
+ * @property detectConflictUseCase 冲突检测用例（暂未使用，预留）
+ * @property savedStateHandle 用于获取导航参数 courseId
+ */
 @HiltViewModel
 class CourseEditorViewModel @Inject constructor(
     private val repository: CourseRepository,
@@ -36,6 +45,12 @@ class CourseEditorViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 保存课程
+     *
+     * @param course 要保存的课程对象
+     * @param onSaved 保存完成后的回调
+     */
     fun saveCourse(course: Course, onSaved: () -> Unit) {
         viewModelScope.launch {
             // Check conflicts

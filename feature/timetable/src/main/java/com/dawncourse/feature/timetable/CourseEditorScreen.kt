@@ -54,6 +54,15 @@ import com.dawncourse.core.domain.model.Course
 import kotlin.math.max
 import kotlin.math.min
 
+/**
+ * 课程编辑/添加界面
+ *
+ * 提供课程信息的输入表单，包括基本信息、上课时间、周次和颜色。
+ *
+ * @param course 要编辑的课程对象，若为 null 则表示添加新课程
+ * @param onBackClick 返回按钮点击回调
+ * @param onSaveClick 保存按钮点击回调，传入编辑后的 Course 对象
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun CourseEditorScreen(
@@ -276,6 +285,16 @@ fun CourseEditorScreen(
     }
 }
 
+/**
+ * 节次选择网格组件
+ *
+ * 显示 7x12 的微缩网格，用于选择上课时间（星期和节次）。
+ *
+ * @param selectedDay 当前选中的星期 (1-7)
+ * @param startNode 当前选中的开始节次 (1-12)
+ * @param duration 当前选中的持续节数
+ * @param onSelectionChange 选择变更回调 (day, start, duration)
+ */
 @Composable
 fun TimeGridSelector(
     selectedDay: Int,

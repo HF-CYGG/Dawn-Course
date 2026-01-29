@@ -11,6 +11,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
+/**
+ * 学期数据仓库的实现类
+ *
+ * 基于 Room 数据库实现学期数据的持久化存储。
+ * 负责协调 [SemesterDao] 进行数据库操作，并处理事务逻辑（如设置当前学期时清除其他标记）。
+ */
 class SemesterRepositoryImpl @Inject constructor(
     private val semesterDao: SemesterDao,
     private val database: AppDatabase
@@ -31,12 +37,8 @@ class SemesterRepositoryImpl @Inject constructor(
     }
 
     override suspend fun insertSemester(semester: Semester): Long {
-        // If this is the first semester, make it current by default if none exists?
-        // Or if isCurrent is true, clear others.
+        // 如果插入的学期被标记为当前学期，则需要在一个事务中清除其他学期的标记
         if (semester.isCurrent) {
-            // Need transaction? But we don't have ID yet if insert.
-            // Insert first, then clear others?
-            // Or use transaction.
             return database.withTransaction {
                 val id = semesterDao.insertSemester(semester.toEntity())
                 semesterDao.clearOtherCurrentFlags(id)

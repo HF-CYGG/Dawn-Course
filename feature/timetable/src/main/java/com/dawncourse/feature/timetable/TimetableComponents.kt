@@ -51,6 +51,13 @@ import kotlin.math.roundToInt
 val NODE_HEIGHT = 56.dp // 单节课高度
 val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 
+/**
+ * 周次头部栏组件
+ *
+ * 显示周一到周日，并高亮当前日期。
+ *
+ * @param modifier 修饰符
+ */
 @Composable
 fun WeekHeader(modifier: Modifier = Modifier) {
     val days = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -90,6 +97,13 @@ fun WeekHeader(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * 左侧时间轴指示器
+ *
+ * 显示节次数字 (1-12) 和对应的时间。
+ *
+ * @param modifier 修饰符
+ */
 @Composable
 fun TimeColumnIndicator(modifier: Modifier = Modifier) {
     Column(
@@ -191,6 +205,14 @@ fun TimetableGrid(
     }
 }
 
+/**
+ * 课程卡片组件
+ *
+ * 在网格中显示的单个课程块。
+ *
+ * @param course 课程数据
+ * @param onClick 点击回调
+ */
 @Composable
 fun CourseCard(
     course: Course,
@@ -238,6 +260,16 @@ fun CourseCard(
     }
 }
 
+/**
+ * 课程详情底部弹窗
+ *
+ * 显示课程的详细信息，提供编辑和删除操作入口。
+ *
+ * @param course 课程数据
+ * @param onDismissRequest 关闭弹窗回调
+ * @param onEditClick 编辑按钮点击回调
+ * @param onDeleteClick 删除按钮点击回调
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseDetailSheet(

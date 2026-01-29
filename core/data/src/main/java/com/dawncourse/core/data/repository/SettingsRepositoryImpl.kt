@@ -19,6 +19,11 @@ import javax.inject.Singleton
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+/**
+ * 设置数据仓库的实现类
+ *
+ * 使用 Jetpack DataStore (Preferences) 来持久化存储简单的键值对配置。
+ */
 @Singleton
 class SettingsRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context

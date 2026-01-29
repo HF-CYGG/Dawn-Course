@@ -35,6 +35,18 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.AppFontStyle
 
+/**
+ * 设置页面
+ *
+ * 提供应用程序的个性化设置选项，包括：
+ * - 动态取色 (Material You)
+ * - 背景透明度调整
+ * - 自定义壁纸
+ * - 字体样式选择
+ *
+ * @param onBackClick 返回按钮点击回调
+ * @param viewModel 设置页面的 ViewModel，负责管理设置状态
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(

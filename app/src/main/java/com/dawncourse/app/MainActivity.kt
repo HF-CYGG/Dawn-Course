@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
                         navController = navController,
                         startDestination = "timetable"
                     ) {
+                        // 课程表主页面
                         composable("timetable") {
                             TimetableRoute(
                                 onSettingsClick = {
@@ -82,6 +83,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
+                        
+                        // 设置页面
                         composable("settings") {
                             SettingsScreen(
                                 onBackClick = {
@@ -89,6 +92,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
+                        
+                        // 导入页面
                         composable("import") {
                             ImportScreen(
                                 onImportSuccess = {
@@ -96,6 +101,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
+                        
+                        // 课程编辑页面，支持添加新课程和编辑已有课程
                         composable(
                             route = "course_editor?courseId={courseId}",
                             arguments = listOf(navArgument("courseId") {
