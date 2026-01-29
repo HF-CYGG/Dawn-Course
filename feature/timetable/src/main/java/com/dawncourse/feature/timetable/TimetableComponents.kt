@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,8 +45,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
+import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.ui.theme.LocalAppSettings
+import com.dawncourse.feature.timetable.util.CourseColorUtils
 import java.time.LocalDate
 import kotlin.math.roundToInt
+
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 
 // 常量定义
 val NODE_HEIGHT = 56.dp // 单节课高度
@@ -142,6 +152,7 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
 @Composable
 fun TimetableGrid(
     courses: List<Course>,
+    currentWeek: Int,
     modifier: Modifier = Modifier,
     onCourseClick: (Course) -> Unit
 ) {
@@ -149,34 +160,104 @@ fun TimetableGrid(
     val maxNodes = 12
     val totalHeight = NODE_HEIGHT * maxNodes
     
+    val settings = LocalAppSettings.current
+    val dividerColor = try {
+        Color(android.graphics.Color.parseColor(settings.dividerColor))
+    } catch (e: Exception) { Color(0xFFE5E7EB) }.copy(alpha = settings.dividerAlpha)
+    
+    val strokeWidth = with(androidx.compose.ui.platform.LocalDensity.current) { settings.dividerWidth.dp.toPx() }
+    val pathEffect = when (settings.dividerType) {
+        DividerType.SOLID -> null
+        DividerType.DASHED -> PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+        DividerType.DOTTED -> PathEffect.dashPathEffect(floatArrayOf(2f, 4f), 0f)
+    }
+
+    // 1. Prepare display list
+    // Filter and process courses
+    val courseGroups = courses.groupBy { "${it.dayOfWeek}-${it.startSection}" }
+    val displayList = remember(courses, currentWeek) {
+        val list = mutableListOf<Pair<Course, Boolean>>() // Course, isCurrentWeek
+        courseGroups.forEach { (_, group) ->
+            // Conflict resolution logic
+            val currentWeekCourses = group.filter { course ->
+                val isWeekActive = course.startWeek <= currentWeek && course.endWeek >= currentWeek
+                val isWeekParityMatch = when (course.weekType) {
+                    Course.WEEK_TYPE_ALL -> true
+                    Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
+                    Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
+                    else -> true
+                }
+                isWeekActive && isWeekParityMatch
+            }
+            
+            // Priority: Current Week > Non-Current Week (First one)
+            // Fixes overlap by ensuring only ONE course is displayed per slot
+            val targetCourse = if (currentWeekCourses.isNotEmpty()) {
+                currentWeekCourses.first() // If multiple current (conflict), pick first
+            } else {
+                group.first() // If no current, pick first available (non-current)
+            }
+            
+            val isCurrent = currentWeekCourses.contains(targetCourse)
+            list.add(targetCourse to isCurrent)
+        }
+        list
+    }
+
     Layout(
         content = {
-            courses.forEach { course ->
+            displayList.forEach { (course, isCurrentWeek) ->
                 CourseCard(
                     course = course,
+                    isCurrentWeek = isCurrentWeek,
                     onClick = { onCourseClick(course) }
                 )
             }
         },
-        modifier = modifier.height(totalHeight)
+        modifier = modifier
+            .height(totalHeight)
+            .drawBehind {
+                val width = size.width
+                val height = size.height
+                val cellWidth = width / 7
+                val nodeHeightPx = NODE_HEIGHT.toPx()
+
+                // Draw vertical lines
+                for (i in 1..7) {
+                    drawLine(
+                        color = dividerColor,
+                        start = Offset(i * cellWidth, 0f),
+                        end = Offset(i * cellWidth, height),
+                        strokeWidth = strokeWidth,
+                        pathEffect = pathEffect
+                    )
+                }
+                
+                // Draw horizontal lines
+                for (i in 0..maxNodes) {
+                    drawLine(
+                        color = dividerColor,
+                        start = Offset(0f, i * nodeHeightPx),
+                        end = Offset(width, i * nodeHeightPx),
+                        strokeWidth = strokeWidth,
+                        pathEffect = pathEffect
+                    )
+                }
+            }
     ) { measurables, constraints ->
         // 1. 计算基础尺寸
         val width = constraints.maxWidth
         val cellWidth = width / 7
         val nodeHeightPx = NODE_HEIGHT.toPx()
         
-        // 2. 预先计算布局信息 (处理冲突)
-        // 简单的冲突处理：如果同一天同一节有多个课程，则重叠显示或暂不处理（高级冲突处理需要复杂算法）
-        // 这里我们简单实现：计算位置，不处理重叠时的宽度缩减（后续可优化）
-        
-        // 3. 测量所有子元素
+        // 2. 测量所有子元素
         val placeables = measurables.mapIndexed { index, measurable ->
-            val course = courses[index]
+            val (course, _) = displayList[index]
             val span = course.duration
             val height = (span * nodeHeightPx).roundToInt()
             
             // 宽度略微减小以留出间隙
-            val placeableWidth = (cellWidth * 0.95f).roundToInt()
+            val placeableWidth = (cellWidth * 0.96f).roundToInt()
             
             measurable.measure(
                 constraints.copy(
@@ -190,11 +271,11 @@ fun TimetableGrid(
         
         layout(width, (maxNodes * nodeHeightPx).roundToInt()) {
             placeables.forEachIndexed { index, placeable ->
-                val course = courses[index]
+                val (course, _) = displayList[index]
                 
                 // 计算位置
                 // X: (dayOfWeek - 1) * cellWidth
-                val x = ((course.dayOfWeek - 1) * cellWidth) + (cellWidth * 0.025f).roundToInt()
+                val x = ((course.dayOfWeek - 1) * cellWidth) + (cellWidth * 0.02f).roundToInt()
                 
                 // Y: (startSection - 1) * nodeHeight
                 val y = ((course.startSection - 1) * nodeHeightPx).roundToInt()
@@ -211,50 +292,75 @@ fun TimetableGrid(
  * 在网格中显示的单个课程块。
  *
  * @param course 课程数据
+ * @param isCurrentWeek 是否为本周课程 (非本周课程显示半透明)
  * @param onClick 点击回调
  */
 @Composable
 fun CourseCard(
     course: Course,
+    isCurrentWeek: Boolean,
     onClick: () -> Unit
 ) {
-    val backgroundColor = if (course.color.isNotEmpty()) {
-        try {
-            Color(android.graphics.Color.parseColor(course.color))
-        } catch (e: Exception) {
-            MaterialTheme.colorScheme.secondaryContainer
-        }
-    } else {
-        MaterialTheme.colorScheme.secondaryContainer
-    }
+    val backgroundColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
+    val containerColor = backgroundColor.copy(alpha = if (isCurrentWeek) 1f else 0.4f)
+    
+    // 根据背景色（不透明）计算最佳文本颜色，确保对比度
+    val contentColor = CourseColorUtils.getBestContentColor(backgroundColor)
 
-    Box(
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isCurrentWeek) 2.dp else 0.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(8.dp))
-            .background(backgroundColor.copy(alpha = 0.9f))
-            .clickable(onClick = onClick)
-            .padding(4.dp)
+            .padding(2.dp)
     ) {
-        Column {
+        Column(
+            modifier = Modifier
+                .padding(6.dp)
+                .fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(
                 text = course.name,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    lineHeight = 16.sp
+                ),
+                color = contentColor,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
-            if (course.location.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "@${course.location}",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontSize = 8.sp,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            
+            Column(verticalArrangement = Arrangement.Bottom) {
+                // Location (Priority 2: Display above teacher, allow 2 lines)
+                if (course.location.isNotEmpty()) {
+                    Text(
+                        text = "@${course.location}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold, // Bold for visibility
+                        color = contentColor, // Full opacity
+                        maxLines = 2, // Allow wrapping
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 13.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+
+                // Teacher (Priority 3: Smaller, below location)
+                if (course.teacher.isNotEmpty()) {
+                    Text(
+                        text = course.teacher,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
+                        color = contentColor.copy(alpha = 0.8f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

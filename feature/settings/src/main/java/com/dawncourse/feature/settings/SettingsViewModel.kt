@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
+import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -79,6 +80,50 @@ class SettingsViewModel @Inject constructor(
     fun setWallpaperUri(uri: String?) {
         viewModelScope.launch {
             settingsRepository.setWallpaperUri(uri)
+        }
+    }
+
+    /**
+     * 设置课表分割线样式
+     *
+     * @param type 分割线样式 [DividerType]
+     */
+    fun setDividerType(type: DividerType) {
+        viewModelScope.launch {
+            settingsRepository.setDividerType(type)
+        }
+    }
+
+    /**
+     * 设置课表分割线宽度
+     *
+     * @param width 宽度值 (px)
+     */
+    fun setDividerWidth(width: Int) {
+        viewModelScope.launch {
+            settingsRepository.setDividerWidth(width)
+        }
+    }
+
+    /**
+     * 设置课表分割线颜色
+     *
+     * @param color 颜色 Hex 字符串
+     */
+    fun setDividerColor(color: String) {
+        viewModelScope.launch {
+            settingsRepository.setDividerColor(color)
+        }
+    }
+
+    /**
+     * 设置课表分割线不透明度
+     *
+     * @param alpha 不透明度 (0.0 - 1.0)
+     */
+    fun setDividerAlpha(alpha: Float) {
+        viewModelScope.launch {
+            settingsRepository.setDividerAlpha(alpha)
         }
     }
 }

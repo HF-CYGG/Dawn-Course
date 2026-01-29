@@ -35,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.AppFontStyle
 
+import androidx.compose.material3.OutlinedTextField
+import com.dawncourse.core.domain.model.DividerType
+
 /**
  * 设置页面
  *
@@ -43,6 +46,7 @@ import com.dawncourse.core.domain.model.AppFontStyle
  * - 背景透明度调整
  * - 自定义壁纸
  * - 字体样式选择
+ * - 课表分割线设置
  *
  * @param onBackClick 返回按钮点击回调
  * @param viewModel 设置页面的 ViewModel，负责管理设置状态
@@ -92,6 +96,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            // ... (Existing Settings) ...
             // Dynamic Color
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -129,6 +134,63 @@ fun SettingsScreen(
             Text(
                 text = "当前值: ${(settings.transparency * 100).toInt()}%",
                 style = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Divider Settings
+            Text(
+                text = "课表分割线",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Type
+            Text("样式", style = MaterialTheme.typography.bodyMedium)
+            Row {
+                DividerType.entries.forEach { type ->
+                    val selected = settings.dividerType == type
+                    Button(
+                        onClick = { viewModel.setDividerType(type) },
+                        modifier = Modifier.padding(end = 8.dp),
+                        enabled = !selected
+                    ) {
+                        Text(
+                            when(type) {
+                                DividerType.SOLID -> "实线"
+                                DividerType.DASHED -> "虚线"
+                                DividerType.DOTTED -> "点线"
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Width
+            Text("宽度: ${settings.dividerWidth}px", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = settings.dividerWidth.toFloat(),
+                onValueChange = { viewModel.setDividerWidth(it.toInt()) },
+                valueRange = 1f..4f,
+                steps = 2
+            )
+            
+            // Color
+            OutlinedTextField(
+                value = settings.dividerColor,
+                onValueChange = { viewModel.setDividerColor(it) },
+                label = { Text("颜色 (Hex)") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Alpha
+            Text("不透明度: ${(settings.dividerAlpha * 100).toInt()}%", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = settings.dividerAlpha,
+                onValueChange = { viewModel.setDividerAlpha(it) },
+                valueRange = 0f..1f
             )
 
             Spacer(modifier = Modifier.height(24.dp))

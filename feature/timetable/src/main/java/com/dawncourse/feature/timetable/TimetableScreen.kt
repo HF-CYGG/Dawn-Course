@@ -36,6 +36,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import java.time.LocalDate
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.ExperimentalFoundationApi
 
 /**
  * 课表功能入口路由 (Composable Route)
@@ -63,21 +68,16 @@ fun TimetableRoute(
  * 课表界面 (Screen)
  *
  * 课表功能的主界面，包含顶部栏、周次头部、时间轴和课程网格。
- *
- * @param uiState UI 状态
- * @param onAddClick 添加课程按钮点击回调
- * @param onSettingsClick 设置按钮点击回调
- * @param onCourseClick 课程点击回调，传入课程 ID
- * @param onImportClick 导入按钮点击回调
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun TimetableScreen(
     uiState: TimetableUiState,
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
-    onImportClick: () -> Unit
+    onImportClick: () -> Unit,
+    viewModel: TimetableViewModel = hiltViewModel() // Optional injection for internal state updates
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
@@ -111,9 +111,24 @@ internal fun TimetableScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
+                // Determine current week (Real world week)
+                val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
+                val maxWeeks = 30 // Fixed max weeks for semester
+                
+                // Pager State
+                // Initial page is set to realCurrentWeek - 1. 
+                // We use a key to ensure it only resets if the semester changes (not implemented yet, so effectively once)
+                val pagerState = rememberPagerState(
+                    initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
+                    pageCount = { maxWeeks }
+                )
+                
+                // Calculate displayed week from pager state
+                val displayedWeek = pagerState.currentPage + 1
+                
                 // 1. 顶部栏 (透明背景)
                 TimetableTopBar(
-                    currentWeek = 1, // TODO: 从 ViewModel 获取
+                    currentWeek = displayedWeek,
                     onSettingsClick = onSettingsClick,
                     onImportClick = onImportClick
                 )
@@ -122,32 +137,40 @@ internal fun TimetableScreen(
                 WeekHeader()
 
                 // 3. 可滚动的课表区域
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    // 左侧时间轴 (固定宽度)
-                    TimeColumnIndicator(
-                        modifier = Modifier.width(32.dp)
-                    )
-
-                    // 右侧课程网格
-                    if (uiState is TimetableUiState.Success) {
-                        TimetableGrid(
-                            courses = uiState.courses,
-                            modifier = Modifier.weight(1f),
-                            onCourseClick = { course -> selectedCourse = course }
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f)
+                ) { page ->
+                    val week = page + 1
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        // 左侧时间轴 (固定宽度)
+                        TimeColumnIndicator(
+                            modifier = Modifier.width(32.dp)
                         )
-                    } else {
-                        // 空状态或加载状态
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(top = 100.dp),
-                            contentAlignment = androidx.compose.ui.Alignment.Center
-                        ) {
-                            Text("暂无课程", style = MaterialTheme.typography.bodyLarge)
+
+                        // 右侧课程网格
+                        if (uiState is TimetableUiState.Success) {
+                            TimetableGrid(
+                                courses = uiState.courses,
+                                currentWeek = week,
+                                modifier = Modifier.weight(1f),
+                                onCourseClick = { course -> selectedCourse = course }
+                            )
+                        } else {
+                            // 空状态或加载状态
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(top = 100.dp),
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                            }
                         }
                     }
                 }
@@ -193,7 +216,7 @@ private fun TimetableTopBar(
                     )
                 )
                 Text(
-                    text = LocalDate.now().toString(),
+                    text = LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("M月d日 EEEE", java.util.Locale.CHINA)),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

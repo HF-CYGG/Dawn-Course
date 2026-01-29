@@ -6,10 +6,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
+import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +38,10 @@ class SettingsRepositoryImpl @Inject constructor(
         val WALLPAPER_URI = stringPreferencesKey("wallpaper_uri")
         val TRANSPARENCY = floatPreferencesKey("transparency")
         val FONT_STYLE = stringPreferencesKey("font_style")
+        val DIVIDER_TYPE = stringPreferencesKey("divider_type")
+        val DIVIDER_WIDTH = intPreferencesKey("divider_width")
+        val DIVIDER_COLOR = stringPreferencesKey("divider_color")
+        val DIVIDER_ALPHA = floatPreferencesKey("divider_alpha")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -48,12 +54,24 @@ class SettingsRepositoryImpl @Inject constructor(
         } catch (e: IllegalArgumentException) {
             AppFontStyle.SYSTEM
         }
+        
+        val dividerTypeName = preferences[PreferencesKeys.DIVIDER_TYPE] ?: DividerType.SOLID.name
+        val dividerType = try {
+            DividerType.valueOf(dividerTypeName)
+        } catch (e: Exception) { DividerType.SOLID }
+        val dividerWidth = preferences[PreferencesKeys.DIVIDER_WIDTH] ?: 1
+        val dividerColor = preferences[PreferencesKeys.DIVIDER_COLOR] ?: "#E5E7EB"
+        val dividerAlpha = preferences[PreferencesKeys.DIVIDER_ALPHA] ?: 1.0f
 
         AppSettings(
             dynamicColor = dynamicColor,
             wallpaperUri = wallpaperUri,
             transparency = transparency,
-            fontStyle = fontStyle
+            fontStyle = fontStyle,
+            dividerType = dividerType,
+            dividerWidth = dividerWidth,
+            dividerColor = dividerColor,
+            dividerAlpha = dividerAlpha
         )
     }
 
@@ -82,6 +100,30 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setFontStyle(style: AppFontStyle) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.FONT_STYLE] = style.name
+        }
+    }
+
+    override suspend fun setDividerType(type: DividerType) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.DIVIDER_TYPE] = type.name
+        }
+    }
+
+    override suspend fun setDividerWidth(width: Int) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.DIVIDER_WIDTH] = width
+        }
+    }
+
+    override suspend fun setDividerColor(color: String) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.DIVIDER_COLOR] = color
+        }
+    }
+
+    override suspend fun setDividerAlpha(alpha: Float) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.DIVIDER_ALPHA] = alpha
         }
     }
 }

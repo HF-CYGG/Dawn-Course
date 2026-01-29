@@ -431,21 +431,55 @@ private fun ReviewStep(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     
-    // Date Picker Dialog
-    val datePickerDialog = remember {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = uiState.semesterStartDate
-        android.app.DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                val selected = java.util.Calendar.getInstance()
-                selected.set(year, month, dayOfMonth, 0, 0, 0)
-                viewModel.updateSemesterSettings(selected.timeInMillis, uiState.weekCount)
-            },
-            calendar.get(java.util.Calendar.YEAR),
-            calendar.get(java.util.Calendar.MONTH),
-            calendar.get(java.util.Calendar.DAY_OF_MONTH)
-        )
+    // M3 Date Picker State
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = uiState.semesterStartDate,
+        initialDisplayedMonthMillis = uiState.semesterStartDate
+    )
+    
+    // Handle Date Selection
+    if (showDatePicker) {
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        val locale = java.util.Locale.SIMPLIFIED_CHINESE
+        val newConfiguration = android.content.res.Configuration(configuration).apply {
+            setLocale(locale)
+        }
+        
+        CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalConfiguration provides newConfiguration
+        ) {
+            DatePickerDialog(
+                onDismissRequest = { showDatePicker = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { millis ->
+                                viewModel.updateSemesterSettings(millis, uiState.weekCount)
+                            }
+                            showDatePicker = false
+                        }
+                    ) {
+                        Text("确定")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDatePicker = false }) {
+                        Text("取消")
+                    }
+                }
+            ) {
+                DatePicker(
+                    state = datePickerState,
+                    title = {
+                        Text(
+                            text = "选择日期",
+                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
+                        )
+                    }
+                )
+            }
+        }
     }
 
     Scaffold(
@@ -496,7 +530,7 @@ private fun ReviewStep(
                         
                         // Start Date
                         OutlinedButton(
-                            onClick = { datePickerDialog.show() },
+                            onClick = { showDatePicker = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             val date = Instant.ofEpochMilli(uiState.semesterStartDate)

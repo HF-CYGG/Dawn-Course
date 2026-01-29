@@ -7,41 +7,61 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 sealed interface TimetableUiState {
     data object Loading : TimetableUiState
-    data class Success(val courses: List<Course>) : TimetableUiState
+    data class Success(
+        val courses: List<Course>,
+        val currentWeek: Int,
+        val totalWeeks: Int = 20
+    ) : TimetableUiState
 }
 
-/**
- * 课表功能的 ViewModel
- *
- * 负责管理课表界面的 UI 状态，并与 Repository 层交互。
- * 使用 Hilt 进行依赖注入，自动获取 Repository 实例。
- *
- * @property repository 课程数据仓库，用于获取和操作课程数据
- */
 @HiltViewModel
 class TimetableViewModel @Inject constructor(
-    private val repository: CourseRepository
+    private val repository: CourseRepository,
+    private val semesterRepository: SemesterRepository,
+    private val calculateWeekUseCase: CalculateWeekUseCase
 ) : ViewModel() {
 
-    /**
-     * 课程列表状态流 (StateFlow)
-     *
-     * 从 Repository 获取课程 Flow，并将其转换为 StateFlow 以供 Compose UI 订阅。
-     */
-    val uiState: StateFlow<TimetableUiState> = repository.getAllCourses()
-        .map { TimetableUiState.Success(it) }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = TimetableUiState.Loading
-        )
+    private val _currentWeek = MutableStateFlow(1)
+    
+    init {
+        viewModelScope.launch {
+            val semester = semesterRepository.getCurrentSemester().first()
+            if (semester != null) {
+                val week = calculateWeekUseCase(semester.startDate)
+                // Ensure week is within range
+                val validWeek = week.coerceIn(1, semester.weekCount)
+                _currentWeek.value = validWeek
+            }
+        }
+    }
+
+    val uiState: StateFlow<TimetableUiState> = combine(
+        repository.getAllCourses(),
+        _currentWeek
+    ) { courses, currentWeek ->
+        TimetableUiState.Success(courses, currentWeek)
+    }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = TimetableUiState.Loading
+    )
+
+    fun updateCurrentWeek(week: Int) {
+        _currentWeek.update { week }
+    }
 
     /**
      * 添加测试课程
