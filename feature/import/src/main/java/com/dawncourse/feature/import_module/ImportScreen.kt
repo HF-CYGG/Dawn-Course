@@ -76,7 +76,7 @@ fun ImportScreen(
     }
 
     when (uiState.step) {
-        ImportStep.Input -> InputStep(viewModel, script, modifier)
+        ImportStep.Input -> InputStep(viewModel, modifier)
         ImportStep.WebView -> WebViewStep(viewModel, script, modifier)
         ImportStep.Review -> ReviewStep(viewModel, modifier)
     }
@@ -86,7 +86,6 @@ fun ImportScreen(
 @Composable
 private fun InputStep(
     viewModel: ImportViewModel,
-    script: String,
     modifier: Modifier
 ) {
     val context = LocalContext.current
@@ -322,7 +321,7 @@ private fun WebViewStep(
                         webView = this
                     }
                 },
-                update = { view ->
+                update = { _ ->
                     // View update logic if needed
                 },
                 modifier = Modifier
