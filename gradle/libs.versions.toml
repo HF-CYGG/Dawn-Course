@@ -17,9 +17,11 @@ coroutines = "1.7.3" # Kotlin 协程
 navigation-compose = "2.7.7" # Compose 导航组件
 glance = "1.0.0" # 桌面小组件 (Widget) 框架
 work = "2.9.0" # WorkManager 后台任务
+datastore = "1.0.0" # DataStore 数据存储
 quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
 hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
+coil = "2.6.0" # 图片加载框架
 
 # 库依赖定义 (Libraries)
 [libraries]
@@ -67,11 +69,13 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 # Misc
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
 quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
 # Future Phases (Widget & WorkManager)
 glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
 work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 
 # 插件定义 (Plugins)
 [plugins]

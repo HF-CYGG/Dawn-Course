@@ -1,30 +1,23 @@
 plugins {
-    alias(libs.plugins.androidApplication)
+    alias(libs.plugins.androidLibrary)
     alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
 }
 
 android {
-    namespace = "com.dawncourse.app"
+    namespace = "com.dawncourse.feature.widget"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.dawncourse.app"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
-        }
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false // For now
+            isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -41,32 +34,30 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
-    }
 }
 
 dependencies {
-    implementation(project(":core:data"))
     implementation(project(":core:domain"))
+    implementation(project(":core:data"))
     implementation(project(":core:ui"))
-    implementation(project(":feature:timetable"))
-    implementation(project(":feature:widget"))
-    implementation(project(":feature:settings"))
 
+    // Glance
+    implementation(libs.glance.appwidget)
+    implementation(libs.glance.material3)
+    
+    // WorkManager
+    implementation(libs.work.runtime.ktx)
+
+    // Hilt
     implementation(libs.hilt.android)
-    implementation(libs.hilt.navigation.compose)
     ksp(libs.hilt.compiler)
-
+    
+    // Coroutines
+    implementation(libs.coroutines.core)
+    implementation(libs.coroutines.android)
+    
+    // Compose (Glance uses Compose runtime)
     implementation(platform(libs.compose.bom))
     implementation(libs.ui)
-    implementation(libs.ui.graphics)
     implementation(libs.ui.tooling.preview)
-    implementation(libs.material3)
-
-    implementation(libs.activity.compose)
-    implementation(libs.navigation.compose)
-    implementation(libs.coil.compose)
 }

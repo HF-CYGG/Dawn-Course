@@ -6,6 +6,8 @@ import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.data.repository.SettingsRepositoryImpl
+import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.Module
 import dagger.Provides
 import dagger.Binds
@@ -72,4 +74,10 @@ abstract class RepositoryModule {
     abstract fun bindCourseRepository(
         impl: CourseRepositoryImpl
     ): CourseRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSettingsRepository(
+        impl: SettingsRepositoryImpl
+    ): SettingsRepository
 }

@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.ui.theme.LocalAppSettings
 import java.time.LocalDate
 
 /**
@@ -40,14 +41,15 @@ import java.time.LocalDate
  */
 @Composable
 fun TimetableRoute(
-    viewModel: TimetableViewModel = hiltViewModel()
+    viewModel: TimetableViewModel = hiltViewModel(),
+    onSettingsClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
         onAddClick = { /* TODO */ },
-        onSettingsClick = { /* TODO */ }
+        onSettingsClick = onSettingsClick
     )
 }
 
@@ -60,6 +62,13 @@ internal fun TimetableScreen(
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
+    
+    val settings = LocalAppSettings.current
+    val containerColor = if (settings.wallpaperUri != null) {
+        MaterialTheme.colorScheme.background.copy(alpha = 1f - settings.transparency)
+    } else {
+        MaterialTheme.colorScheme.background
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -72,7 +81,7 @@ internal fun TimetableScreen(
             }
         },
         // 沉浸式设计：背景延伸到全屏，TopBar 背景透明
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = containerColor
     ) { padding ->
         // 使用 Box 容纳背景和内容
         Box(

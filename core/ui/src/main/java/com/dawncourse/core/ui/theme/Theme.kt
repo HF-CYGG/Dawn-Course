@@ -9,11 +9,14 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import com.dawncourse.core.domain.model.AppSettings
 
 // 深色模式配色方案
 private val DarkColorScheme = darkColorScheme(
@@ -27,17 +30,9 @@ private val LightColorScheme = lightColorScheme(
     primary = Purple40,
     secondary = PurpleGrey40,
     tertiary = Pink40
-    
-    /* 其他可覆盖的默认颜色:
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
 )
+
+val LocalAppSettings = staticCompositionLocalOf { AppSettings() }
 
 /**
  * 应用全局主题 Composable
@@ -45,21 +40,20 @@ private val LightColorScheme = lightColorScheme(
  * 负责提供 Material Design 3 的上下文环境，包括颜色、排版等。
  * 支持 Android 12+ 的动态取色 (Dynamic Color) 功能。
  *
+ * @param appSettings 应用设置（动态取色、字体等）
  * @param darkTheme 是否使用深色主题，默认为系统设置
- * @param dynamicColor 是否开启动态取色（仅 Android 12+ 有效），默认开启
  * @param content 需要被主题包裹的 UI 内容
  */
 @Composable
 fun DawnTheme(
+    appSettings: AppSettings = AppSettings(),
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     // 确定当前使用的配色方案
     val colorScheme = when {
         // 如果开启动态取色且系统版本支持，则使用系统生成的动态配色
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        appSettings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
@@ -80,10 +74,13 @@ fun DawnTheme(
         }
     }
 
-    // 提供 MaterialTheme 上下文
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    val typography = getTypography(appSettings.fontStyle)
+
+    CompositionLocalProvider(LocalAppSettings provides appSettings) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = typography,
+            content = content
+        )
+    }
 }
