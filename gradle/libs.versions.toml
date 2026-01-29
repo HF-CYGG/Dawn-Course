@@ -1,0 +1,81 @@
+# 版本定义 (Versions)
+[versions]
+agp = "8.2.2" # Android Gradle Plugin 版本
+kotlin = "1.9.22" # Kotlin 语言版本
+core-ktx = "1.12.0" # Android Core KTX 扩展
+junit = "4.13.2" # 单元测试框架
+androidx-test-ext-junit = "1.1.5" # Android JUnit 扩展
+espresso-core = "3.5.1" # UI 测试框架
+lifecycle-runtime-ktx = "2.7.0" # Lifecycle KTX (ViewModel, LiveData 等)
+activity-compose = "1.8.2" # Compose Activity 支持
+compose-bom = "2024.02.00" # Compose Bill of Materials (BOM) 版本控制
+hilt = "2.50" # Hilt 依赖注入框架
+room = "2.6.1" # Room 数据库框架
+sqlcipher = "4.5.4" # SQLCipher 数据库加密
+ksp = "1.9.22-1.0.17" # Kotlin Symbol Processing (替代 kapt)
+coroutines = "1.7.3" # Kotlin 协程
+navigation-compose = "2.7.7" # Compose 导航组件
+glance = "1.0.0" # 桌面小组件 (Widget) 框架
+work = "2.9.0" # WorkManager 后台任务
+quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
+hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
+javax-inject = "1" # Java 注入标准注解
+
+# 库依赖定义 (Libraries)
+[libraries]
+# AndroidX Core
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }
+
+# Testing
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-ext-junit" }
+espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso-core" }
+ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+
+# Lifecycle
+lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle-runtime-ktx" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
+
+# Compose (通过 BOM 管理版本)
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "compose-bom" }
+ui = { group = "androidx.compose.ui", name = "ui" }
+ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+material3 = { group = "androidx.compose.material3", name = "material3" }
+material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+
+# Hilt Dependency Injection
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
+hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
+
+# Room Database
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+sqlcipher = { group = "net.zetetic", name = "android-database-sqlcipher", version.ref = "sqlcipher" }
+
+# Coroutines
+coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# Navigation
+navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation-compose" }
+
+# Misc
+javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
+
+# Future Phases (Widget & WorkManager)
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }
+work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+
+# 插件定义 (Plugins)
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+hiltAndroid = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
