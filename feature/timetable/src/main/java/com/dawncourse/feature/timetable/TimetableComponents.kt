@@ -63,7 +63,7 @@ import androidx.compose.material3.CardDefaults
 // 常量定义
 val NODE_HEIGHT = 56.dp // 单节课高度
 val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
-val TIME_COLUMN_WIDTH = 30.dp // 左侧时间轴宽度
+val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
 
 /**
  * 周次头部栏组件
@@ -71,9 +71,13 @@ val TIME_COLUMN_WIDTH = 30.dp // 左侧时间轴宽度
  * 显示周一到周日，并高亮当前日期。
  *
  * @param modifier 修饰符
+ * @param isCurrentWeek 是否为本周 (只有本周才高亮今天)
  */
 @Composable
-fun WeekHeader(modifier: Modifier = Modifier) {
+fun WeekHeader(
+    modifier: Modifier = Modifier,
+    isCurrentWeek: Boolean
+) {
     val days = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
     val today = LocalDate.now().dayOfWeek.value // 1 (Mon) - 7 (Sun)
     
@@ -86,7 +90,7 @@ fun WeekHeader(modifier: Modifier = Modifier) {
     ) {
         days.forEachIndexed { index, day ->
             val dayValue = index + 1
-            val isToday = dayValue == today
+            val isToday = isCurrentWeek && (dayValue == today)
             
             Box(
                 modifier = Modifier.weight(1f),

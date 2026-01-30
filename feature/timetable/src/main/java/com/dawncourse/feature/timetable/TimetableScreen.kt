@@ -142,6 +142,7 @@ internal fun TimetableScreen(
                 // 1. 顶部栏 (透明背景)
                 TimetableTopBar(
                     currentWeek = displayedWeek,
+                    isRealCurrentWeek = displayedWeek == realCurrentWeek,
                     onSettingsClick = onSettingsClick,
                     onImportClick = onImportClick
                 )
@@ -162,9 +163,6 @@ internal fun TimetableScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                // 2. 星期栏头部
-                WeekHeader()
-
                 // 3. 可滚动的课表区域
                 HorizontalPager(
                     state = pagerState,
@@ -172,33 +170,36 @@ internal fun TimetableScreen(
                 ) { page ->
                     val week = page + 1
                     
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        // 左侧时间轴 (固定宽度)
-                        TimeColumnIndicator(
-                            modifier = Modifier.width(32.dp)
-                        )
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // 2. 星期栏头部 (跟随页面滑动)
+                        WeekHeader(isCurrentWeek = week == realCurrentWeek)
 
-                        // 右侧课程网格
-                        if (uiState is TimetableUiState.Success) {
-                            TimetableGrid(
-                                courses = uiState.courses,
-                                currentWeek = week,
-                                modifier = Modifier.weight(1f),
-                                onCourseClick = { course -> selectedCourse = course }
-                            )
-                        } else {
-                            // 空状态或加载状态
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(top = 100.dp),
-                                contentAlignment = androidx.compose.ui.Alignment.Center
-                            ) {
-                                Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            // 左侧时间轴 (固定宽度)
+                            TimeColumnIndicator()
+
+                            // 右侧课程网格
+                            if (uiState is TimetableUiState.Success) {
+                                TimetableGrid(
+                                    courses = uiState.courses,
+                                    currentWeek = week,
+                                    modifier = Modifier.weight(1f),
+                                    onCourseClick = { course -> selectedCourse = course }
+                                )
+                            } else {
+                                // 空状态或加载状态
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(top = 100.dp),
+                                    contentAlignment = androidx.compose.ui.Alignment.Center
+                                ) {
+                                    Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                                }
                             }
                         }
                     }
@@ -228,6 +229,7 @@ internal fun TimetableScreen(
 @Composable
 private fun TimetableTopBar(
     currentWeek: Int,
+    isRealCurrentWeek: Boolean,
     onSettingsClick: () -> Unit,
     onImportClick: () -> Unit
 ) {
@@ -240,7 +242,15 @@ private fun TimetableTopBar(
                         fontWeight = FontWeight.Bold
                     )
                 )
-                // 移除具体日期显示，仅保留周次，更加简洁
+                if (isRealCurrentWeek) {
+                    Text(
+                        text = "本周",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
             }
         },
         actions = {
