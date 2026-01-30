@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.font.FontWeight
@@ -323,9 +324,17 @@ fun CourseCard(
     isCurrentWeek: Boolean,
     onClick: () -> Unit
 ) {
-    val backgroundColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
-    val containerColor = backgroundColor.copy(alpha = if (isCurrentWeek) 0.9f else 0.4f) // Use alpha 0.9 as requested
-    
+    // 1. 动态计算背景颜色
+    val baseColor = if (isCurrentWeek) {
+        CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course)).copy(alpha = 0.9f)
+    } else {
+        // 非本周：统一灰色且半透明 (极淡的灰色，避免抢眼)
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    }
+
+    // 2. 动态计算内容透明度
+    val contentAlpha = if (isCurrentWeek) 1f else 0.6f
+
     // 扁平化，无阴影
     Card(
         onClick = onClick,
@@ -334,60 +343,63 @@ fun CourseCard(
             .padding(2.dp), // 卡片之间的空隙
         shape = RoundedCornerShape(12.dp), // 大圆角
         colors = CardDefaults.cardColors(
-            containerColor = containerColor
+            containerColor = baseColor
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
-            verticalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 6.dp, vertical = 8.dp) // 内部间距
+                .alpha(contentAlpha), // 整体设置透明度
+            verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
         ) {
             // 1. 课程名
             Text(
-                text = if (isCurrentWeek) course.name else "[非本周] ${course.name}",
+                text = course.name,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
+                    fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 16.sp,
-                    color = Color(0xFF333333) // 深灰
+                    color = if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant
                 ),
-                maxLines = 3,
+                maxLines = if (isCurrentWeek) 3 else 4,
                 overflow = TextOverflow.Ellipsis
             )
             
-            // 2. 底部信息块
-            Column {
-                // 教室：带小图标
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.LocationOn,
-                        contentDescription = null,
-                        modifier = Modifier.size(12.dp),
-                        tint = Color(0xFF49454F) // 次级文本色
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    Text(
-                        text = course.location,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 10.sp,
-                            color = Color(0xFF49454F)
-                        ),
-                        maxLines = 1
-                    )
-                }
-                
-                // 老师
-                if (course.teacher.isNotEmpty()) {
-                    Text(
-                        text = course.teacher,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 10.sp,
-                            color = Color(0xFF49454F)
-                        ),
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
+            // 2. 底部信息块 (仅本周显示)
+            if (isCurrentWeek) {
+                Column {
+                    // 教室：带小图标
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.LocationOn,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = Color(0xFF49454F) // 次级文本色
+                        )
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(
+                            text = course.location,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 10.sp,
+                                color = Color(0xFF49454F)
+                            ),
+                            maxLines = 1
+                        )
+                    }
+                    
+                    // 老师
+                    if (course.teacher.isNotEmpty()) {
+                        Text(
+                            text = course.teacher,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 10.sp,
+                                color = Color(0xFF49454F)
+                            ),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
                 }
             }
         }
