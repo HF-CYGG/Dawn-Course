@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -82,7 +83,49 @@ fun TimetableSettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 2. 节次时间设置
+            // 2. 卡片样式 (Card Style)
+            PreferenceCategory(title = "卡片样式") {
+                SliderSetting(
+                    title = "卡片高度",
+                    value = settings.courseItemHeightDp.toFloat(),
+                    onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
+                    valueRange = 40f..120f,
+                    valueText = "${settings.courseItemHeightDp} dp",
+                    icon = { Icon(Icons.Default.UnfoldMore, null) },
+                    showDivider = true
+                )
+
+                SliderSetting(
+                    title = "卡片圆角",
+                    value = settings.cardCornerRadius.toFloat(),
+                    onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
+                    valueRange = 0f..32f,
+                    valueText = "${settings.cardCornerRadius} dp",
+                    icon = { Icon(Icons.Default.RoundedCorner, null) },
+                    showDivider = true
+                )
+
+                SliderSetting(
+                    title = "卡片不透明度",
+                    value = settings.cardAlpha,
+                    onValueChange = { viewModel.setCardAlpha(it) },
+                    valueRange = 0.1f..1f,
+                    valueText = "${(settings.cardAlpha * 100).toInt()}%",
+                    description = "降低不透明度可透出背景壁纸",
+                    showDivider = true
+                )
+
+                SwitchSetting(
+                    title = "显示课程图标",
+                    icon = { Icon(Icons.Default.EmojiEmotions, null) },
+                    checked = settings.showCourseIcons,
+                    onCheckedChange = { viewModel.setShowCourseIcons(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 3. 节次时间设置
             PreferenceCategory(title = "节次时间") {
                 Row(
                     modifier = Modifier

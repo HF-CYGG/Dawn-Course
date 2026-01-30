@@ -219,56 +219,14 @@ fun SettingsScreen(
                             )
                         }
                     }
-                    
-                    SliderSetting(
-                        title = "背景遮罩浓度",
-                        value = settings.transparency,
-                        onValueChange = { viewModel.setTransparency(it) },
-                        valueRange = 0f..1f,
-                        valueText = "${(settings.transparency * 100).toInt()}%",
-                        description = "调节背景图上覆盖颜色的浓度",
-                        showDivider = true
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
-                
-                // 卡片样式
                 SliderSetting(
-                    title = "卡片高度",
-                    value = settings.courseItemHeightDp.toFloat(),
-                    onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
-                    valueRange = 40f..120f,
-                    valueText = "${settings.courseItemHeightDp} dp",
-                    icon = { Icon(Icons.Default.UnfoldMore, null) },
+                    title = "背景遮罩浓度",
+                    value = settings.transparency,
+                    onValueChange = { viewModel.setTransparency(it) },
+                    valueRange = 0f..1f,
+                    valueText = "${(settings.transparency * 100).toInt()}%",
+                    description = "调节背景图上覆盖颜色的浓度",
                     showDivider = true
-                )
-
-                SliderSetting(
-                    title = "卡片圆角",
-                    value = settings.cardCornerRadius.toFloat(),
-                    onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
-                    valueRange = 0f..32f,
-                    valueText = "${settings.cardCornerRadius} dp",
-                    icon = { Icon(Icons.Default.RoundedCorner, null) },
-                    showDivider = true
-                )
-                
-                SliderSetting(
-                    title = "卡片不透明度",
-                    value = settings.cardAlpha,
-                    onValueChange = { viewModel.setCardAlpha(it) },
-                    valueRange = 0.1f..1f,
-                    valueText = "${(settings.cardAlpha * 100).toInt()}%",
-                    description = "降低不透明度可透出背景壁纸",
-                    showDivider = true
-                )
-
-                SwitchSetting(
-                    title = "显示课程图标",
-                    icon = { Icon(Icons.Default.EmojiEmotions, null) },
-                    checked = settings.showCourseIcons,
-                    onCheckedChange = { viewModel.setShowCourseIcons(it) }
                 )
             }
 
