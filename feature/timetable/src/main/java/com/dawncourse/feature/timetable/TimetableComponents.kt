@@ -396,79 +396,162 @@ fun CourseDetailSheet(
     onEditClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
+    // 获取课程颜色
+    val courseColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
+    
     ModalBottomSheet(
-        onDismissRequest = onDismissRequest
+        onDismissRequest = onDismissRequest,
+        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() },
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Column(
             modifier = Modifier
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp)
+                .padding(bottom = 32.dp) // 底部留白增加
         ) {
-            Text(
-                text = course.name,
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "周${getDayText(course.dayOfWeek)} 第${course.startSection}-${course.startSection + course.duration - 1}节",
-                    style = MaterialTheme.typography.bodyLarge
+            // 1. Header with Course Name
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 24.dp)
+            ) {
+                // 颜色指示条
+                Box(
+                    modifier = Modifier
+                        .size(width = 6.dp, height = 32.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(courseColor)
                 )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            if (course.location.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = course.location,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            
-            if (course.teacher.isNotEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = course.teacher,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(16.dp))
                 Text(
-                    text = "${course.startWeek}-${course.endWeek}周 ${getWeekType(course.weekType)}",
-                    style = MaterialTheme.typography.bodyLarge
+                    text = course.name,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDeleteClick) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+            // 2. Info Grid
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // 时间
+                CourseDetailItem(
+                    icon = Icons.Default.Schedule,
+                    label = "时间",
+                    value = "周${getDayText(course.dayOfWeek)} 第${course.startSection}-${course.startSection + course.duration - 1}节",
+                    iconTint = courseColor
+                )
+                
+                // 地点
+                if (course.location.isNotEmpty()) {
+                    CourseDetailItem(
+                        icon = Icons.Default.Place,
+                        label = "地点",
+                        value = course.location,
+                        iconTint = courseColor
+                    )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                OutlinedButton(onClick = onEditClick) {
-                    Icon(Icons.Default.Edit, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
+                
+                // 教师
+                if (course.teacher.isNotEmpty()) {
+                    CourseDetailItem(
+                        icon = Icons.Default.Person,
+                        label = "教师",
+                        value = course.teacher,
+                        iconTint = courseColor
+                    )
+                }
+                
+                // 周次
+                CourseDetailItem(
+                    icon = Icons.Default.DateRange,
+                    label = "周次",
+                    value = "${course.startWeek}-${course.endWeek}周 ${getWeekType(course.weekType)}",
+                    iconTint = courseColor
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            // 3. Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 删除按钮 (次要操作)
+                OutlinedButton(
+                    onClick = onDeleteClick,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, 
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("删除")
+                }
+                
+                // 编辑按钮 (主要操作)
+                androidx.compose.material3.Button(
+                    onClick = onEditClick,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = courseColor,
+                        contentColor = CourseColorUtils.getBestContentColor(courseColor)
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text("编辑")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CourseDetailItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    iconTint: Color
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        // Icon Container
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(iconTint.copy(alpha = 0.1f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        
+        Spacer(modifier = Modifier.width(16.dp))
+        
+        Column {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
