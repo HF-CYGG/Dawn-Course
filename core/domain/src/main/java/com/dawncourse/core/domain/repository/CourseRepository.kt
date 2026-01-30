@@ -20,6 +20,8 @@ interface CourseRepository {
     fun getAllCourses(): Flow<List<Course>>
 
     fun getCoursesBySemester(semesterId: Long): Flow<List<Course>>
+
+    suspend fun getCoursesByOriginId(originId: Long): List<Course>
     
     /**
      * 根据 ID 获取单个课程

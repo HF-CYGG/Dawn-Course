@@ -144,4 +144,91 @@ class TimetableViewModel @Inject constructor(
     suspend fun getCourse(id: Long): Course? {
         return repository.getCourseById(id)
     }
+
+    /**
+     * 撤销调课
+     * 将分裂的课程记录合并回原状态
+     */
+    fun undoReschedule(course: Course) {
+        // 如果是新创建且未分裂的课程，originId 可能为 0。
+        // 分裂后的课程 originId 必定不为 0（指向原始 ID）。
+        // 迁移后的旧课程 originId = id。
+        val targetOriginId = if (course.originId == 0L) course.id else course.originId
+        
+        viewModelScope.launch {
+            val siblings = repository.getCoursesByOriginId(targetOriginId)
+            // 如果只有一条记录且未修改，说明无需撤销
+            if (siblings.size <= 1 && siblings.none { it.isModified }) return@launch
+            
+            // 找到“原始模板”：未修改的记录
+            val template = siblings.firstOrNull { !it.isModified } ?: return@launch
+
+            // 收集所有周次
+            val allWeeks = siblings.flatMap { c ->
+                val weeks = mutableSetOf<Int>()
+                for (i in c.startWeek..c.endWeek) {
+                    val match = when (c.weekType) {
+                        Course.WEEK_TYPE_ODD -> i % 2 != 0
+                        Course.WEEK_TYPE_EVEN -> i % 2 == 0
+                        else -> true
+                    }
+                    if (match) weeks.add(i)
+                }
+                weeks
+            }.toSet()
+
+            // 计算合并后的片段
+            val segments = convertToSegments(allWeeks)
+
+            // 删除所有相关记录
+            siblings.forEach { repository.deleteCourse(it) }
+
+            // 插入合并后的新记录
+            segments.forEach { (start, end, type) ->
+                repository.insertCourse(template.copy(
+                    id = 0,
+                    startWeek = start,
+                    endWeek = end,
+                    weekType = type,
+                    isModified = false,
+                    note = "",
+                    originId = 0 // 重置 originId
+                ))
+            }
+        }
+    }
+
+    private fun convertToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {
+        if (weeks.isEmpty()) return emptyList()
+        val sorted = weeks.sorted()
+        val segments = mutableListOf<Triple<Int, Int, Int>>()
+        
+        val pending = sorted.toMutableSet()
+        while (pending.isNotEmpty()) {
+            val first = pending.minOrNull()!!
+            
+            var endAll = first
+            while (pending.contains(endAll + 1)) endAll++
+            val countAll = endAll - first + 1
+            
+            var endParity = first
+            val step = 2
+            while (pending.contains(endParity + step)) endParity += step
+            val countParity = (endParity - first) / 2 + 1
+            
+            if (countAll >= countParity) {
+                segments.add(Triple(first, endAll, Course.WEEK_TYPE_ALL))
+                for (i in first..endAll) pending.remove(i)
+            } else {
+                val type = if (first % 2 != 0) Course.WEEK_TYPE_ODD else Course.WEEK_TYPE_EVEN
+                segments.add(Triple(first, endParity, type))
+                var k = first
+                while (k <= endParity) {
+                    pending.remove(k)
+                    k += 2
+                }
+            }
+        }
+        return segments.sortedBy { it.first }
+    }
 }

@@ -20,8 +20,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EditCalendar
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material3.ButtonDefaults
@@ -381,13 +384,14 @@ fun CourseCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 8.dp) // 内部间距
-                .alpha(contentAlpha), // 整体设置透明度
-            verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 8.dp) // 内部间距
+                    .alpha(contentAlpha), // 整体设置透明度
+                verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
+            ) {
             // 1. 课程名
             Text(
                 text = course.name,
@@ -428,6 +432,27 @@ fun CourseCard(
                     }
                 }
             }
+            }
+
+            // 调课标记 (左上角)
+            if (course.isModified) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .clip(RoundedCornerShape(bottomEnd = 8.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = "调",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    )
+                }
+            }
         }
     }
 }
@@ -448,6 +473,8 @@ fun CourseDetailSheet(
     course: Course,
     onDismissRequest: () -> Unit,
     onEditClick: () -> Unit,
+    onRescheduleClick: () -> Unit,
+    onUndoRescheduleClick: () -> Unit,
     onDeleteClick: () -> Unit
 ) {
     // 获取课程颜色
@@ -483,6 +510,28 @@ fun CourseDetailSheet(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                
+                Spacer(modifier = Modifier.weight(1f))
+                
+                // 调课/撤销按钮
+                if (course.isModified) {
+                    TextButton(
+                        onClick = onUndoRescheduleClick,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("撤销调课")
+                    }
+                } else {
+                    TextButton(onClick = onRescheduleClick) {
+                        Icon(Icons.Default.EditCalendar, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("调课")
+                    }
+                }
             }
             
             // 2. Info Grid
@@ -522,17 +571,47 @@ fun CourseDetailSheet(
                     value = "${course.startWeek}-${course.endWeek}周 ${getWeekType(course.weekType)}",
                     iconTint = themePrimary
                 )
+                
+                // 备注
+                if (course.note.isNotEmpty()) {
+                    CourseDetailItem(
+                        icon = Icons.Default.Info,
+                        label = "备注",
+                        value = course.note,
+                        iconTint = MaterialTheme.colorScheme.tertiary
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(32.dp))
             
             // 3. Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 删除按钮 (次要操作)
-                OutlinedButton(
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 调课/撤销调课 按钮
+                androidx.compose.material3.Button(
+                    onClick = if (course.isModified) onUndoRescheduleClick else onRescheduleClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (course.isModified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
+                        contentColor = if (course.isModified) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondary
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = if (course.isModified) Icons.Default.Restore else Icons.Default.EditCalendar,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (course.isModified) "撤销调课 (还原)" else "调课 (部分周次变动)")
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // 删除按钮 (次要操作)
+                    OutlinedButton(
                     onClick = onDeleteClick,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -562,6 +641,7 @@ fun CourseDetailSheet(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("编辑")
                 }
+            }
             }
         }
     }

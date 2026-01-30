@@ -35,7 +35,12 @@ data class Course(
     val endWeek: Int,
     val weekType: Int = WEEK_TYPE_ALL, // 0=All, 1=Odd, 2=Even
     
-    val color: String = "" // Hex color code
+    val color: String = "", // Hex color code
+    
+    // 调课信息 (Reschedule info)
+    val isModified: Boolean = false, // 是否为调课生成的记录
+    val note: String = "", // 备注信息
+    val originId: Long = 0 // 原始课程 ID，用于关联分裂后的记录
 ) {
     companion object {
         /** 周次类型：每周都上 */

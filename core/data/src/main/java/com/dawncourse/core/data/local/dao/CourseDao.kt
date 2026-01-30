@@ -26,6 +26,12 @@ interface CourseDao {
      */
     @Query("SELECT * FROM courses WHERE semesterId = :semesterId")
     fun getCoursesBySemester(semesterId: Long): Flow<List<CourseEntity>>
+
+    /**
+     * 根据原始 ID 查询课程（用于查找分裂后的所有相关课程）
+     */
+    @Query("SELECT * FROM courses WHERE originId = :originId")
+    suspend fun getCoursesByOriginId(originId: Long): List<CourseEntity>
     
     /**
      * 根据 ID 查询单门课程

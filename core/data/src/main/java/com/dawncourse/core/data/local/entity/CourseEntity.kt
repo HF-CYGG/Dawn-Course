@@ -49,7 +49,14 @@ data class CourseEntity(
     val weekType: Int,
     
     /** 颜色代码 */
-    val color: String
+    val color: String,
+    
+    /** 是否为调课生成的记录 */
+    val isModified: Boolean = false,
+    /** 调课备注 */
+    val note: String = "",
+    /** 原始课程 ID */
+    val originId: Long = 0
 )
 
 /**
@@ -68,7 +75,10 @@ fun CourseEntity.toDomain() = Course(
     startWeek = startWeek,
     endWeek = endWeek,
     weekType = weekType,
-    color = color
+    color = color,
+    isModified = isModified,
+    note = note,
+    originId = originId
 )
 
 /**
@@ -87,5 +97,8 @@ fun Course.toEntity() = CourseEntity(
     startWeek = startWeek,
     endWeek = endWeek,
     weekType = weekType,
-    color = color
+    color = color,
+    isModified = isModified,
+    note = note,
+    originId = originId
 )

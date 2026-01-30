@@ -11,6 +11,8 @@ import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
 import dagger.Provides
 import dagger.Binds
@@ -38,11 +40,26 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase {
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Add originId column
+                database.execSQL("ALTER TABLE courses ADD COLUMN originId INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("UPDATE courses SET originId = id")
+                
+                // Add isModified column
+                database.execSQL("ALTER TABLE courses ADD COLUMN isModified INTEGER NOT NULL DEFAULT 0")
+                
+                // Add note column
+                database.execSQL("ALTER TABLE courses ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         return Room.databaseBuilder(
             context,
             AppDatabase::class.java,
             "dawn_course.db"
         )
+        .addMigrations(MIGRATION_4_5)
         .fallbackToDestructiveMigration()
         .build()
     }

@@ -63,7 +63,9 @@ fun TimetableRoute(
         onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
         onSettingsClick = onSettingsClick,
-        onCourseClick = onCourseClick
+        onCourseClick = onCourseClick,
+        onUndoReschedule = { viewModel.undoReschedule(it) },
+        onDeleteCourse = { viewModel.deleteCourse(it) }
     )
 }
 
@@ -80,10 +82,14 @@ internal fun TimetableScreen(
     onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onCourseClick: (Long) -> Unit
+    onCourseClick: (Long) -> Unit,
+    onUndoReschedule: (Course) -> Unit,
+    onDeleteCourse: (Course) -> Unit
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
+    // 选中的课程 ID，用于显示调课弹窗
+    var rescheduleCourseId by remember { mutableStateOf<Long?>(null) }
     
     val settings = LocalAppSettings.current
     val isDarkTheme = isSystemInDarkTheme()
@@ -233,10 +239,26 @@ internal fun TimetableScreen(
                 onCourseClick(selectedCourse!!.id)
                 selectedCourse = null
             },
+            onRescheduleClick = {
+                rescheduleCourseId = selectedCourse!!.id
+                selectedCourse = null
+            },
+            onUndoRescheduleClick = {
+                onUndoReschedule(selectedCourse!!)
+                selectedCourse = null
+            },
             onDeleteClick = {
-                // TODO: 处理删除
+                onDeleteCourse(selectedCourse!!)
                 selectedCourse = null
             }
+        )
+    }
+    
+    // 调课弹窗
+    if (rescheduleCourseId != null) {
+        CourseRescheduleSheet(
+            courseId = rescheduleCourseId!!,
+            onDismissRequest = { rescheduleCourseId = null }
         )
     }
 }

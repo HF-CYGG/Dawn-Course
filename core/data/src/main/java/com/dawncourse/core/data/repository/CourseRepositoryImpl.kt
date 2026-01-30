@@ -37,6 +37,10 @@ class CourseRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun getCoursesByOriginId(originId: Long): List<Course> {
+        return courseDao.getCoursesByOriginId(originId).map { it.toDomain() }
+    }
+
     /**
      * 根据 ID 获取课程
      * 将数据库实体转换为领域模型。
