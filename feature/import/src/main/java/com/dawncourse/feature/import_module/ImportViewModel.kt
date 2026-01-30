@@ -84,7 +84,15 @@ class ImportViewModel @Inject constructor(
     }
 
     fun setStep(step: ImportStep) {
-        _uiState.update { it.copy(step = step) }
+        _uiState.update { 
+            it.copy(
+                step = step,
+                parsedCourses = emptyList(),
+                htmlContent = "",
+                resultText = "",
+                isLoading = false
+            )
+        }
     }
 
     fun updateWebUrl(url: String) {
