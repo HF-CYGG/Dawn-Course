@@ -33,6 +33,7 @@ import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
+import androidx.glance.layout.size
 import androidx.glance.material3.ColorProviders
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
@@ -52,6 +53,22 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+
+import androidx.glance.text.TextAlign
+import androidx.glance.ColorFilter
+import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.repository.SettingsRepository
+import java.time.format.DateTimeFormatter
+
+// 莫兰迪/马卡龙色系，看起来非常舒服
+private val WidgetCourseColors = listOf(
+    Color(0xFFE8DEF8), // 浅紫
+    Color(0xFFC4E7FF), // 浅蓝
+    Color(0xFFC3EED0), // 浅绿
+    Color(0xFFFDE2E4), // 浅粉
+    Color(0xFFFFF4DE), // 浅黄
+    Color(0xFFE1E0FF)  // 淡靛
+)
 
 class DawnWidget : GlanceAppWidget() {
 
@@ -73,12 +90,18 @@ class DawnWidget : GlanceAppWidget() {
         )
         val repository = entryPoint.courseRepository()
         val semesterRepository = entryPoint.semesterRepository()
+        val settingsRepository = entryPoint.settingsRepository()
 
         val today = LocalDate.now()
         
         val semester = withContext(Dispatchers.IO) {
             semesterRepository.getCurrentSemester().first()
         }
+
+        val settings = withContext(Dispatchers.IO) {
+            settingsRepository.settings.first()
+        }
+        val sectionTimes = settings.sectionTimes
 
         val currentWeek = if (semester != null) {
             val termStartDate = Instant.ofEpochMilli(semester.startDate)
@@ -119,9 +142,9 @@ class DawnWidget : GlanceAppWidget() {
                 val size = LocalSize.current
                 // 根据宽度判断使用哪种视图
                 if (size.width < 200.dp) {
-                    NextClassView(courses)
+                    NextClassView(courses, sectionTimes)
                 } else {
-                    DailyListView(courses, today, currentWeek)
+                    DailyListView(courses, today, currentWeek, sectionTimes)
                 }
             }
         }
@@ -132,18 +155,20 @@ class DawnWidget : GlanceAppWidget() {
     interface WidgetEntryPoint {
         fun courseRepository(): CourseRepository
         fun semesterRepository(): SemesterRepository
+        fun settingsRepository(): SettingsRepository
     }
 
     @Composable
-    fun NextClassView(courses: List<Course>) {
+    fun NextClassView(courses: List<Course>, sectionTimes: List<SectionTime>) {
+        val now = LocalTime.now()
         // 寻找当前正在上或即将开始的课
-        // 这里只是简单的取第一节课，实际应该根据 SectionTime 判断
-        // TODO: 引入 SectionTime 逻辑判断当前课程
-        val nextCourse = courses.firstOrNull { 
-            // 简单假设：只要是今天的课，且还没结束（这里暂时无法精确判断，取第一个）
-            true 
+        val nextCourse = courses.firstOrNull { course ->
+             isCourseCurrentOrFuture(course, sectionTimes, now)
         }
-
+        
+        // 如果所有课都结束了，显示"今日课程已结束"
+        // 这里简单判定：如果找不到 currentOrFuture，说明都结束了
+        
         Box(
             modifier = GlanceModifier
                 .fillMaxSize()
@@ -154,19 +179,41 @@ class DawnWidget : GlanceAppWidget() {
             contentAlignment = Alignment.Center
         ) {
             if (nextCourse != null) {
+                val isCurrent = isCourseActive(nextCourse, sectionTimes, now)
                 Column {
+                    // 状态提示
+                    if (isCurrent) {
+                         Text(
+                            text = "正在上课",
+                            style = TextStyle(
+                                color = GlanceTheme.colors.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            modifier = GlanceModifier.padding(bottom = 4.dp)
+                        )
+                    } else {
+                         Text(
+                            text = "接下来",
+                            style = TextStyle(
+                                color = GlanceTheme.colors.onPrimaryContainer,
+                                fontSize = 12.sp
+                            ),
+                            modifier = GlanceModifier.padding(bottom = 4.dp)
+                        )
+                    }
+
                     Text(
                         text = nextCourse.name,
                         style = TextStyle(
                             color = GlanceTheme.colors.onPrimaryContainer,
-                            fontSize = 20.sp, // 稍微调小一点以防溢出
+                            fontSize = 20.sp, 
                             fontWeight = FontWeight.Bold
                         ),
                         maxLines = 2
                     )
                     Spacer(GlanceModifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 注意：Glance 不支持所有 VectorIcon，这里暂时用文本代替图标，或使用 drawable 资源
                         Text(
                             text = "📍", 
                             style = TextStyle(color = GlanceTheme.colors.onPrimaryContainer, fontSize = 12.sp)
@@ -180,8 +227,10 @@ class DawnWidget : GlanceAppWidget() {
                             )
                         )
                     }
+                    
+                    val timeStr = getCourseTimeString(nextCourse, sectionTimes)
                     Text(
-                        text = "${nextCourse.startSection}-${nextCourse.startSection + nextCourse.duration - 1}节",
+                        text = timeStr,
                         style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 14.sp),
                         modifier = GlanceModifier.padding(top = 4.dp)
                     )
@@ -211,37 +260,16 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
-    fun DailyListView(courses: List<Course>, today: LocalDate, currentWeek: Int) {
+    fun DailyListView(courses: List<Course>, today: LocalDate, currentWeek: Int, sectionTimes: List<SectionTime>) {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(GlanceTheme.colors.surface)
+                .background(Color.White) // Magazine style prefers white background
                 .appWidgetBackground()
                 .padding(12.dp)
                 .clickable(actionStartActivity(getMainActivityClassName()))
         ) {
-            // 标题栏
-            Row(
-                modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "第${currentWeek}周 · 周${getDayOfWeekText(today.dayOfWeek.value)}",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onSurface,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                )
-                Spacer(GlanceModifier.defaultWeight())
-                Text(
-                    text = "${today.monthValue}月${today.dayOfMonth}日",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onSurfaceVariant,
-                        fontSize = 14.sp
-                    )
-                )
-            }
+            WidgetHeader("第${currentWeek}周", "${today.monthValue}月${today.dayOfMonth}日")
 
             if (courses.isEmpty()) {
                  Box(
@@ -250,61 +278,264 @@ class DawnWidget : GlanceAppWidget() {
                 ) {
                     Text(
                         text = "今日无课",
-                        style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant)
+                        style = TextStyle(color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)))
                     )
                 }
             } else {
+                val now = LocalTime.now()
                 LazyColumn {
                     items(courses) { course ->
-                        // 模拟判断当前课程 (需要真实时间逻辑)
-                        val isCurrent = false 
-                        CourseItemRow(course, isCurrent)
-                        Spacer(GlanceModifier.height(8.dp))
+                        val isCurrent = isCourseActive(course, sectionTimes, now)
+                        CourseItemRow(course, isCurrent, sectionTimes)
+                        Spacer(GlanceModifier.height(4.dp)) // 稍微减小间距，因为卡片本身有 padding
                     }
                 }
             }
         }
     }
-    
+
     @Composable
-    fun CourseItemRow(course: Course, isCurrent: Boolean) {
-        // 动态计算背景色
-        val bgColor = if (isCurrent) GlanceTheme.colors.primary else GlanceTheme.colors.surfaceVariant
-        val contentColor = if (isCurrent) GlanceTheme.colors.onPrimary else GlanceTheme.colors.onSurfaceVariant
-        
+    fun WidgetHeader(weekInfo: String, dateInfo: String) {
+        val today = LocalDate.now()
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .background(bgColor)
-                .cornerRadius(12.dp)
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(bottom = 12.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            // 时间 (这里暂时只显示节次，因为 Course 模型里可能没有具体时间)
-            // 理想情况是根据 SectionTime 算出 08:00
+            // 左边：大大的周次
             Text(
-                text = "${course.startSection}节", 
-                style = TextStyle(color = contentColor, fontSize = 12.sp)
-            )
-            Spacer(GlanceModifier.width(12.dp))
-            Column {
-                Text(
-                    text = course.name, 
-                    style = TextStyle(
-                        color = contentColor, 
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
+                text = weekInfo, // "第8周"
+                style = TextStyle(
+                    fontSize = 22.sp, // 加大字号
+                    fontWeight = FontWeight.Bold,
+                    color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
                 )
+            )
+            
+            Spacer(GlanceModifier.width(8.dp))
+            
+            // 周几
+            Text(
+                text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                    fontWeight = FontWeight.Medium
+                ),
+                modifier = GlanceModifier.padding(bottom = 2.dp)
+            )
+            
+            Spacer(GlanceModifier.defaultWeight())
+            
+            // 右边：日期胶囊
+            Box(
+                modifier = GlanceModifier
+                    .background(Color(0xFFE7E0EC)) // 浅灰背景
+                    .cornerRadius(12.dp)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
                 Text(
-                    text = "${course.location} · ${course.teacher}", 
+                    text = dateInfo, // "1月30日"
                     style = TextStyle(
-                        color = contentColor, 
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                        fontWeight = FontWeight.Medium
                     )
                 )
             }
         }
+    }
+    
+    @Composable
+    fun CourseItemRow(course: Course, isCurrent: Boolean, sectionTimes: List<SectionTime>) {
+        // 1. 根据课程名生成固定颜色
+        val colorIndex = kotlin.math.abs(course.name.hashCode()) % WidgetCourseColors.size
+        val baseColor = WidgetCourseColors[colorIndex]
+        
+        // 如果是当前课程，颜色加深一点；否则用极淡的背景
+        val backgroundColor = if (isCurrent) baseColor else baseColor.copy(alpha = 0.5f)
+        val textColor = Color(0xFF1C1B1F) // 深灰几近黑
+        val subTextColor = Color(0xFF49454F) // 次级灰
+        
+        val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
+        val endTimeStr = getSectionEndTime(course, sectionTimes)
+
+        Row(
+            modifier = GlanceModifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp), // 卡片之间的间距
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // --- 左侧：时间列 ---
+            Column(
+                modifier = GlanceModifier.width(48.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                val timeColor = if (isCurrent) Color(0xFF6750A4) else subTextColor
+                Text(
+                    text = startTime, // 例如 "08:00"
+                    style = TextStyle(
+                        color = ColorProvider(timeColor, timeColor), // 当前课程时间高亮
+                        fontSize = 13.sp,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+                        textAlign = TextAlign.End
+                    )
+                )
+                // 下方显示结束时间，或者留空
+                if (endTimeStr != null) {
+                    val endTimeColor = subTextColor.copy(alpha = 0.7f)
+                    Text(
+                        text = endTimeStr,
+                        style = TextStyle(
+                            color = ColorProvider(endTimeColor, endTimeColor),
+                            fontSize = 10.sp,
+                            textAlign = TextAlign.End
+                        )
+                    )
+                }
+            }
+
+            Spacer(GlanceModifier.width(12.dp))
+
+            // --- 右侧：课程卡片 ---
+            // 这是一个带圆角的彩色块
+            Column(
+                modifier = GlanceModifier
+                    .defaultWeight()
+                    .background(backgroundColor) // 淡色背景
+                    .cornerRadius(16.dp) // 大圆角
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                // 课程名
+                Text(
+                    text = course.name,
+                    style = TextStyle(
+                        color = ColorProvider(textColor, textColor),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    maxLines = 1
+                )
+                
+                Spacer(GlanceModifier.height(4.dp))
+                
+                // 地点与老师 (一行显示，中间加点)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 使用 ImageProvider 加载图标，并着色
+                    Image(
+                        provider = ImageProvider(R.drawable.ic_location_on),
+                        contentDescription = null,
+                        modifier = GlanceModifier.size(12.dp),
+                        colorFilter = ColorFilter.tint(ColorProvider(subTextColor, subTextColor))
+                    )
+                    
+                    Spacer(GlanceModifier.width(4.dp))
+                    
+                    Text(
+                        text = "${course.location} · ${course.teacher}",
+                        style = TextStyle(
+                            color = ColorProvider(subTextColor, subTextColor),
+                            fontSize = 12.sp
+                        ),
+                        maxLines = 1
+                    )
+                }
+            }
+            
+            // --- 选中指示器 (可选) ---
+            // 如果是当前课程，右边显示一个小圆点
+            if (isCurrent) {
+                Spacer(GlanceModifier.width(8.dp))
+                Box(
+                    modifier = GlanceModifier
+                        .size(6.dp)
+                        .background(Color(0xFF6750A4))
+                        .cornerRadius(3.dp)
+                ) {}
+            }
+        }
+    }
+    
+    // --- 辅助函数 ---
+
+    private fun getSectionEndTime(course: Course, sectionTimes: List<SectionTime>): String? {
+         if (sectionTimes.isEmpty()) return null
+         val endSectionNum = course.startSection + course.duration - 1
+         val index = endSectionNum - 1
+         if (index in sectionTimes.indices) {
+             return sectionTimes[index].endTime
+         }
+         return null
+    }
+
+    private fun getSectionStartTime(section: Int, sectionTimes: List<SectionTime>): String? {
+        if (sectionTimes.isEmpty()) return null
+        val index = section - 1
+        if (index in sectionTimes.indices) {
+            return sectionTimes[index].startTime
+        }
+        return null
+    }
+    
+    private fun getCourseTimeString(course: Course, sectionTimes: List<SectionTime>): String {
+         if (sectionTimes.isEmpty()) {
+             return "${course.startSection}-${course.startSection + course.duration - 1}节"
+         }
+         
+         val startStr = getSectionStartTime(course.startSection, sectionTimes) ?: ""
+          // duration 1 -> index same as start
+          // duration 2 -> start 1, end 2. index 1.
+          // Wait, startSection is 1-based.
+          // startSection 1, duration 2 -> endSection 2. index 1.
+          // formula: startSection + duration - 1 is the end section number.
+          // index is endSection - 1.
+          val endSectionNum = course.startSection + course.duration - 1
+         val endStr = if (endSectionNum - 1 in sectionTimes.indices) {
+             sectionTimes[endSectionNum - 1].endTime
+         } else ""
+         
+         if (startStr.isNotEmpty() && endStr.isNotEmpty()) {
+             return "$startStr - $endStr"
+         }
+         return "${course.startSection}-${endSectionNum}节"
+    }
+
+    private fun isCourseActive(course: Course, sectionTimes: List<SectionTime>, now: LocalTime): Boolean {
+        if (sectionTimes.isEmpty()) return false
+        
+        val startStr = getSectionStartTime(course.startSection, sectionTimes) ?: return false
+        val endSectionNum = course.startSection + course.duration - 1
+        val endStr = if (endSectionNum - 1 in sectionTimes.indices) {
+             sectionTimes[endSectionNum - 1].endTime
+         } else return false
+         
+        try {
+            val formatter = DateTimeFormatter.ofPattern("HH:mm")
+            val startTime = LocalTime.parse(startStr, formatter)
+            val endTime = LocalTime.parse(endStr, formatter)
+            
+            return !now.isBefore(startTime) && !now.isAfter(endTime)
+        } catch (e: Exception) {
+            return false
+        }
+    }
+    
+    private fun isCourseCurrentOrFuture(course: Course, sectionTimes: List<SectionTime>, now: LocalTime): Boolean {
+         if (sectionTimes.isEmpty()) return true // 无法判断，默认都显示
+         
+         val endSectionNum = course.startSection + course.duration - 1
+         val endStr = if (endSectionNum - 1 in sectionTimes.indices) {
+             sectionTimes[endSectionNum - 1].endTime
+         } else return true // 无法判断
+         
+         try {
+             val formatter = DateTimeFormatter.ofPattern("HH:mm")
+             val endTime = LocalTime.parse(endStr, formatter)
+             return now.isBefore(endTime) // 只要没结束，都算 CurrentOrFuture
+         } catch (e: Exception) {
+             return true
+         }
     }
 
     private fun getDayOfWeekText(day: Int): String {
