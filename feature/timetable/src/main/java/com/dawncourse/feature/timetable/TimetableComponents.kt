@@ -283,16 +283,7 @@ fun TimetableGrid(
         list
     }
 
-    Layout(
-        content = {
-            displayList.forEach { (course, isCurrentWeek) ->
-                CourseCard(
-                    course = course,
-                    isCurrentWeek = isCurrentWeek,
-                    onClick = { onCourseClick(course) }
-                )
-            }
-        },
+    Box(
         modifier = modifier
             .height(totalHeight)
             .drawBehind {
@@ -310,43 +301,78 @@ fun TimetableGrid(
                     )
                 }
             }
-    ) { measurables, constraints ->
-        // 1. 计算基础尺寸
-        val width = constraints.maxWidth
-        val cellWidth = width / 7
-        val nodeHeightPx = nodeHeight.toPx()
-        
-        // 2. 测量所有子元素
-        val placeables = measurables.mapIndexed { index, measurable ->
-            val (course, _) = displayList[index]
-            val span = course.duration
-            val height = (span * nodeHeightPx).roundToInt()
-            
-            // 使用完整宽度，间距由 Card 内部 padding 控制
-            val placeableWidth = cellWidth
-            
-            measurable.measure(
-                constraints.copy(
-                    minWidth = placeableWidth,
-                    maxWidth = placeableWidth,
-                    minHeight = height,
-                    maxHeight = height
+    ) {
+        if (displayList.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(bottom = 60.dp), // 视觉中心修正
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "☕",
+                    style = MaterialTheme.typography.displayMedium,
+                    modifier = Modifier.padding(bottom = 8.dp)
                 )
-            )
-        }
-        
-        layout(width, (maxNodes * nodeHeightPx).roundToInt()) {
-            placeables.forEachIndexed { index, placeable ->
-                val (course, _) = displayList[index]
+                Text(
+                    text = "好好享受假期吧",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        } else {
+            Layout(
+                content = {
+                    displayList.forEach { (course, isCurrentWeek) ->
+                        CourseCard(
+                            course = course,
+                            isCurrentWeek = isCurrentWeek,
+                            onClick = { onCourseClick(course) }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            ) { measurables, constraints ->
+                // 1. 计算基础尺寸
+                val width = constraints.maxWidth
+                val cellWidth = width / 7
+                val nodeHeightPx = nodeHeight.toPx()
                 
-                // 计算位置
-                // X: (dayOfWeek - 1) * cellWidth
-                val x = (course.dayOfWeek - 1) * cellWidth
+                // 2. 测量所有子元素
+                val placeables = measurables.mapIndexed { index, measurable ->
+                    val (course, _) = displayList[index]
+                    val span = course.duration
+                    val height = (span * nodeHeightPx).roundToInt()
+                    
+                    // 使用完整宽度，间距由 Card 内部 padding 控制
+                    val placeableWidth = cellWidth
+                    
+                    measurable.measure(
+                        constraints.copy(
+                            minWidth = placeableWidth,
+                            maxWidth = placeableWidth,
+                            minHeight = height,
+                            maxHeight = height
+                        )
+                    )
+                }
                 
-                // Y: (startSection - 1) * nodeHeight
-                val y = ((course.startSection - 1) * nodeHeightPx).roundToInt()
-                
-                placeable.place(x, y)
+                layout(width, (maxNodes * nodeHeightPx).roundToInt()) {
+                    placeables.forEachIndexed { index, placeable ->
+                        val (course, _) = displayList[index]
+                        
+                        // 计算位置
+                        // X: (dayOfWeek - 1) * cellWidth
+                        val x = (course.dayOfWeek - 1) * cellWidth
+                        
+                        // Y: (startSection - 1) * nodeHeight
+                        val y = ((course.startSection - 1) * nodeHeightPx).roundToInt()
+                        
+                        placeable.place(x, y)
+                    }
+                }
             }
         }
     }
