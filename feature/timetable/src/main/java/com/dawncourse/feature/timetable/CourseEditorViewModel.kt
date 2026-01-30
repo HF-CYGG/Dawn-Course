@@ -5,11 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.DetectConflictUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -25,6 +27,7 @@ import javax.inject.Inject
 @HiltViewModel
 class CourseEditorViewModel @Inject constructor(
     private val repository: CourseRepository,
+    private val semesterRepository: SemesterRepository,
     private val detectConflictUseCase: DetectConflictUseCase,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -34,10 +37,20 @@ class CourseEditorViewModel @Inject constructor(
     private val _course = MutableStateFlow<Course?>(null)
     val course: StateFlow<Course?> = _course.asStateFlow()
 
+    private val _currentSemesterId = MutableStateFlow<Long>(1L)
+    val currentSemesterId: StateFlow<Long> = _currentSemesterId.asStateFlow()
+
     private val _conflictCourses = MutableStateFlow<List<Course>>(emptyList())
     val conflictCourses: StateFlow<List<Course>> = _conflictCourses.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            val semester = semesterRepository.getCurrentSemester().firstOrNull()
+            if (semester != null) {
+                _currentSemesterId.value = semester.id
+            }
+        }
+
         if (courseId != 0L) {
             viewModelScope.launch {
                 _course.value = repository.getCourseById(courseId)

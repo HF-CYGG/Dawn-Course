@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
                                 val courseId = backStackEntry.arguments?.getString("courseId")
                                 val courseEditorViewModel: CourseEditorViewModel = hiltViewModel()
                                 val course by courseEditorViewModel.course.collectAsState()
+                                val currentSemesterId by courseEditorViewModel.currentSemesterId.collectAsState()
                                 
                                 val isEditing = courseId != null && courseId != "0"
                                 if (isEditing && course == null) {
@@ -178,6 +179,7 @@ class MainActivity : ComponentActivity() {
                                 } else {
                                     CourseEditorScreen(
                                         course = course,
+                                        currentSemesterId = currentSemesterId,
                                         onBackClick = { navController.popBackStack() },
                                         onSaveClick = { newCourse ->
                                             courseEditorViewModel.saveCourse(newCourse) {

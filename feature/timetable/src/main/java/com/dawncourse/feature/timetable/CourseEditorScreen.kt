@@ -90,6 +90,7 @@ import kotlin.math.roundToInt
 @Composable
 fun CourseEditorScreen(
     course: Course? = null,
+    currentSemesterId: Long = 1L,
     onBackClick: () -> Unit,
     onSaveClick: (Course) -> Unit
 ) {
@@ -127,6 +128,7 @@ fun CourseEditorScreen(
                         onClick = {
                             val newCourse = Course(
                                 id = course?.id ?: 0,
+                                semesterId = course?.semesterId ?: currentSemesterId,
                                 name = name,
                                 location = location,
                                 teacher = teacher,
