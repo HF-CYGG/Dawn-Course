@@ -145,7 +145,11 @@ class DawnWidget : GlanceAppWidget() {
                 // 根据宽度判断使用哪种视图
                 if (size.width < 200.dp) {
                     NextClassView(courses, sectionTimes)
+                } else if (size.height < 120.dp) {
+                    // 1x4 横向极窄布局
+                    HorizontalNextClassView(courses, sectionTimes)
                 } else if (size.height < 180.dp) {
+                    // 2x4 横向长条布局
                     HorizontalDailyListView(courses, today, currentWeek, sectionTimes)
                 } else {
                     DailyListView(courses, today, currentWeek, sectionTimes)
@@ -160,6 +164,126 @@ class DawnWidget : GlanceAppWidget() {
         fun courseRepository(): CourseRepository
         fun semesterRepository(): SemesterRepository
         fun settingsRepository(): SettingsRepository
+    }
+
+    @Composable
+    fun HorizontalNextClassView(courses: List<Course>, sectionTimes: List<SectionTime>) {
+        val now = LocalTime.now()
+        val nextCourse = courses.firstOrNull { course ->
+             isCourseCurrentOrFuture(course, sectionTimes, now)
+        }
+
+        Box(
+            modifier = GlanceModifier
+                .fillMaxSize()
+                .background(Color.White)
+                .appWidgetBackground()
+                .padding(8.dp)
+                .clickable(actionStartActivity(getMainActivityClassName())),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            if (nextCourse != null) {
+                val isCurrent = isCourseActive(nextCourse, sectionTimes, now)
+                // 使用课程颜色作为左侧条的颜色，或者整体背景淡色
+                val colorIndex = kotlin.math.abs(nextCourse.name.hashCode()) % WidgetCourseColors.size
+                val baseColor = WidgetCourseColors[colorIndex]
+                val bg = if (isCurrent) baseColor else Color.White
+                
+                Row(
+                    modifier = GlanceModifier
+                        .fillMaxSize()
+                        .background(bg)
+                        .cornerRadius(12.dp)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 时间
+                    val startTime = getSectionStartTime(nextCourse.startSection, sectionTimes) ?: ""
+                    Column(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                         Text(
+                            text = startTime,
+                            style = TextStyle(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                            )
+                        )
+                        if (isCurrent) {
+                            Text(
+                                text = "上课中",
+                                style = TextStyle(
+                                    fontSize = 10.sp,
+                                    color = ColorProvider(Color(0xFF6750A4), Color(0xFF6750A4)),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    Spacer(GlanceModifier.width(12.dp))
+                    
+                    // 竖线分隔
+                    Box(
+                        modifier = GlanceModifier
+                            .width(1.dp)
+                            .height(24.dp)
+                            .background(Color(0xFFE0E0E0))
+                    ) {}
+                    
+                    Spacer(GlanceModifier.width(12.dp))
+
+                    // 课程信息
+                    Column(
+                        modifier = GlanceModifier.defaultWeight(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = nextCourse.name,
+                            style = TextStyle(
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                            ),
+                            maxLines = 1
+                        )
+                        Spacer(GlanceModifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                             Text(
+                                text = "📍 ${nextCourse.location}",
+                                style = TextStyle(
+                                    fontSize = 12.sp,
+                                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F))
+                                ),
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            } else {
+                // 无课状态
+                Row(
+                    modifier = GlanceModifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "☕",
+                        style = TextStyle(fontSize = 20.sp)
+                    )
+                    Spacer(GlanceModifier.width(8.dp))
+                    Text(
+                        text = "今日课程已结束",
+                        style = TextStyle(
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F))
+                        )
+                    )
+                }
+            }
+        }
     }
 
     @Composable
