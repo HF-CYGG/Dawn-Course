@@ -46,6 +46,14 @@ class TimetableViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
+     * 标记是否已自动滚动到当前周
+     *
+     * 默认为 false。当 UI 首次加载并滚动到当前周后置为 true。
+     * 由于 ViewModel 在配置变更（如屏幕旋转）时会保留，因此该标志位能防止旋转后重复滚动。
+     */
+    var hasScrolledToCurrentWeek = false
+
+    /**
      * 当前周次状态
      *
      * 用于在界面层展示当前周次，并支持手动更新周次。

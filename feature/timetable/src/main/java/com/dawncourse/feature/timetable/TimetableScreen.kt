@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -39,8 +40,6 @@ import com.dawncourse.core.ui.theme.LocalAppSettings
 import java.time.LocalDate
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +62,8 @@ fun TimetableRoute(
     
     TimetableScreen(
         uiState = uiState,
+        hasScrolledToCurrentWeek = viewModel.hasScrolledToCurrentWeek,
+        onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
@@ -79,6 +80,8 @@ fun TimetableRoute(
 @Composable
 internal fun TimetableScreen(
     uiState: TimetableUiState,
+    hasScrolledToCurrentWeek: Boolean = false,
+    onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
@@ -102,6 +105,17 @@ internal fun TimetableScreen(
     
     // Calculate displayed week from pager state
     val displayedWeek by remember { derivedStateOf { pagerState.currentPage + 1 } }
+
+    // Auto-scroll to current week on first load
+    LaunchedEffect(uiState) {
+        if (!hasScrolledToCurrentWeek && uiState is TimetableUiState.Success) {
+            val targetPage = (uiState.currentWeek - 1).coerceIn(0, maxWeeks - 1)
+            if (targetPage != pagerState.currentPage) {
+                pagerState.scrollToPage(targetPage)
+            }
+            onScrolledToCurrentWeek()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 1. 背景图 (沉浸式)
