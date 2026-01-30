@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -40,11 +41,14 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -1058,14 +1062,15 @@ private fun EditParsedCourseDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val s = startSection.toIntOrNull() ?: course.startSection
-                    val e = endSection.toIntOrNull() ?: course.endSection
+                    val s = startSection.toIntOrNull()?.coerceAtLeast(1) ?: course.startSection
+                    val e = endSection.toIntOrNull()?.coerceAtLeast(s) ?: course.endSection
+                    val duration = (e - s + 1).coerceAtLeast(1)
                     onConfirm(course.copy(
                         name = name,
                         location = location,
                         teacher = teacher,
                         startSection = s,
-                        endSection = e,
+                        duration = duration,
                         dayOfWeek = dayOfWeek
                     ))
                 }

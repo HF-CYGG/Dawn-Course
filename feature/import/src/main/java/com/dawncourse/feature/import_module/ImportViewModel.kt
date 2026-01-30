@@ -252,7 +252,6 @@ class ImportViewModel @Inject constructor(
                 
                 // 1. Update Time Settings
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
-                settingsRepository.setDefaultCourseDuration(state.courseDuration)
                 
                 // Generate SectionTimes (Start from 8:00, 10min break)
                 val times = mutableListOf<SectionTime>()
@@ -278,6 +277,15 @@ class ImportViewModel @Inject constructor(
                     currentMinute += gap
                 }
                 settingsRepository.setSectionTimes(times)
+                
+                val mostFrequentDuration = state.parsedCourses
+                    .groupingBy { it.duration }
+                    .eachCount()
+                    .maxByOrNull { it.value }
+                    ?.key
+                    ?: 2
+                val safeDefaultDuration = mostFrequentDuration.coerceIn(1, 4)
+                settingsRepository.setDefaultCourseDuration(safeDefaultDuration)
                 
                 // 2. Create Semester
                 val newSemester = Semester(
