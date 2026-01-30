@@ -178,6 +178,7 @@ class DawnWidget : GlanceAppWidget() {
                 .fillMaxSize()
                 .background(Color.White)
                 .appWidgetBackground()
+                .cornerRadius(16.dp)
                 .padding(8.dp)
                 .clickable(actionStartActivity(getMainActivityClassName())),
             contentAlignment = Alignment.CenterStart
@@ -302,6 +303,7 @@ class DawnWidget : GlanceAppWidget() {
                 .fillMaxSize()
                 .background(GlanceTheme.colors.primaryContainer)
                 .appWidgetBackground()
+                .cornerRadius(16.dp)
                 .padding(16.dp)
                 .clickable(actionStartActivity(getMainActivityClassName())),
             contentAlignment = Alignment.Center
@@ -394,6 +396,7 @@ class DawnWidget : GlanceAppWidget() {
                 .fillMaxSize()
                 .background(Color.White)
                 .appWidgetBackground()
+                .cornerRadius(16.dp)
                 .padding(12.dp)
                 .clickable(actionStartActivity(getMainActivityClassName())),
             verticalAlignment = Alignment.CenterVertically
@@ -487,6 +490,7 @@ class DawnWidget : GlanceAppWidget() {
                 .fillMaxSize()
                 .background(Color.White)
                 .appWidgetBackground()
+                .cornerRadius(16.dp)
                 .padding(12.dp)
                 .clickable(actionStartActivity(getMainActivityClassName()))
         ) {
