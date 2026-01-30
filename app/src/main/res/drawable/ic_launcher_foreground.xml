@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Design: Dawn Pillars (Vertical Time Flow) -->
+    
+    <!-- Left Pillar: Night Blue (Cool) -->
+    <path
+        android:fillColor="#42A5F5"
+        android:pathData="M24,38 h16 a4,4 0 0 1 4,4 v32 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-32 a4,4 0 0 1 4,-4 z" />
+        
+    <!-- Center Pillar: Twilight Purple (Transition) -->
+    <path
+        android:fillColor="#AB47BC"
+        android:pathData="M46,28 h16 a4,4 0 0 1 4,4 v52 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-52 a4,4 0 0 1 4,-4 z" />
+        
+    <!-- Right Pillar: Dawn Pink (Warm) -->
+    <path
+        android:fillColor="#EC407A"
+        android:pathData="M68,34 h16 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z" />
+        
+</vector>
