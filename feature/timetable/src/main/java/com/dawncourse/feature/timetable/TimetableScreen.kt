@@ -45,6 +45,9 @@ import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
 
 /**
  * 课表功能入口路由 (Composable Route)
@@ -110,6 +113,8 @@ internal fun TimetableScreen(
     
     // Calculate displayed week from pager state
     val displayedWeek by remember { derivedStateOf { pagerState.currentPage + 1 } }
+    
+    val scope = rememberCoroutineScope()
 
     // Auto-scroll to current week on first load
     LaunchedEffect(uiState) {
@@ -172,6 +177,12 @@ internal fun TimetableScreen(
                 TimetableTopBar(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
+                    onTitleClick = {
+                        scope.launch {
+                            val targetPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1)
+                            pagerState.animateScrollToPage(targetPage)
+                        }
+                    },
                     onSettingsClick = onSettingsClick,
                     onAddClick = onAddClick,
                     onImportClick = onImportClick
@@ -273,13 +284,14 @@ internal fun TimetableScreen(
 private fun TimetableTopBar(
     currentWeek: Int,
     isRealCurrentWeek: Boolean,
+    onTitleClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
     onImportClick: () -> Unit
 ) {
     TopAppBar(
         title = {
-            Column {
+            Column(modifier = Modifier.clickable(onClick = onTitleClick)) {
                 Text(
                     text = "第 $currentWeek 周",
                     style = MaterialTheme.typography.titleLarge.copy(
