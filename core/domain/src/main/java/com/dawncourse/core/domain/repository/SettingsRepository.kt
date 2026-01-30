@@ -43,6 +43,7 @@ interface SettingsRepository {
     suspend fun setDividerAlpha(alpha: Float)
 
     suspend fun setMaxDailySections(count: Int)
+    suspend fun setCourseItemHeight(height: Int)
     suspend fun setDefaultCourseDuration(duration: Int)
     
     suspend fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>)

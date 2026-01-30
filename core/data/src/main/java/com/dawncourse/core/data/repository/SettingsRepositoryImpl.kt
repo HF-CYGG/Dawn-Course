@@ -45,6 +45,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val MAX_DAILY_SECTIONS = intPreferencesKey("max_daily_sections")
         val DEFAULT_COURSE_DURATION = intPreferencesKey("default_course_duration")
         val SECTION_TIMES = stringPreferencesKey("section_times")
+        val COURSE_ITEM_HEIGHT = intPreferencesKey("course_item_height")
         
         // New Keys
         val CARD_CORNER_RADIUS = intPreferencesKey("card_corner_radius")
@@ -84,6 +85,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val dividerWidthDp = preferences[PreferencesKeys.DIVIDER_WIDTH] ?: 1f
         val dividerColor = preferences[PreferencesKeys.DIVIDER_COLOR] ?: "#E5E7EB"
         val dividerAlpha = preferences[PreferencesKeys.DIVIDER_ALPHA] ?: 1.0f
+        val courseItemHeightDp = preferences[PreferencesKeys.COURSE_ITEM_HEIGHT] ?: 64
         val maxDailySections = preferences[PreferencesKeys.MAX_DAILY_SECTIONS] ?: 12
         val defaultCourseDuration = preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] ?: 2
         
@@ -129,6 +131,7 @@ class SettingsRepositoryImpl @Inject constructor(
             dividerWidthDp = dividerWidthDp,
             dividerColor = dividerColor,
             dividerAlpha = dividerAlpha,
+            courseItemHeightDp = courseItemHeightDp,
             maxDailySections = maxDailySections,
             defaultCourseDuration = defaultCourseDuration,
             sectionTimes = sectionTimes,
@@ -203,6 +206,12 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setMaxDailySections(count: Int) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_DAILY_SECTIONS] = count
+        }
+    }
+
+    override suspend fun setCourseItemHeight(height: Int) {
+        dataStore.edit { preferences ->
+            preferences[PreferencesKeys.COURSE_ITEM_HEIGHT] = height
         }
     }
 

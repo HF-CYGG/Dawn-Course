@@ -138,6 +138,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setCourseItemHeight(height: Int) {
+        viewModelScope.launch {
+            settingsRepository.setCourseItemHeight(height)
+        }
+    }
+
     /**
      * 设置默认课程时长
      *

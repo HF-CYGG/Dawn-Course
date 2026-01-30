@@ -38,7 +38,8 @@ data class AppSettings(
     val dividerColor: String = "#E5E7EB",
     val dividerAlpha: Float = 1.0f,
     
-    // Course Settings
+    // Display Settings
+    val courseItemHeightDp: Int = 64, // Default increased to 64dp for better visibility
     val maxDailySections: Int = 12,
     val defaultCourseDuration: Int = 2,
     

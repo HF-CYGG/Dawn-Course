@@ -62,7 +62,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 
 // 常量定义
-val NODE_HEIGHT = 56.dp // 单节课高度
+// val NODE_HEIGHT = 56.dp // 单节课高度 (Moved to AppSettings)
 val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
 
@@ -160,6 +160,7 @@ fun WeekHeader(
 fun TimeColumnIndicator(modifier: Modifier = Modifier) {
     val settings = LocalAppSettings.current
     val maxNodes = settings.maxDailySections
+    val nodeHeight = settings.courseItemHeightDp.dp
 
     Column(
         modifier = modifier
@@ -170,7 +171,7 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
     ) {
         for (i in 1..maxNodes) {
             Column(
-                modifier = Modifier.height(NODE_HEIGHT),
+                modifier = Modifier.height(nodeHeight),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -216,7 +217,8 @@ fun TimetableGrid(
     val settings = LocalAppSettings.current
     // 假设每天最多 12 节课
     val maxNodes = settings.maxDailySections
-    val totalHeight = NODE_HEIGHT * maxNodes
+    val nodeHeight = settings.courseItemHeightDp.dp
+    val totalHeight = nodeHeight * maxNodes
     
     val dividerColor = try {
         Color(android.graphics.Color.parseColor(settings.dividerColor))
@@ -282,7 +284,7 @@ fun TimetableGrid(
             .height(totalHeight)
             .drawBehind {
                 val width = size.width
-                val nodeHeightPx = NODE_HEIGHT.toPx()
+                val nodeHeightPx = nodeHeight.toPx()
 
                 // Draw horizontal lines
                 for (i in 0..maxNodes) {
@@ -299,7 +301,7 @@ fun TimetableGrid(
         // 1. 计算基础尺寸
         val width = constraints.maxWidth
         val cellWidth = width / 7
-        val nodeHeightPx = NODE_HEIGHT.toPx()
+        val nodeHeightPx = nodeHeight.toPx()
         
         // 2. 测量所有子元素
         val placeables = measurables.mapIndexed { index, measurable ->
@@ -412,8 +414,7 @@ fun CourseCard(
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
                                 color = Color(0xFF49454F)
-                            ),
-                            maxLines = 1
+                            )
                         )
                     }
                     
