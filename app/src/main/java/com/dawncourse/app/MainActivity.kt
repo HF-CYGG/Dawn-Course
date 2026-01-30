@@ -22,7 +22,6 @@ import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
-import com.dawncourse.feature.timetable.notification.ReminderScheduler
 import dagger.hilt.android.AndroidEntryPoint
 
 import androidx.compose.material3.CircularProgressIndicator

@@ -138,8 +138,9 @@ class DailySchedulerWorker(
                 }
 
                 // Unmute at End Time
-                if (sectionTimes.isNotEmpty() && course.endSection <= sectionTimes.size && course.endSection > 0) {
-                    val endTimeStr = sectionTimes[course.endSection - 1].endTime
+                val endSection = course.startSection + course.duration - 1
+                if (sectionTimes.isNotEmpty() && endSection <= sectionTimes.size && endSection > 0) {
+                    val endTimeStr = sectionTimes[endSection - 1].endTime
                     try {
                         val parts = endTimeStr.split(":")
                         val endDateTime = LocalDateTime.of(today, LocalTime.of(parts[0].toInt(), parts[1].toInt()))

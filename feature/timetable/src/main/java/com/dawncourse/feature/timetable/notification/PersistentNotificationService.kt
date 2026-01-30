@@ -1,6 +1,7 @@
 package com.dawncourse.feature.timetable.notification
 
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
@@ -100,13 +101,14 @@ class PersistentNotificationService : Service() {
                 var foundStatus = false
                 
                 for (course in todayCourses) {
+                    val endSection = course.startSection + course.duration - 1
                     if (sectionTimes.isNotEmpty() && 
                         course.startSection <= sectionTimes.size && 
-                        course.endSection <= sectionTimes.size &&
-                        course.startSection > 0 && course.endSection > 0) {
+                        endSection <= sectionTimes.size &&
+                        course.startSection > 0 && endSection > 0) {
                         
                         val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                        val endTimeStr = sectionTimes[course.endSection - 1].endTime
+                        val endTimeStr = sectionTimes[endSection - 1].endTime
                         
                         try {
                             val startParts = startTimeStr.split(":")

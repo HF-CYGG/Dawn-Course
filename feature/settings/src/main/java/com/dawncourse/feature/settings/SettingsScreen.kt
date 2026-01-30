@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -327,7 +328,7 @@ fun SettingsScreen(
                 SwitchSetting(
                     title = "常驻通知栏",
                     description = "在通知栏显示下一节课信息",
-                    icon = { Icon(Icons.Default.StickyNote2, null) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.StickyNote2, null) },
                     checked = settings.enablePersistentNotification,
                     onCheckedChange = { viewModel.setEnablePersistentNotification(it) },
                     showDivider = true
