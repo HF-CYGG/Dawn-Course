@@ -140,9 +140,9 @@ fun TimetableSettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // 3. 网格样式 (高级)
-            PreferenceCategory(title = "网格样式 (高级)") {
+            PreferenceCategory(title = "网格线设置") {
                 // 样式选择
-                SettingItem(title = "分割线样式") {
+                SettingRow(title = "线样式") {
                     Row(modifier = Modifier.padding(top = 8.dp)) {
                         DividerType.entries.forEach { type ->
                             val selected = settings.dividerType == type
@@ -162,39 +162,38 @@ fun TimetableSettingsScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
                 // 宽度
                 SliderSetting(
-                    title = "线条宽度",
-                    value = settings.dividerWidth.toFloat(),
-                    onValueChange = { viewModel.setDividerWidth(it.toInt()) },
-                    valueRange = 1f..4f,
-                    steps = 2,
-                    valueText = "${settings.dividerWidth} dp"
+                    title = "线宽",
+                    value = settings.dividerWidthDp,
+                    onValueChange = { viewModel.setDividerWidth(it) },
+                    valueRange = 0.5f..5f,
+                    steps = 9,
+                    valueText = "${String.format("%.1f", settings.dividerWidthDp)} dp",
+                    showDivider = true
                 )
-
-                Spacer(modifier = Modifier.height(16.dp))
 
                 // 不透明度
                 SliderSetting(
-                    title = "线条不透明度",
+                    title = "不透明度",
                     value = settings.dividerAlpha,
                     onValueChange = { viewModel.setDividerAlpha(it) },
                     valueRange = 0f..1f,
-                    valueText = "${(settings.dividerAlpha * 100).toInt()}%"
+                    steps = 10,
+                    valueText = "${(settings.dividerAlpha * 100).toInt()}%",
+                    showDivider = true
                 )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // 颜色 (简单文本框，简化处理)
-                OutlinedTextField(
-                    value = settings.dividerColor,
-                    onValueChange = { viewModel.setDividerColor(it) },
-                    label = { Text("线条颜色 (Hex)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
+
+                // 颜色选择器
+                SettingRow(
+                    title = "网格线颜色",
+                    showDivider = false
+                ) {
+                    ColorPicker(
+                        selectedColor = settings.dividerColor,
+                        onColorSelected = { viewModel.setDividerColor(it) }
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(32.dp))

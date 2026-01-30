@@ -4,32 +4,30 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.dawncourse.core.domain.model.AppFontStyle
-import com.dawncourse.core.domain.model.DividerType
+import coil.compose.AsyncImage
+import com.dawncourse.core.domain.model.AppSettings
+import com.dawncourse.core.domain.model.AppThemeMode
+import com.dawncourse.core.domain.model.WallpaperMode
 
-/**
- * 设置页面
- *
- * 提供应用程序的个性化设置选项，经过视觉优化和功能重组。
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -39,6 +37,22 @@ fun SettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
+    var showSemesterDialog by remember { mutableStateOf(false) }
+
+    if (showSemesterDialog) {
+        SemesterSettingsDialog(
+            initialName = settings.currentSemesterName,
+            initialWeeks = settings.totalWeeks,
+            initialStartDate = settings.startDateTimestamp,
+            onDismissRequest = { showSemesterDialog = false },
+            onConfirm = { name, weeks, date ->
+                viewModel.setCurrentSemesterName(name)
+                viewModel.setTotalWeeks(weeks)
+                viewModel.setStartDateTimestamp(date)
+                showSemesterDialog = false
+            }
+        )
+    }
 
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -59,7 +73,7 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("个性化设置") },
+                title = { Text("设置") },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -78,75 +92,258 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            // 1. 外观设置
-            PreferenceCategory(title = "外观") {
-                // 动态取色
-                SwitchSetting(
-                    title = "动态取色 (Material You)",
-                    description = "根据壁纸自动生成主题色",
-                    checked = settings.dynamicColor,
-                    onCheckedChange = { viewModel.setDynamicColor(it) }
+            // 1. 课表核心管理 (Schedule Core)
+            PreferenceCategory(title = "课表核心管理") {
+                SettingRow(
+                    title = "当前学期",
+                    description = "${settings.currentSemesterName} (第 1 周 / 共 ${settings.totalWeeks} 周)",
+                    icon = { Icon(Icons.Default.DateRange, null) },
+                    onClick = { showSemesterDialog = true },
+                    showDivider = true
                 )
+                SettingRow(
+                    title = "上课时间与节数",
+                    description = "调整每天节数、每节课起止时间",
+                    icon = { Icon(Icons.Default.AccessTime, null) },
+                    onClick = onNavigateToTimetableSettings
+                )
+            }
 
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 2. 深度视觉定制 (Visual Customization)
+            PreferenceCategory(title = "深度视觉定制") {
+                // Preview
+                CourseCardPreview(settings = settings)
+                
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // 自定义壁纸
-                SettingItem(
-                    title = "自定义壁纸",
-                    description = if (settings.wallpaperUri != null) "已设置壁纸" else "选择一张图片作为背景"
+                // 主题模式
+                SettingRow(
+                    title = "主题模式",
+                    icon = { Icon(Icons.Default.BrightnessMedium, null) }
                 ) {
-                    Row {
-                        Button(onClick = { wallpaperLauncher.launch("image/*") }) {
-                            Text(if (settings.wallpaperUri != null) "更换" else "选择图片")
-                        }
-                        if (settings.wallpaperUri != null) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(onClick = { viewModel.setWallpaperUri(null) }) {
-                                Text("清除")
-                            }
-                        }
-                    }
-                }
-
-                // 只有设置了壁纸才显示遮罩浓度调节
-                if (settings.wallpaperUri != null) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    SliderSetting(
-                        title = "背景遮罩浓度",
-                        value = settings.transparency, // Re-using transparency field for alpha
-                        onValueChange = { viewModel.setTransparency(it) },
-                        valueRange = 0.1f..0.9f,
-                        valueText = "${(settings.transparency * 100).toInt()}%",
-                        description = "调节背景图上覆盖颜色的浓度 (建议 40%-60%)"
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 字体样式
-                SettingItem(title = "字体样式") {
-                    Row(modifier = Modifier.padding(top = 8.dp)) {
-                        AppFontStyle.entries.forEach { style ->
-                            val selected = settings.fontStyle == style
+                     Row(modifier = Modifier.padding(start = 56.dp, bottom = 8.dp)) {
+                        AppThemeMode.entries.forEach { mode ->
                             FilterChip(
-                                selected = selected,
-                                onClick = { viewModel.setFontStyle(style) },
-                                label = { Text(style.name) },
+                                selected = settings.themeMode == mode,
+                                onClick = { viewModel.setThemeMode(mode) },
+                                label = { Text(when(mode) {
+                                    AppThemeMode.SYSTEM -> "跟随系统"
+                                    AppThemeMode.LIGHT -> "浅色"
+                                    AppThemeMode.DARK -> "深色"
+                                }) },
                                 modifier = Modifier.padding(end = 8.dp)
                             )
                         }
                     }
                 }
+                
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+
+                // 动态取色
+                SwitchSetting(
+                    title = "动态取色 (Material You)",
+                    description = "根据壁纸自动生成主题色",
+                    icon = { Icon(Icons.Default.Palette, null) },
+                    checked = settings.dynamicColor,
+                    onCheckedChange = { viewModel.setDynamicColor(it) },
+                    showDivider = true
+                )
+
+                // 壁纸
+                SettingRow(
+                    title = "背景壁纸",
+                    description = if (settings.wallpaperUri != null) "已设置自定义壁纸" else "未设置",
+                    icon = { Icon(Icons.Default.Image, null) },
+                    action = {
+                        Row {
+                            if (settings.wallpaperUri != null) {
+                                TextButton(onClick = { viewModel.setWallpaperUri(null) }) { Text("清除") }
+                            }
+                            Button(onClick = { wallpaperLauncher.launch("image/*") }) {
+                                Text("选择")
+                            }
+                        }
+                    }
+                )
+
+                if (settings.wallpaperUri != null) {
+                    // 壁纸模式
+                    Row(modifier = Modifier.padding(start = 56.dp, bottom = 8.dp)) {
+                        WallpaperMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = settings.wallpaperMode == mode,
+                                onClick = { viewModel.setWallpaperMode(mode) },
+                                label = { Text(when(mode) {
+                                    WallpaperMode.CROP -> "裁剪适应"
+                                    WallpaperMode.FILL -> "拉伸填充"
+                                }) },
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        }
+                    }
+                    
+                    SliderSetting(
+                        title = "背景遮罩浓度",
+                        value = settings.transparency,
+                        onValueChange = { viewModel.setTransparency(it) },
+                        valueRange = 0f..1f,
+                        valueText = "${(settings.transparency * 100).toInt()}%",
+                        description = "调节背景图上覆盖颜色的浓度"
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+                
+                // 卡片样式
+                SliderSetting(
+                    title = "卡片圆角",
+                    value = settings.cardCornerRadius.toFloat(),
+                    onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
+                    valueRange = 0f..32f,
+                    valueText = "${settings.cardCornerRadius} dp",
+                    icon = { Icon(Icons.Default.RoundedCorner, null) }
+                )
+                
+                SliderSetting(
+                    title = "卡片不透明度",
+                    value = settings.cardAlpha,
+                    onValueChange = { viewModel.setCardAlpha(it) },
+                    valueRange = 0.1f..1f,
+                    valueText = "${(settings.cardAlpha * 100).toInt()}%",
+                    description = "降低不透明度可透出背景壁纸",
+                    showDivider = true
+                )
+
+                SwitchSetting(
+                    title = "显示课程图标",
+                    icon = { Icon(Icons.Default.EmojiEmotions, null) },
+                    checked = settings.showCourseIcons,
+                    onCheckedChange = { viewModel.setShowCourseIcons(it) },
+                    showDivider = true
+                )
+
+                // Divider Color
+                SettingRow(
+                    title = "网格线颜色",
+                    icon = { Icon(Icons.Default.Grid3x3, null) }
+                ) {
+                    ColorPicker(
+                        selectedColor = settings.dividerColor,
+                        onColorSelected = { viewModel.setDividerColor(it) }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 2. 课表设置
-            PreferenceCategory(title = "课表") {
-                SettingItem(
-                    title = "课表显示设置",
-                    description = "调整节数、时间段及网格样式",
-                    onClick = onNavigateToTimetableSettings
+            // 3. 显示逻辑调整 (Display Logic)
+            PreferenceCategory(title = "显示逻辑调整") {
+                SwitchSetting(
+                    title = "显示周末",
+                    description = "隐藏周六周日，增加平日课程卡片宽度",
+                    icon = { Icon(Icons.Default.ViewWeek, null) },
+                    checked = settings.showWeekend,
+                    onCheckedChange = { viewModel.setShowWeekend(it) },
+                    showDivider = true
+                )
+                
+                SwitchSetting(
+                    title = "显示侧边栏时间",
+                    icon = { Icon(Icons.Default.Schedule, null) },
+                    checked = settings.showSidebarTime,
+                    onCheckedChange = { viewModel.setShowSidebarTime(it) },
+                    showDivider = true
+                )
+
+                SwitchSetting(
+                    title = "显示侧边栏节数",
+                    icon = { Icon(Icons.Default.FormatListNumbered, null) },
+                    checked = settings.showSidebarIndex,
+                    onCheckedChange = { viewModel.setShowSidebarIndex(it) },
+                    showDivider = true
+                )
+                
+                SwitchSetting(
+                    title = "隐藏非本周课程",
+                    description = "仅显示当前周有课的课程",
+                    icon = { Icon(Icons.Default.VisibilityOff, null) },
+                    checked = settings.hideNonThisWeek,
+                    onCheckedChange = { viewModel.setHideNonThisWeek(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 4. 通知与提醒 (Notifications)
+            PreferenceCategory(title = "通知与提醒") {
+                SwitchSetting(
+                    title = "上课提醒",
+                    description = "上课前 ${settings.reminderMinutes} 分钟发送通知",
+                    icon = { Icon(Icons.Default.Notifications, null) },
+                    checked = settings.enableClassReminder,
+                    onCheckedChange = { viewModel.setEnableClassReminder(it) },
+                    showDivider = settings.enableClassReminder
+                )
+                
+                if (settings.enableClassReminder) {
+                    SliderSetting(
+                        title = "提前提醒时间",
+                        value = settings.reminderMinutes.toFloat(),
+                        onValueChange = { viewModel.setReminderMinutes(it.toInt()) },
+                        valueRange = 5f..60f,
+                        steps = 10, // 5, 10, 15, ..., 60
+                        valueText = "${settings.reminderMinutes} 分钟",
+                        showDivider = true
+                    )
+                }
+                
+                SwitchSetting(
+                    title = "常驻通知栏",
+                    description = "在通知栏显示下一节课信息",
+                    icon = { Icon(Icons.Default.StickyNote2, null) },
+                    checked = settings.enablePersistentNotification,
+                    onCheckedChange = { viewModel.setEnablePersistentNotification(it) },
+                    showDivider = true
+                )
+                SwitchSetting(
+                    title = "课后自动静音",
+                    description = "上课期间自动将手机设为静音/震动",
+                    icon = { Icon(Icons.Default.DoNotDisturb, null) },
+                    checked = settings.enableAutoMute,
+                    onCheckedChange = { viewModel.setEnableAutoMute(it) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 5. 数据与同步 (Data & Backup)
+            PreferenceCategory(title = "数据与同步") {
+                SettingRow(
+                    title = "WebDAV 同步",
+                    description = "同步到坚果云/Nextcloud",
+                    icon = { Icon(Icons.Default.CloudSync, null) },
+                    onClick = { 
+                        android.widget.Toast.makeText(context, "WebDAV 同步功能开发中", android.widget.Toast.LENGTH_SHORT).show() 
+                    },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "备份与还原",
+                    description = "导出 .json 备份文件",
+                    icon = { Icon(Icons.Default.Save, null) },
+                    onClick = { 
+                        android.widget.Toast.makeText(context, "备份还原功能开发中", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "清空所有数据",
+                    icon = { Icon(Icons.Default.DeleteForever, null) },
+                    onClick = { 
+                         android.widget.Toast.makeText(context, "清空数据功能开发中", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 )
             }
             
@@ -155,139 +352,115 @@ fun SettingsScreen(
     }
 }
 
-// --- Helper Composables ---
-
 @Composable
-fun PreferenceCategory(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit
+private fun CourseCardPreview(
+    settings: AppSettings
 ) {
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-            .padding(16.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .height(140.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
-        content()
-    }
-}
-
-@Composable
-fun SettingItem(
-    title: String,
-    description: String? = null,
-    onClick: (() -> Unit)? = null,
-    content: @Composable (() -> Unit)? = null
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(vertical = 8.dp)
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium
-        )
-        if (description != null) {
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        // Wallpaper Background
+        if (settings.wallpaperUri != null) {
+            AsyncImage(
+                model = settings.wallpaperUri,
+                contentDescription = null,
+                contentScale = if (settings.wallpaperMode == WallpaperMode.CROP) ContentScale.Crop else ContentScale.FillBounds,
+                modifier = Modifier.matchParentSize()
+            )
+            // Overlay
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = settings.transparency))
+            )
+        } else {
+            // Default colorful background to show transparency
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        )
+                    )
             )
         }
-        if (content != null) {
-            content()
-        }
-    }
-}
 
-@Composable
-fun SwitchSetting(
-    title: String,
-    description: String? = null,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
-            )
-            if (description != null) {
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        // Mock Grid Lines
+        Column(modifier = Modifier.fillMaxSize()) {
+            val dividerColor = try {
+                Color(android.graphics.Color.parseColor(settings.dividerColor))
+            } catch (e: Exception) { Color.LightGray }
+            
+            repeat(3) {
+                HorizontalDivider(
+                    color = dividerColor.copy(alpha = settings.dividerAlpha),
+                    thickness = settings.dividerWidth.dp,
+                    modifier = Modifier.padding(top = 40.dp)
                 )
             }
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange
-        )
-    }
-}
 
-@Composable
-fun SliderSetting(
-    title: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
-    steps: Int = 0,
-    valueText: String? = null,
-    description: String? = null
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Mock Course Card
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium
+            ElevatedCard(
+                modifier = Modifier
+                    .size(width = 100.dp, height = 100.dp),
+                shape = RoundedCornerShape(settings.cardCornerRadius.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.cardAlpha)
                 )
-                if (description != null) {
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (settings.showCourseIcons) {
+                        Icon(
+                            imageVector = Icons.Default.School,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                     Text(
-                        text = description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "高等数学",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "@3-205",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                     )
                 }
             }
-            if (valueText != null) {
-                Text(
-                    text = valueText,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-            }
         }
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = valueRange,
-            steps = steps
+        
+        Text(
+            text = "效果预览",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(8.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 4.dp, vertical = 2.dp)
         )
     }
 }

@@ -154,4 +154,68 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setSectionTimes(times)
         }
     }
+
+    fun setCardCornerRadius(radius: Int) {
+        viewModelScope.launch { settingsRepository.setCardCornerRadius(radius) }
+    }
+
+    fun setCardAlpha(alpha: Float) {
+        viewModelScope.launch { settingsRepository.setCardAlpha(alpha) }
+    }
+
+    fun setShowCourseIcons(show: Boolean) {
+        viewModelScope.launch { settingsRepository.setShowCourseIcons(show) }
+    }
+
+    fun setWallpaperMode(mode: com.dawncourse.core.domain.model.WallpaperMode) {
+        viewModelScope.launch { settingsRepository.setWallpaperMode(mode) }
+    }
+
+    fun setThemeMode(mode: com.dawncourse.core.domain.model.AppThemeMode) {
+        viewModelScope.launch { settingsRepository.setThemeMode(mode) }
+    }
+
+    fun setShowWeekend(show: Boolean) {
+        viewModelScope.launch { settingsRepository.setShowWeekend(show) }
+    }
+
+    fun setShowSidebarTime(show: Boolean) {
+        viewModelScope.launch { settingsRepository.setShowSidebarTime(show) }
+    }
+
+    fun setShowSidebarIndex(show: Boolean) {
+        viewModelScope.launch { settingsRepository.setShowSidebarIndex(show) }
+    }
+
+    fun setHideNonThisWeek(hide: Boolean) {
+        viewModelScope.launch { settingsRepository.setHideNonThisWeek(hide) }
+    }
+
+    fun setCurrentSemesterName(name: String) {
+        viewModelScope.launch { settingsRepository.setCurrentSemesterName(name) }
+    }
+
+    fun setTotalWeeks(weeks: Int) {
+        viewModelScope.launch { settingsRepository.setTotalWeeks(weeks) }
+    }
+
+    fun setStartDateTimestamp(timestamp: Long) {
+        viewModelScope.launch { settingsRepository.setStartDateTimestamp(timestamp) }
+    }
+
+    fun setEnableClassReminder(enable: Boolean) {
+        viewModelScope.launch { settingsRepository.setEnableClassReminder(enable) }
+    }
+
+    fun setReminderMinutes(minutes: Int) {
+        viewModelScope.launch { settingsRepository.setReminderMinutes(minutes) }
+    }
+
+    fun setEnablePersistentNotification(enable: Boolean) {
+        viewModelScope.launch { settingsRepository.setEnablePersistentNotification(enable) }
+    }
+
+    fun setEnableAutoMute(enable: Boolean) {
+        viewModelScope.launch { settingsRepository.setEnableAutoMute(enable) }
+    }
 }

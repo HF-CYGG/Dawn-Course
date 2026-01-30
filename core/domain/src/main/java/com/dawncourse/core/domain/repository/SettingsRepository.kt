@@ -46,4 +46,22 @@ interface SettingsRepository {
     suspend fun setDefaultCourseDuration(duration: Int)
     
     suspend fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>)
+
+    suspend fun setCardCornerRadius(radius: Int)
+    suspend fun setCardAlpha(alpha: Float)
+    suspend fun setShowCourseIcons(show: Boolean)
+    suspend fun setWallpaperMode(mode: com.dawncourse.core.domain.model.WallpaperMode)
+    suspend fun setThemeMode(mode: com.dawncourse.core.domain.model.AppThemeMode)
+    suspend fun setShowWeekend(show: Boolean)
+    suspend fun setShowSidebarTime(show: Boolean)
+    suspend fun setShowSidebarIndex(show: Boolean)
+    suspend fun setHideNonThisWeek(hide: Boolean)
+    suspend fun setCurrentSemesterName(name: String)
+    suspend fun setTotalWeeks(weeks: Int)
+    suspend fun setStartDateTimestamp(timestamp: Long)
+
+    suspend fun setEnableClassReminder(enable: Boolean)
+    suspend fun setReminderMinutes(minutes: Int)
+    suspend fun setEnablePersistentNotification(enable: Boolean)
+    suspend fun setEnableAutoMute(enable: Boolean)
 }

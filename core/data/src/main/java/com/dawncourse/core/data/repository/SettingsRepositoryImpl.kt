@@ -45,6 +45,24 @@ class SettingsRepositoryImpl @Inject constructor(
         val MAX_DAILY_SECTIONS = intPreferencesKey("max_daily_sections")
         val DEFAULT_COURSE_DURATION = intPreferencesKey("default_course_duration")
         val SECTION_TIMES = stringPreferencesKey("section_times")
+        
+        // New Keys
+        val CARD_CORNER_RADIUS = intPreferencesKey("card_corner_radius")
+        val CARD_ALPHA = floatPreferencesKey("card_alpha")
+        val SHOW_COURSE_ICONS = booleanPreferencesKey("show_course_icons")
+        val WALLPAPER_MODE = stringPreferencesKey("wallpaper_mode")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
+        val SHOW_WEEKEND = booleanPreferencesKey("show_weekend")
+        val SHOW_SIDEBAR_TIME = booleanPreferencesKey("show_sidebar_time")
+        val SHOW_SIDEBAR_INDEX = booleanPreferencesKey("show_sidebar_index")
+        val HIDE_NON_THIS_WEEK = booleanPreferencesKey("hide_non_this_week")
+        val CURRENT_SEMESTER_NAME = stringPreferencesKey("current_semester_name")
+        val TOTAL_WEEKS = intPreferencesKey("total_weeks")
+        val START_DATE_TIMESTAMP = androidx.datastore.preferences.core.longPreferencesKey("start_date_timestamp")
+        val ENABLE_CLASS_REMINDER = booleanPreferencesKey("enable_class_reminder")
+        val REMINDER_MINUTES = intPreferencesKey("reminder_minutes")
+        val ENABLE_PERSISTENT_NOTIFICATION = booleanPreferencesKey("enable_persistent_notification")
+        val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -80,6 +98,26 @@ class SettingsRepositoryImpl @Inject constructor(
             emptyList()
         }
 
+        // Read new settings
+        val cardCornerRadius = preferences[PreferencesKeys.CARD_CORNER_RADIUS] ?: 16
+        val cardAlpha = preferences[PreferencesKeys.CARD_ALPHA] ?: 0.9f
+        val showCourseIcons = preferences[PreferencesKeys.SHOW_COURSE_ICONS] ?: true
+        val wallpaperModeName = preferences[PreferencesKeys.WALLPAPER_MODE] ?: com.dawncourse.core.domain.model.WallpaperMode.CROP.name
+        val wallpaperMode = try {
+            com.dawncourse.core.domain.model.WallpaperMode.valueOf(wallpaperModeName)
+        } catch (e: Exception) { com.dawncourse.core.domain.model.WallpaperMode.CROP }
+        val themeModeName = preferences[PreferencesKeys.THEME_MODE] ?: com.dawncourse.core.domain.model.AppThemeMode.SYSTEM.name
+        val themeMode = try {
+            com.dawncourse.core.domain.model.AppThemeMode.valueOf(themeModeName)
+        } catch (e: Exception) { com.dawncourse.core.domain.model.AppThemeMode.SYSTEM }
+        val showWeekend = preferences[PreferencesKeys.SHOW_WEEKEND] ?: true
+        val showSidebarTime = preferences[PreferencesKeys.SHOW_SIDEBAR_TIME] ?: true
+        val showSidebarIndex = preferences[PreferencesKeys.SHOW_SIDEBAR_INDEX] ?: true
+        val hideNonThisWeek = preferences[PreferencesKeys.HIDE_NON_THIS_WEEK] ?: false
+        val currentSemesterName = preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] ?: "2025年春季学期"
+        val totalWeeks = preferences[PreferencesKeys.TOTAL_WEEKS] ?: 20
+        val startDateTimestamp = preferences[PreferencesKeys.START_DATE_TIMESTAMP] ?: 0L
+
         AppSettings(
             dynamicColor = dynamicColor,
             wallpaperUri = wallpaperUri,
@@ -91,7 +129,19 @@ class SettingsRepositoryImpl @Inject constructor(
             dividerAlpha = dividerAlpha,
             maxDailySections = maxDailySections,
             defaultCourseDuration = defaultCourseDuration,
-            sectionTimes = sectionTimes
+            sectionTimes = sectionTimes,
+            cardCornerRadius = cardCornerRadius,
+            cardAlpha = cardAlpha,
+            showCourseIcons = showCourseIcons,
+            wallpaperMode = wallpaperMode,
+            themeMode = themeMode,
+            showWeekend = showWeekend,
+            showSidebarTime = showSidebarTime,
+            showSidebarIndex = showSidebarIndex,
+            hideNonThisWeek = hideNonThisWeek,
+            currentSemesterName = currentSemesterName,
+            totalWeeks = totalWeeks,
+            startDateTimestamp = startDateTimestamp
         )
     }
 
@@ -164,5 +214,69 @@ class SettingsRepositoryImpl @Inject constructor(
             val serialized = times.joinToString("|") { "${it.startTime},${it.endTime}" }
             preferences[PreferencesKeys.SECTION_TIMES] = serialized
         }
+    }
+
+    override suspend fun setCardCornerRadius(radius: Int) {
+        dataStore.edit { it[PreferencesKeys.CARD_CORNER_RADIUS] = radius }
+    }
+
+    override suspend fun setCardAlpha(alpha: Float) {
+        dataStore.edit { it[PreferencesKeys.CARD_ALPHA] = alpha }
+    }
+
+    override suspend fun setShowCourseIcons(show: Boolean) {
+        dataStore.edit { it[PreferencesKeys.SHOW_COURSE_ICONS] = show }
+    }
+
+    override suspend fun setWallpaperMode(mode: com.dawncourse.core.domain.model.WallpaperMode) {
+        dataStore.edit { it[PreferencesKeys.WALLPAPER_MODE] = mode.name }
+    }
+
+    override suspend fun setThemeMode(mode: com.dawncourse.core.domain.model.AppThemeMode) {
+        dataStore.edit { it[PreferencesKeys.THEME_MODE] = mode.name }
+    }
+
+    override suspend fun setShowWeekend(show: Boolean) {
+        dataStore.edit { it[PreferencesKeys.SHOW_WEEKEND] = show }
+    }
+
+    override suspend fun setShowSidebarTime(show: Boolean) {
+        dataStore.edit { it[PreferencesKeys.SHOW_SIDEBAR_TIME] = show }
+    }
+
+    override suspend fun setShowSidebarIndex(show: Boolean) {
+        dataStore.edit { it[PreferencesKeys.SHOW_SIDEBAR_INDEX] = show }
+    }
+
+    override suspend fun setHideNonThisWeek(hide: Boolean) {
+        dataStore.edit { it[PreferencesKeys.HIDE_NON_THIS_WEEK] = hide }
+    }
+
+    override suspend fun setCurrentSemesterName(name: String) {
+        dataStore.edit { it[PreferencesKeys.CURRENT_SEMESTER_NAME] = name }
+    }
+
+    override suspend fun setTotalWeeks(weeks: Int) {
+        dataStore.edit { it[PreferencesKeys.TOTAL_WEEKS] = weeks }
+    }
+
+    override suspend fun setStartDateTimestamp(timestamp: Long) {
+        dataStore.edit { it[PreferencesKeys.START_DATE_TIMESTAMP] = timestamp }
+    }
+
+    override suspend fun setEnableClassReminder(enable: Boolean) {
+        dataStore.edit { it[PreferencesKeys.ENABLE_CLASS_REMINDER] = enable }
+    }
+
+    override suspend fun setReminderMinutes(minutes: Int) {
+        dataStore.edit { it[PreferencesKeys.REMINDER_MINUTES] = minutes }
+    }
+
+    override suspend fun setEnablePersistentNotification(enable: Boolean) {
+        dataStore.edit { it[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] = enable }
+    }
+
+    override suspend fun setEnableAutoMute(enable: Boolean) {
+        dataStore.edit { it[PreferencesKeys.ENABLE_AUTO_MUTE] = enable }
     }
 }

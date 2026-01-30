@@ -43,13 +43,44 @@ data class AppSettings(
     val defaultCourseDuration: Int = 2,
     
     // Time Settings
-    val sectionTimes: List<SectionTime> = emptyList()
+    val sectionTimes: List<SectionTime> = emptyList(),
+
+    // New Visual Settings
+    val cardCornerRadius: Int = 16,
+    val cardAlpha: Float = 0.9f,
+    val showCourseIcons: Boolean = true,
+    val wallpaperMode: WallpaperMode = WallpaperMode.CROP,
+    val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+
+    // New Display Settings
+    val showWeekend: Boolean = true,
+    val showSidebarTime: Boolean = true,
+    val showSidebarIndex: Boolean = true,
+    val hideNonThisWeek: Boolean = false,
+
+    // Semester Info (Simple version for now)
+    val currentSemesterName: String = "2025年春季学期",
+    val totalWeeks: Int = 20,
+    val startDateTimestamp: Long = 0L,
+    // Notifications
+    val enableClassReminder: Boolean = false,
+    val reminderMinutes: Int = 10,
+    val enablePersistentNotification: Boolean = false,
+    val enableAutoMute: Boolean = false
 )
 
 data class SectionTime(
     val startTime: String, // "HH:mm"
     val endTime: String    // "HH:mm"
 )
+
+enum class WallpaperMode {
+    CROP, FILL
+}
+
+enum class AppThemeMode {
+    SYSTEM, LIGHT, DARK
+}
 
 enum class DividerType {
     SOLID, DASHED, DOTTED
