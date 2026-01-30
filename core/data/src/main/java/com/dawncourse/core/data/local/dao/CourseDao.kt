@@ -21,6 +21,9 @@ interface CourseDao {
     @Query("SELECT * FROM courses")
     fun getAllCourses(): Flow<List<CourseEntity>>
 
+    @Query("SELECT * FROM courses")
+    suspend fun getAllCoursesOnce(): List<CourseEntity>
+
     /**
      * 根据学期 ID 查询课程
      */
@@ -68,6 +71,9 @@ interface CourseDao {
      */
     @Update
     suspend fun updateCourse(course: CourseEntity)
+
+    @Update
+    suspend fun updateCourses(courses: List<CourseEntity>)
     
     /**
      * 删除课程
@@ -85,4 +91,32 @@ interface CourseDao {
      */
     @Query("DELETE FROM courses WHERE id = :id")
     suspend fun deleteCourseById(id: Long)
+
+    /**
+     * 批量更新所有课程的时长
+     *
+     * @param duration 新的时长（节数）
+     */
+    @Transaction
+    suspend fun updateAllCoursesDuration(duration: Int) {
+        val courses = getAllCoursesOnce()
+        if (courses.isEmpty()) return
+        val updated = courses
+            .groupBy { it.semesterId to it.dayOfWeek }
+            .flatMap { (_, dayCourses) ->
+                val sorted = dayCourses.sortedWith(
+                    compareBy<CourseEntity> { it.startSection }.thenBy { it.id }
+                )
+                var nextStart = 1
+                sorted.map { course ->
+                    val updatedCourse = course.copy(
+                        startSection = nextStart,
+                        duration = duration
+                    )
+                    nextStart += duration
+                    updatedCourse
+                }
+            }
+        updateCourses(updated)
+    }
 }

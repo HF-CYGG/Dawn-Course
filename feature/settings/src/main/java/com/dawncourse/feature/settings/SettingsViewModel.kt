@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,7 +24,8 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val courseRepository: CourseRepository
 ) : ViewModel() {
 
     /**
@@ -153,6 +155,17 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultCourseDuration(duration: Int) {
         viewModelScope.launch {
             settingsRepository.setDefaultCourseDuration(duration)
+        }
+    }
+
+    /**
+     * 批量更新所有课程的时长
+     *
+     * @param duration 新的时长（节数）
+     */
+    fun updateAllCoursesDuration(duration: Int) {
+        viewModelScope.launch {
+            courseRepository.updateAllCoursesDuration(duration)
         }
     }
 

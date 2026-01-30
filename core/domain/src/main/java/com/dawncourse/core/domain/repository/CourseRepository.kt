@@ -67,4 +67,11 @@ interface CourseRepository {
      * @param id 要删除的课程 ID
      */
     suspend fun deleteCourseById(id: Long)
+
+    /**
+     * 批量更新所有课程的时长
+     *
+     * @param duration 新的时长（节数）
+     */
+    suspend fun updateAllCoursesDuration(duration: Int)
 }

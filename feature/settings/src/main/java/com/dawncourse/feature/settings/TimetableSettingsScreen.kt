@@ -32,6 +32,7 @@ fun TimetableSettingsScreen(
     val settings by viewModel.settings.collectAsState()
     var showTimePickerDialog by remember { mutableStateOf<Int?>(null) } // Int is the section index (1-based) being edited
     var showBatchGenerateDialog by remember { mutableStateOf(false) }
+    var showBatchUpdateDurationDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -79,6 +80,15 @@ fun TimetableSettingsScreen(
                     valueText = "${settings.defaultCourseDuration} 节",
                     description = "新建课程时默认选中的时长"
                 )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { showBatchUpdateDurationDialog = true }) {
+                        Text("应用到所有课程")
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -314,6 +324,29 @@ fun TimetableSettingsScreen(
             onConfirm = { newTimes ->
                 viewModel.setSectionTimes(newTimes)
                 showBatchGenerateDialog = false
+            }
+        )
+    }
+
+    if (showBatchUpdateDurationDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatchUpdateDurationDialog = false },
+            title = { Text("批量更新课程时长") },
+            text = { Text("确定要将所有现有课程的时长都修改为 ${settings.defaultCourseDuration} 节吗？\n\n此操作将覆盖所有课程的当前时长，且不可撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.updateAllCoursesDuration(settings.defaultCourseDuration)
+                        showBatchUpdateDurationDialog = false
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchUpdateDurationDialog = false }) {
+                    Text("取消")
+                }
             }
         )
     }
