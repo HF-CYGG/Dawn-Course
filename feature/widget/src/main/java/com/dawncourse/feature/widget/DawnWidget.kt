@@ -62,15 +62,37 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.SettingsRepository
 import java.time.format.DateTimeFormatter
 
-// 莫兰迪/马卡龙色系，看起来非常舒服
+// 莫兰迪/马卡龙色系 (Day) / 深色适配 (Night)
 private val WidgetCourseColors = listOf(
-    Color(0xFFE8DEF8), // 浅紫
-    Color(0xFFC4E7FF), // 浅蓝
-    Color(0xFFC3EED0), // 浅绿
-    Color(0xFFFDE2E4), // 浅粉
-    Color(0xFFFFF4DE), // 浅黄
-    Color(0xFFE1E0FF)  // 淡靛
+    ColorProvider(day = Color(0xFFE8DEF8), night = Color(0xFF4A4458)), // 浅紫 -> 深灰紫
+    ColorProvider(day = Color(0xFFC4E7FF), night = Color(0xFF004A77)), // 浅蓝 -> 深蓝
+    ColorProvider(day = Color(0xFFC3EED0), night = Color(0xFF0F5223)), // 浅绿 -> 深绿
+    ColorProvider(day = Color(0xFFFDE2E4), night = Color(0xFF8C1D18)), // 浅粉 -> 深红
+    ColorProvider(day = Color(0xFFFFF4DE), night = Color(0xFF5C4F00)), // 浅黄 -> 深黄
+    ColorProvider(day = Color(0xFFE1E0FF), night = Color(0xFF303FA2))  // 淡靛 -> 深靛
 )
+
+// Widget Semantic Colors (Day/Night)
+private object WidgetColors {
+    val Background = ColorProvider(day = Color.White, night = Color(0xFF1C1B1F))
+    val Surface = ColorProvider(day = Color.White, night = Color(0xFF1C1B1F))
+    val SurfaceVariant = ColorProvider(day = Color(0xFFF3F3F3), night = Color(0xFF2B2930)) // Slightly lighter than background for cards
+    
+    val Primary = ColorProvider(day = Color(0xFF6750A4), night = Color(0xFFD0BCFF))
+    val OnPrimary = ColorProvider(day = Color.White, night = Color(0xFF381E72))
+    
+    val PrimaryContainer = ColorProvider(day = Color(0xFFEADDFF), night = Color(0xFF4F378B))
+    val OnPrimaryContainer = ColorProvider(day = Color(0xFF21005D), night = Color(0xFFEADDFF))
+
+    val TextPrimary = ColorProvider(day = Color(0xFF1C1B1F), night = Color(0xFFE6E1E5))
+    val TextSecondary = ColorProvider(day = Color(0xFF49454F), night = Color(0xFFCAC4D0))
+    val TextTertiary = ColorProvider(day = Color(0xFF79747E), night = Color(0xFF938F99))
+    
+    val Divider = ColorProvider(day = Color(0xFFE0E0E0), night = Color(0xFF49454F))
+    val DateBadgeBackground = ColorProvider(day = Color(0xFFE7E0EC), night = Color(0xFF4A4458))
+    
+    val IconTint = TextSecondary // Icons follow secondary text color usually
+}
 
 class DawnWidget : GlanceAppWidget() {
 
@@ -176,7 +198,7 @@ class DawnWidget : GlanceAppWidget() {
         Box(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(WidgetColors.Background)
                 .appWidgetBackground()
                 .cornerRadius(16.dp)
                 .padding(8.dp)
@@ -188,7 +210,7 @@ class DawnWidget : GlanceAppWidget() {
                 // 使用课程颜色作为左侧条的颜色，或者整体背景淡色
                 val colorIndex = kotlin.math.abs(nextCourse.name.hashCode()) % WidgetCourseColors.size
                 val baseColor = WidgetCourseColors[colorIndex]
-                val bg = if (isCurrent) baseColor else Color.White
+                val bg = if (isCurrent) baseColor else WidgetColors.Surface
                 
                 Row(
                     modifier = GlanceModifier
@@ -208,7 +230,7 @@ class DawnWidget : GlanceAppWidget() {
                             style = TextStyle(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                                color = WidgetColors.TextPrimary
                             )
                         )
                         if (isCurrent) {
@@ -216,7 +238,7 @@ class DawnWidget : GlanceAppWidget() {
                                 text = "上课中",
                                 style = TextStyle(
                                     fontSize = 10.sp,
-                                    color = ColorProvider(Color(0xFF6750A4), Color(0xFF6750A4)),
+                                    color = WidgetColors.Primary,
                                     fontWeight = FontWeight.Bold
                                 )
                             )
@@ -230,7 +252,7 @@ class DawnWidget : GlanceAppWidget() {
                         modifier = GlanceModifier
                             .width(1.dp)
                             .height(24.dp)
-                            .background(Color(0xFFE0E0E0))
+                            .background(WidgetColors.Divider)
                     ) {}
                     
                     Spacer(GlanceModifier.width(12.dp))
@@ -245,17 +267,24 @@ class DawnWidget : GlanceAppWidget() {
                             style = TextStyle(
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                                color = WidgetColors.TextPrimary
                             ),
                             maxLines = 1
                         )
                         Spacer(GlanceModifier.height(2.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                             Image(
+                                provider = ImageProvider(R.drawable.ic_location_on),
+                                contentDescription = null,
+                                modifier = GlanceModifier.size(12.dp),
+                                colorFilter = ColorFilter.tint(WidgetColors.IconTint)
+                            )
+                            Spacer(GlanceModifier.width(4.dp))
                              Text(
-                                text = "📍 ${nextCourse.location}",
+                                text = nextCourse.location,
                                 style = TextStyle(
                                     fontSize = 12.sp,
-                                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F))
+                                    color = WidgetColors.TextSecondary
                                 ),
                                 maxLines = 1
                             )
@@ -279,7 +308,7 @@ class DawnWidget : GlanceAppWidget() {
                         style = TextStyle(
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F))
+                            color = WidgetColors.TextSecondary
                         )
                     )
                 }
@@ -301,7 +330,7 @@ class DawnWidget : GlanceAppWidget() {
         Box(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(GlanceTheme.colors.primaryContainer)
+                .background(WidgetColors.PrimaryContainer)
                 .appWidgetBackground()
                 .cornerRadius(16.dp)
                 .padding(16.dp)
@@ -316,7 +345,7 @@ class DawnWidget : GlanceAppWidget() {
                          Text(
                             text = "正在上课",
                             style = TextStyle(
-                                color = GlanceTheme.colors.primary,
+                                color = WidgetColors.Primary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             ),
@@ -326,7 +355,7 @@ class DawnWidget : GlanceAppWidget() {
                          Text(
                             text = "接下来",
                             style = TextStyle(
-                                color = GlanceTheme.colors.onPrimaryContainer,
+                                color = WidgetColors.OnPrimaryContainer,
                                 fontSize = 12.sp
                             ),
                             modifier = GlanceModifier.padding(bottom = 4.dp)
@@ -336,7 +365,7 @@ class DawnWidget : GlanceAppWidget() {
                     Text(
                         text = nextCourse.name,
                         style = TextStyle(
-                            color = GlanceTheme.colors.onPrimaryContainer,
+                            color = WidgetColors.OnPrimaryContainer,
                             fontSize = 20.sp, 
                             fontWeight = FontWeight.Bold
                         ),
@@ -344,15 +373,17 @@ class DawnWidget : GlanceAppWidget() {
                     )
                     Spacer(GlanceModifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "📍", 
-                            style = TextStyle(color = GlanceTheme.colors.onPrimaryContainer, fontSize = 12.sp)
+                        Image(
+                            provider = ImageProvider(R.drawable.ic_location_on),
+                            contentDescription = null,
+                            modifier = GlanceModifier.size(12.dp),
+                            colorFilter = ColorFilter.tint(WidgetColors.OnPrimaryContainer)
                         )
                         Spacer(GlanceModifier.width(4.dp))
                         Text(
                             text = nextCourse.location.ifEmpty { "未知地点" },
                             style = TextStyle(
-                                color = GlanceTheme.colors.onPrimaryContainer,
+                                color = WidgetColors.OnPrimaryContainer,
                                 fontSize = 14.sp
                             )
                         )
@@ -361,7 +392,7 @@ class DawnWidget : GlanceAppWidget() {
                     val timeStr = getCourseTimeString(nextCourse, sectionTimes)
                     Text(
                         text = timeStr,
-                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 14.sp),
+                        style = TextStyle(color = WidgetColors.Primary, fontSize = 14.sp),
                         modifier = GlanceModifier.padding(top = 4.dp)
                     )
                 }
@@ -372,7 +403,7 @@ class DawnWidget : GlanceAppWidget() {
                     Text(
                         text = "今日课程已结束",
                         style = TextStyle(
-                            color = GlanceTheme.colors.onPrimaryContainer,
+                            color = WidgetColors.OnPrimaryContainer,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -380,7 +411,7 @@ class DawnWidget : GlanceAppWidget() {
                      Text(
                         text = "好好休息",
                         style = TextStyle(
-                            color = GlanceTheme.colors.onPrimaryContainer,
+                            color = WidgetColors.OnPrimaryContainer,
                             fontSize = 12.sp
                         )
                     )
@@ -394,7 +425,7 @@ class DawnWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(WidgetColors.Background)
                 .appWidgetBackground()
                 .cornerRadius(16.dp)
                 .padding(12.dp)
@@ -412,7 +443,7 @@ class DawnWidget : GlanceAppWidget() {
                     style = TextStyle(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                        color = WidgetColors.TextPrimary
                     )
                 )
                 
@@ -420,7 +451,7 @@ class DawnWidget : GlanceAppWidget() {
                     text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
                     style = TextStyle(
                         fontSize = 14.sp,
-                        color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                        color = WidgetColors.TextSecondary,
                         fontWeight = FontWeight.Medium
                     ),
                     modifier = GlanceModifier.padding(vertical = 4.dp)
@@ -428,7 +459,7 @@ class DawnWidget : GlanceAppWidget() {
                 
                 Box(
                     modifier = GlanceModifier
-                        .background(Color(0xFFE7E0EC))
+                        .background(WidgetColors.DateBadgeBackground)
                         .cornerRadius(8.dp)
                         .padding(horizontal = 8.dp, vertical = 2.dp)
                 ) {
@@ -436,7 +467,7 @@ class DawnWidget : GlanceAppWidget() {
                         text = "${today.monthValue}月${today.dayOfMonth}日",
                         style = TextStyle(
                             fontSize = 11.sp,
-                            color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                            color = WidgetColors.TextSecondary,
                             fontWeight = FontWeight.Medium
                         )
                     )
@@ -448,7 +479,7 @@ class DawnWidget : GlanceAppWidget() {
                 modifier = GlanceModifier
                     .width(1.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFFE0E0E0))
+                    .background(WidgetColors.Divider)
             ) {}
             
             Spacer(GlanceModifier.width(12.dp))
@@ -476,7 +507,7 @@ class DawnWidget : GlanceAppWidget() {
             Text(
                 text = "今日无课",
                 style = TextStyle(
-                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                    color = WidgetColors.TextSecondary,
                     fontSize = 16.sp
                 )
             )
@@ -488,7 +519,7 @@ class DawnWidget : GlanceAppWidget() {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(Color.White)
+                .background(WidgetColors.Background)
                 .appWidgetBackground()
                 .cornerRadius(16.dp)
                 .padding(12.dp)
@@ -519,7 +550,7 @@ class DawnWidget : GlanceAppWidget() {
                 style = TextStyle(
                     fontSize = 22.sp, // 加大字号
                     fontWeight = FontWeight.Bold,
-                    color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                    color = WidgetColors.TextPrimary
                 )
             )
             
@@ -530,7 +561,7 @@ class DawnWidget : GlanceAppWidget() {
                 text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
                 style = TextStyle(
                     fontSize = 16.sp,
-                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                    color = WidgetColors.TextSecondary,
                     fontWeight = FontWeight.Medium
                 ),
                 modifier = GlanceModifier.padding(bottom = 2.dp)
@@ -541,7 +572,7 @@ class DawnWidget : GlanceAppWidget() {
             // 右边：日期胶囊
             Box(
                 modifier = GlanceModifier
-                    .background(Color(0xFFE7E0EC)) // 浅灰背景
+                    .background(WidgetColors.DateBadgeBackground) // 浅灰背景
                     .cornerRadius(12.dp)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
@@ -549,7 +580,7 @@ class DawnWidget : GlanceAppWidget() {
                     text = dateInfo, // "1月30日"
                     style = TextStyle(
                         fontSize = 12.sp,
-                        color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                        color = WidgetColors.TextSecondary,
                         fontWeight = FontWeight.Medium
                     )
                 )
@@ -603,9 +634,11 @@ class DawnWidget : GlanceAppWidget() {
         val baseColor = WidgetCourseColors[colorIndex]
         
         // 如果是当前课程，颜色加深一点；否则用极淡的背景
-        val backgroundColor = if (isCurrent) baseColor else baseColor.copy(alpha = 0.5f)
-        val textColor = Color(0xFF1C1B1F) // 深灰几近黑
-        val subTextColor = Color(0xFF49454F) // 次级灰
+        // 由于 WidgetCourseColors 已经是 ColorProvider，无法直接 copy(alpha)，所以统一使用 baseColor
+        // 在暗色模式下，这些颜色会自动适配
+        val backgroundColor = baseColor
+        val textColor = WidgetColors.TextPrimary
+        val subTextColor = WidgetColors.TextSecondary
         
         val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
         val endTimeStr = getSectionEndTime(course, sectionTimes)
@@ -621,12 +654,12 @@ class DawnWidget : GlanceAppWidget() {
                 modifier = GlanceModifier.width(48.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                val timeColor = if (isCurrent) Color(0xFF6750A4) else subTextColor
+                val timeColor = if (isCurrent) WidgetColors.Primary else subTextColor
                 
                 Text(
                     text = startTime,
                     style = TextStyle(
-                        color = ColorProvider(timeColor, timeColor),
+                        color = timeColor,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.End
@@ -638,7 +671,7 @@ class DawnWidget : GlanceAppWidget() {
                     Text(
                         text = endTimeStr,
                         style = TextStyle(
-                            color = ColorProvider(subTextColor, subTextColor),
+                            color = subTextColor,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.End
@@ -663,7 +696,7 @@ class DawnWidget : GlanceAppWidget() {
                 Text(
                     text = course.name,
                     style = TextStyle(
-                        color = ColorProvider(textColor, textColor),
+                        color = textColor,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     ),
@@ -679,7 +712,7 @@ class DawnWidget : GlanceAppWidget() {
                         provider = ImageProvider(R.drawable.ic_location_on),
                         contentDescription = null,
                         modifier = GlanceModifier.size(12.dp),
-                        colorFilter = ColorFilter.tint(ColorProvider(subTextColor, subTextColor))
+                        colorFilter = ColorFilter.tint(WidgetColors.IconTint)
                     )
                     
                     Spacer(GlanceModifier.width(4.dp))
@@ -687,7 +720,7 @@ class DawnWidget : GlanceAppWidget() {
                     Text(
                         text = "${course.location} · ${course.teacher}",
                         style = TextStyle(
-                            color = ColorProvider(subTextColor, subTextColor),
+                            color = subTextColor,
                             fontSize = 12.sp
                         ),
                         maxLines = 1
@@ -702,7 +735,7 @@ class DawnWidget : GlanceAppWidget() {
                 Box(
                     modifier = GlanceModifier
                         .size(6.dp)
-                        .background(Color(0xFF6750A4))
+                        .background(WidgetColors.Primary)
                         .cornerRadius(3.dp)
                 ) {}
             }
@@ -711,15 +744,15 @@ class DawnWidget : GlanceAppWidget() {
 
     @Composable
     fun CompactCourseItem(course: Course, sectionTimes: List<SectionTime>) {
-        val textColor = Color(0xFF1C1B1F)
-        val subTextColor = Color(0xFF49454F)
+        val textColor = WidgetColors.TextPrimary
+        val subTextColor = WidgetColors.TextSecondary
         
         val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
 
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .background(Color.White) // 纯白背景
+                .background(WidgetColors.Surface) // 纯白背景
                 // .border(1.dp, Color(0xFFE0E0E0)) // Glance 暂不支持 border modifier，用 background 模拟或忽略
                 .cornerRadius(12.dp) // 稍小的圆角
                 .padding(horizontal = 12.dp, vertical = 8.dp), // 紧凑的 Padding
@@ -729,7 +762,7 @@ class DawnWidget : GlanceAppWidget() {
             Text(
                 text = startTime,
                 style = TextStyle(
-                    color = ColorProvider(subTextColor, subTextColor),
+                    color = subTextColor,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 ),
@@ -741,7 +774,7 @@ class DawnWidget : GlanceAppWidget() {
                 modifier = GlanceModifier
                     .width(2.dp)
                     .height(12.dp)
-                    .background(Color(0xFFE0E0E0))
+                    .background(WidgetColors.Divider)
             ) {}
             
             Spacer(GlanceModifier.width(8.dp))
@@ -754,7 +787,7 @@ class DawnWidget : GlanceAppWidget() {
                 Text(
                     text = course.name,
                     style = TextStyle(
-                        color = ColorProvider(textColor, textColor),
+                        color = textColor,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     ),
@@ -764,7 +797,7 @@ class DawnWidget : GlanceAppWidget() {
                 Text(
                     text = "@${course.location}", // Using location instead of room
                     style = TextStyle(
-                        color = ColorProvider(subTextColor, subTextColor),
+                        color = subTextColor,
                         fontSize = 11.sp
                     ),
                     maxLines = 1
