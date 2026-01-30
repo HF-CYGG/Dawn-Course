@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -53,6 +54,7 @@ fun TimetableRoute(
     viewModel: TimetableViewModel = hiltViewModel(),
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
+    onImportClick: () -> Unit,
     onCourseClick: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -62,6 +64,7 @@ fun TimetableRoute(
         hasScrolledToCurrentWeek = viewModel.hasScrolledToCurrentWeek,
         onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
+        onImportClick = onImportClick,
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },
@@ -81,6 +84,7 @@ internal fun TimetableScreen(
     hasScrolledToCurrentWeek: Boolean = false,
     onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
+    onImportClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
     onUndoReschedule: (Course) -> Unit,
@@ -169,7 +173,8 @@ internal fun TimetableScreen(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
                     onSettingsClick = onSettingsClick,
-                    onAddClick = onAddClick
+                    onAddClick = onAddClick,
+                    onImportClick = onImportClick
                 )
             },
             contentColor = MaterialTheme.colorScheme.onBackground
@@ -269,7 +274,8 @@ private fun TimetableTopBar(
     currentWeek: Int,
     isRealCurrentWeek: Boolean,
     onSettingsClick: () -> Unit,
-    onAddClick: () -> Unit
+    onAddClick: () -> Unit,
+    onImportClick: () -> Unit
 ) {
     TopAppBar(
         title = {
@@ -292,6 +298,9 @@ private fun TimetableTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onImportClick) {
+                Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")
+            }
             IconButton(onClick = onAddClick) {
                 Icon(Icons.Default.Add, contentDescription = "添加课程")
             }

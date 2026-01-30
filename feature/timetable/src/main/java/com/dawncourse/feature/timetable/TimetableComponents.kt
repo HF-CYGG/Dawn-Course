@@ -510,28 +510,6 @@ fun CourseDetailSheet(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                
-                Spacer(modifier = Modifier.weight(1f))
-                
-                // 调课/撤销按钮
-                if (course.isModified) {
-                    TextButton(
-                        onClick = onUndoRescheduleClick,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("撤销调课")
-                    }
-                } else {
-                    TextButton(onClick = onRescheduleClick) {
-                        Icon(Icons.Default.EditCalendar, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("调课")
-                    }
-                }
             }
             
             // 2. Info Grid

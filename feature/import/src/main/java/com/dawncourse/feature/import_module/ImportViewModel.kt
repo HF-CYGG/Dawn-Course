@@ -1,5 +1,6 @@
 package com.dawncourse.feature.import_module
 
+import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Semester
@@ -38,7 +39,7 @@ enum class ImportStep {
 data class ImportUiState(
     val step: ImportStep = ImportStep.Input,
     val htmlContent: String = "",
-    val webUrl: String = "https://www.baidu.com/s?wd=教务系统",
+    val webUrl: String = "",
     val parsedCourses: List<ParsedCourse> = emptyList(),
     // Settings for Semester
     val semesterStartDate: Long = System.currentTimeMillis(), // Timestamp
@@ -54,6 +55,7 @@ sealed interface ImportEvent {
 
 @HiltViewModel
 class ImportViewModel @Inject constructor(
+    private val application: Application,
     private val scriptEngine: ScriptEngine,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository
@@ -98,20 +100,36 @@ class ImportViewModel @Inject constructor(
      */
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, resultText = "") }
+            _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
-                    val parsedFromRaw = parseParsedCoursesFromRaw(raw)
-                    val parsedFromXiaoai = if (parsedFromRaw.isEmpty()) {
-                        val xiaoaiResult = parseXiaoaiProviderResult(raw)
-                        convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
-                    } else {
-                        emptyList()
+                    // 1. Try treating as JSON (Xiaoai/Internal format)
+                    var courses = parseParsedCoursesFromRaw(raw)
+                    if (courses.isEmpty()) {
+                        val xiaoai = parseXiaoaiProviderResult(raw)
+                        courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
-                    if (parsedFromRaw.isNotEmpty()) parsedFromRaw else parsedFromXiaoai
+                    
+                    // 2. If not JSON, treat as HTML and run default parser (Zhengfang)
+                    if (courses.isEmpty()) {
+                        try {
+                            // Try Zhengfang parser by default as it's the most common one
+                            // Ideally we should select parser based on URL or user selection
+                            val script = application.assets.open("parsers/zhengfang.js").bufferedReader().use { it.readText() }
+                            val jsonResult = scriptEngine.parseHtml(script, raw)
+                            val xiaoai = parseXiaoaiProviderResult(jsonResult)
+                            courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
+                        } catch (e: Exception) {
+                            // Ignore script errors, maybe it's not a supported page or parser failed
+                            e.printStackTrace()
+                        }
+                    }
+                    
+                    courses
                 }
+                
                 if (parsed.isEmpty()) {
-                    _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
+                    _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
                 } else {
                     _uiState.update {
                         it.copy(

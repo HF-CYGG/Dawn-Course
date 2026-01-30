@@ -53,6 +53,7 @@ dependencies {
     implementation(project(":core:domain"))
     implementation(project(":core:ui"))
     implementation(project(":feature:timetable"))
+    implementation(project(":feature:import"))
     implementation(project(":feature:widget"))
     implementation(project(":feature:settings"))
 

@@ -20,6 +20,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.ui.theme.DawnTheme
+import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
@@ -99,6 +100,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         // 课程表主页面
                         composable("timetable") {
+                            val context = androidx.compose.ui.platform.LocalContext.current
                             TimetableRoute(
                                 onSettingsClick = {
                                     navController.navigate("settings")
@@ -106,12 +108,24 @@ class MainActivity : ComponentActivity() {
                                 onAddClick = {
                                     navController.navigate("course_editor")
                                 },
+                                onImportClick = {
+                                    navController.navigate("import")
+                                },
                                 onCourseClick = { courseId ->
                                     navController.navigate("course_editor?courseId=$courseId")
                                 }
                             )
                         }
                         
+                        // 导入页面
+                        composable("import") {
+                            ImportScreen(
+                                onImportSuccess = {
+                                    navController.popBackStack()
+                                }
+                            )
+                        }
+
                         // 设置页面
                         composable("settings") {
                             SettingsScreen(
