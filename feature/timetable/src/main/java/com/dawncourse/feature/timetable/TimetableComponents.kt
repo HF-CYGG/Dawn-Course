@@ -394,8 +394,7 @@ fun CourseCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 6.dp, vertical = 8.dp) // 内部间距
-                    .alpha(contentAlpha), // 整体设置透明度
+                    .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
                 verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
             ) {
             // 1. 课程名
@@ -405,7 +404,7 @@ fun CourseCard(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 16.sp,
-                    color = if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
                 maxLines = if (isCurrentWeek) 3 else 4,
                 overflow = TextOverflow.Ellipsis

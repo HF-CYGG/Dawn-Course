@@ -167,40 +167,15 @@ internal fun TimetableScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 1. 背景图 (沉浸式)
-        if (settings.wallpaperUri != null) {
-            val brightnessMatrix = androidx.compose.ui.graphics.ColorMatrix().apply {
-                setToScale(settings.backgroundBrightness, settings.backgroundBrightness, settings.backgroundBrightness, 1f)
-            }
-            
-            AsyncImage(
-                model = settings.wallpaperUri,
-                contentDescription = null,
-                contentScale = if (settings.wallpaperMode == com.dawncourse.core.domain.model.WallpaperMode.CROP) androidx.compose.ui.layout.ContentScale.Crop else androidx.compose.ui.layout.ContentScale.FillBounds,
-                colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(brightnessMatrix),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .let { 
-                        if (settings.backgroundBlur > 0f) it.blur(settings.backgroundBlur.dp) else it
-                    }
-            )
-            
-            // 2. 遮罩层
-            val overlayColor = if (isDarkTheme) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White
-            
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(overlayColor.copy(alpha = settings.transparency))
-            )
-        } else {
-            // 无壁纸时使用默认背景
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
-            )
-        }
+        // 1. 背景图 (沉浸式) - 使用独立组件以优化性能
+        TimetableBackground(
+            wallpaperUri = settings.wallpaperUri,
+            wallpaperMode = settings.wallpaperMode,
+            backgroundBlur = settings.backgroundBlur,
+            backgroundBrightness = settings.backgroundBrightness,
+            transparency = settings.transparency,
+            isDarkTheme = isDarkTheme
+        )
 
         // 3. 内容层 (Scaffold)
         // 关键：Scaffold 背景设为透明，否则会挡住下面的壁纸
