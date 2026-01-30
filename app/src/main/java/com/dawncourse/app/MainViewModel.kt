@@ -6,8 +6,18 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+
+/**
+ * 主界面 UI 状态
+ */
+sealed interface MainUiState {
+    data object Loading : MainUiState
+    data class Success(val settings: AppSettings) : MainUiState
+}
 
 /**
  * 主 Activity 的 ViewModel
@@ -24,11 +34,13 @@ class MainViewModel @Inject constructor(
      * 全局应用设置状态流
      *
      * 用于在应用启动时应用用户偏好的主题（如动态取色、字体等）。
+     * 使用 MainUiState 包装，以便在数据加载完成前保持启动画面。
      */
-    val settings = settingsRepository.settings
+    val uiState: StateFlow<MainUiState> = settingsRepository.settings
+        .map { MainUiState.Success(it) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = AppSettings()
+            initialValue = MainUiState.Loading
         )
 }
