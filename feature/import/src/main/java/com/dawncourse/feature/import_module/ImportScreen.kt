@@ -65,6 +65,7 @@ import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.*
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
 import org.json.JSONTokener
 import java.io.BufferedReader
@@ -901,47 +902,17 @@ private fun ImportSettingsSection(
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = uiState.semesterStartDate
         )
-        val configuration = LocalConfiguration.current
-        val newConfiguration = remember(configuration) {
-            Configuration(configuration).apply {
-                setLocale(Locale.SIMPLIFIED_CHINESE)
-            }
-        }
-
-        CompositionLocalProvider(LocalConfiguration provides newConfiguration) {
-            DatePickerDialog(
-                onDismissRequest = { showDatePicker = false },
-                confirmButton = {
-                    TextButton(onClick = {
-                        datePickerState.selectedDateMillis?.let {
-                            onSemesterSettingsChange(it, uiState.weekCount)
-                        }
-                        showDatePicker = false
-                    }) { Text("确定") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+        DawnDatePickerDialog(
+            state = datePickerState,
+            onDismissRequest = { showDatePicker = false },
+            onConfirm = {
+                datePickerState.selectedDateMillis?.let {
+                    onSemesterSettingsChange(it, uiState.weekCount)
                 }
-            ) {
-                DatePicker(
-                    state = datePickerState,
-                    title = {
-                        Text(
-                            text = "选择开学日期",
-                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
-                        )
-                    },
-                    headline = {
-                        DatePickerDefaults.DatePickerHeadline(
-                            selectedDateMillis = datePickerState.selectedDateMillis,
-                            displayMode = datePickerState.displayMode,
-                            dateFormatter = remember { DatePickerDefaults.dateFormatter() },
-                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp)
-                        )
-                    }
-                )
-            }
-        }
+                showDatePicker = false
+            },
+            title = "选择开学日期"
+        )
     }
 }
 
