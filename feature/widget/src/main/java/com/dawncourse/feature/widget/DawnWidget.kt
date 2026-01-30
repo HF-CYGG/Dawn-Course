@@ -31,6 +31,7 @@ import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
+import androidx.glance.layout.fillMaxHeight
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
@@ -144,6 +145,8 @@ class DawnWidget : GlanceAppWidget() {
                 // 根据宽度判断使用哪种视图
                 if (size.width < 200.dp) {
                     NextClassView(courses, sectionTimes)
+                } else if (size.height < 180.dp) {
+                    HorizontalDailyListView(courses, today, currentWeek, sectionTimes)
                 } else {
                     DailyListView(courses, today, currentWeek, sectionTimes)
                 }
@@ -261,6 +264,99 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
+    fun HorizontalDailyListView(courses: List<Course>, today: LocalDate, currentWeek: Int, sectionTimes: List<SectionTime>) {
+        Row(
+            modifier = GlanceModifier
+                .fillMaxSize()
+                .background(Color.White)
+                .appWidgetBackground()
+                .padding(12.dp)
+                .clickable(actionStartActivity(getMainActivityClassName())),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 左侧：垂直排列的 Header
+            Column(
+                modifier = GlanceModifier.padding(end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "第${currentWeek}周",
+                    style = TextStyle(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ColorProvider(Color(0xFF1C1B1F), Color(0xFF1C1B1F))
+                    )
+                )
+                
+                Text(
+                    text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                        fontWeight = FontWeight.Medium
+                    ),
+                    modifier = GlanceModifier.padding(vertical = 4.dp)
+                )
+                
+                Box(
+                    modifier = GlanceModifier
+                        .background(Color(0xFFE7E0EC))
+                        .cornerRadius(8.dp)
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "${today.monthValue}月${today.dayOfMonth}日",
+                        style = TextStyle(
+                            fontSize = 11.sp,
+                            color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                            fontWeight = FontWeight.Medium
+                        )
+                    )
+                }
+            }
+
+            // 分割线
+            Box(
+                modifier = GlanceModifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFFE0E0E0))
+            ) {}
+            
+            Spacer(GlanceModifier.width(12.dp))
+
+            // 右侧：课程列表
+            if (courses.isEmpty()) {
+                Box(modifier = GlanceModifier.defaultWeight(), contentAlignment = Alignment.Center) {
+                    EmptyCourseView()
+                }
+            } else {
+                // 使用 Box 包裹 ScheduleList 以填充剩余空间
+                Box(modifier = GlanceModifier.defaultWeight()) {
+                    ScheduleList(courses, sectionTimes)
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun EmptyCourseView() {
+        Box(
+            modifier = GlanceModifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "今日无课",
+                style = TextStyle(
+                    color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
+                    fontSize = 16.sp
+                )
+            )
+        }
+    }
+
+    @Composable
     fun DailyListView(courses: List<Course>, today: LocalDate, currentWeek: Int, sectionTimes: List<SectionTime>) {
         Column(
             modifier = GlanceModifier
@@ -273,18 +369,7 @@ class DawnWidget : GlanceAppWidget() {
             WidgetHeader("第${currentWeek}周", "${today.monthValue}月${today.dayOfMonth}日")
 
             if (courses.isEmpty()) {
-                Box(
-                    modifier = GlanceModifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "今日无课",
-                        style = TextStyle(
-                            color = ColorProvider(Color(0xFF49454F), Color(0xFF49454F)),
-                            fontSize = 16.sp
-                        )
-                    )
-                }
+                EmptyCourseView()
             } else {
                 ScheduleList(courses, sectionTimes)
             }
