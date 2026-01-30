@@ -702,7 +702,11 @@ private fun ReviewStep(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(uiState.parsedCourses) { course ->
-                    ParsedCourseItem(course)
+                    ParsedCourseItem(
+                        course = course,
+                        maxSection = uiState.detectedMaxSection,
+                        courseDuration = uiState.courseDuration
+                    )
                 }
                 
                 item {
@@ -730,10 +734,23 @@ private fun ReviewStep(
 }
 
 @Composable
-private fun ParsedCourseItem(course: com.dawncourse.feature.import_module.model.ParsedCourse) {
+private fun ParsedCourseItem(
+    course: com.dawncourse.feature.import_module.model.ParsedCourse,
+    maxSection: Int,
+    courseDuration: Int
+) {
+    val isOutOfBounds = course.endSection > maxSection
+    
+    // Calculate time range (Start 8:00, 10min break)
+    val startMinute = 480 + (course.startSection - 1) * (courseDuration + 10)
+    val endMinute = 480 + (course.endSection - 1) * (courseDuration + 10) + courseDuration
+    
+    val startTimeStr = String.format("%02d:%02d", startMinute / 60, startMinute % 60)
+    val endTimeStr = String.format("%02d:%02d", endMinute / 60, endMinute % 60)
+
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer
+            containerColor = if (isOutOfBounds) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainer
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = Modifier.fillMaxWidth()
@@ -749,17 +766,21 @@ private fun ParsedCourseItem(course: com.dawncourse.feature.import_module.model.
                 modifier = Modifier
                     .size(40.dp)
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                        if (isOutOfBounds) MaterialTheme.colorScheme.error.copy(alpha = 0.1f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
                         RoundedCornerShape(8.dp)
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = course.name.firstOrNull()?.toString() ?: "",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isOutOfBounds) {
+                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error)
+                } else {
+                    Text(
+                        text = course.name.firstOrNull()?.toString() ?: "",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.width(16.dp))
@@ -769,7 +790,7 @@ private fun ParsedCourseItem(course: com.dawncourse.feature.import_module.model.
                     text = course.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = if (isOutOfBounds) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -790,11 +811,27 @@ private fun ParsedCourseItem(course: com.dawncourse.feature.import_module.model.
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "周${getDayText(course.dayOfWeek)} ${course.startSection}-${course.startSection + course.duration - 1}节 • ${course.startWeek}-${course.endWeek}周",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "周${getDayText(course.dayOfWeek)} ${course.startSection}-${course.endSection}节",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isOutOfBounds) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "($startTimeStr - $endTimeStr)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (isOutOfBounds) {
+                     Text(
+                        text = "超出当前每天最大节数 ($maxSection)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }
