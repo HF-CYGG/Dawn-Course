@@ -54,6 +54,34 @@ fun SettingsScreen(
         )
     }
 
+    var showPermissionDialog by remember { mutableStateOf(false) }
+
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("需要权限") },
+            text = { Text("开启自动静音需要授予“勿扰权限”，以便在上课时自动切换静音模式。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionDialog = false
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                    try {
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(context, "无法打开设置页面", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("去授权")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -309,7 +337,18 @@ fun SettingsScreen(
                     description = "上课期间自动将手机设为静音/震动",
                     icon = { Icon(Icons.Default.DoNotDisturb, null) },
                     checked = settings.enableAutoMute,
-                    onCheckedChange = { viewModel.setEnableAutoMute(it) }
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !notificationManager.isNotificationPolicyAccessGranted) {
+                                showPermissionDialog = true
+                            } else {
+                                viewModel.setEnableAutoMute(true)
+                            }
+                        } else {
+                            viewModel.setEnableAutoMute(false)
+                        }
+                    }
                 )
             }
 

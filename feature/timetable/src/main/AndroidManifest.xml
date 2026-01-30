@@ -16,6 +16,15 @@
             android:enabled="true"
             android:exported="false">
         </receiver>
+
+        <receiver android:name=".notification.SilenceReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.dawncourse.action.MUTE" />
+                <action android:name="com.dawncourse.action.UNMUTE" />
+            </intent-filter>
+        </receiver>
         
         <service android:name=".notification.PersistentNotificationService"
             android:enabled="true"

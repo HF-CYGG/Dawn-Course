@@ -41,7 +41,8 @@ class DailySchedulerWorker(
         val settingsRepo = entryPoint.settingsRepository()
         val settings = settingsRepo.settings.first()
 
-        if (!settings.enableClassReminder) return Result.success()
+        // Check if either feature is enabled
+        if (!settings.enableClassReminder && !settings.enableAutoMute) return Result.success()
 
         val today = LocalDate.now()
         val dayOfWeek = today.dayOfWeek.value // 1 (Mon) to 7 (Sun)
@@ -76,61 +77,102 @@ class DailySchedulerWorker(
 
         val reminderMinutes = settings.reminderMinutes
         val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-
-        // Parse Section Times
         val sectionTimes = settings.sectionTimes
         
         todayCourses.forEach { course ->
-            if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
-                 val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                 try {
-                     val timeParts = startTimeStr.split(":")
-                     val hour = timeParts[0].toInt()
-                     val minute = timeParts[1].toInt()
-                     
-                     val courseDateTime = LocalDateTime.of(today, LocalTime.of(hour, minute))
-                     val triggerTime = courseDateTime.minusMinutes(reminderMinutes.toLong())
-                     
-                     // Only schedule if time is in the future
-                     if (triggerTime.isAfter(LocalDateTime.now())) {
-                         val intent = Intent(applicationContext, ReminderReceiver::class.java).apply {
-                             putExtra("COURSE_NAME", course.name)
-                             putExtra("LOCATION", course.location)
-                         }
-                         val pendingIntent = PendingIntent.getBroadcast(
-                             applicationContext,
-                             course.id.toInt(), // Use ID as RequestCode
-                             intent,
-                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                         )
+            // --- Schedule Reminder ---
+            if (settings.enableClassReminder) {
+                if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
+                     val startTimeStr = sectionTimes[course.startSection - 1].startTime
+                     try {
+                         val timeParts = startTimeStr.split(":")
+                         val hour = timeParts[0].toInt()
+                         val minute = timeParts[1].toInt()
                          
-                         // Use setExactAndAllowWhileIdle for reliability
-                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                             alarmManager.setExactAndAllowWhileIdle(
-                                 AlarmManager.RTC_WAKEUP,
-                                 triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                                 pendingIntent
+                         val courseDateTime = LocalDateTime.of(today, LocalTime.of(hour, minute))
+                         val triggerTime = courseDateTime.minusMinutes(reminderMinutes.toLong())
+                         
+                         if (triggerTime.isAfter(LocalDateTime.now())) {
+                             val intent = Intent(applicationContext, ReminderReceiver::class.java).apply {
+                                 putExtra("COURSE_NAME", course.name)
+                                 putExtra("LOCATION", course.location)
+                             }
+                             val pendingIntent = PendingIntent.getBroadcast(
+                                 applicationContext,
+                                 course.id.toInt(), // Use ID as RequestCode
+                                 intent,
+                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                              )
-                         } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-                             alarmManager.setExact(
-                                 AlarmManager.RTC_WAKEUP,
-                                 triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                                 pendingIntent
-                             )
-                         } else {
-                             alarmManager.set(
-                                 AlarmManager.RTC_WAKEUP,
-                                 triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                                 pendingIntent
-                             )
+                             
+                             setExactAlarm(alarmManager, triggerTime, pendingIntent)
                          }
+                     } catch (e: Exception) {
+                         e.printStackTrace()
                      }
-                 } catch (e: Exception) {
-                     e.printStackTrace()
-                 }
+                }
+            }
+
+            // --- Schedule Auto Mute ---
+            if (settings.enableAutoMute) {
+                // Mute at Start Time
+                if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
+                    val startTimeStr = sectionTimes[course.startSection - 1].startTime
+                    try {
+                        val parts = startTimeStr.split(":")
+                        val startDateTime = LocalDateTime.of(today, LocalTime.of(parts[0].toInt(), parts[1].toInt()))
+                        
+                        if (startDateTime.isAfter(LocalDateTime.now())) {
+                            val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
+                                action = SilenceReceiver.ACTION_MUTE
+                            }
+                            // Use ID + 10000 to avoid conflict with reminder
+                            val pendingIntent = PendingIntent.getBroadcast(
+                                applicationContext,
+                                course.id.toInt() + 10000, 
+                                intent,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+                            setExactAlarm(alarmManager, startDateTime, pendingIntent)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+
+                // Unmute at End Time
+                if (sectionTimes.isNotEmpty() && course.endSection <= sectionTimes.size && course.endSection > 0) {
+                    val endTimeStr = sectionTimes[course.endSection - 1].endTime
+                    try {
+                        val parts = endTimeStr.split(":")
+                        val endDateTime = LocalDateTime.of(today, LocalTime.of(parts[0].toInt(), parts[1].toInt()))
+                        
+                        if (endDateTime.isAfter(LocalDateTime.now())) {
+                            val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
+                                action = SilenceReceiver.ACTION_UNMUTE
+                            }
+                            // Use ID + 20000
+                            val pendingIntent = PendingIntent.getBroadcast(
+                                applicationContext,
+                                course.id.toInt() + 20000, 
+                                intent,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+                            setExactAlarm(alarmManager, endDateTime, pendingIntent)
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
             }
         }
 
         return Result.success()
+    }
+
+    private fun setExactAlarm(alarmManager: AlarmManager, triggerTime: LocalDateTime, pendingIntent: PendingIntent) {
+        val triggerMillis = triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+         } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+             alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+         } else {
+             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+         }
     }
 }
