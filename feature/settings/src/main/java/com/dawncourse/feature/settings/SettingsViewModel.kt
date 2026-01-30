@@ -69,6 +69,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setBackgroundBlur(value: Float) {
+        viewModelScope.launch {
+            settingsRepository.setBackgroundBlur(value)
+        }
+    }
+
+    fun setBackgroundBrightness(value: Float) {
+        viewModelScope.launch {
+            settingsRepository.setBackgroundBrightness(value)
+        }
+    }
+
     /**
      * 设置应用字体样式
      *

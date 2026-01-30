@@ -75,6 +75,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val ENABLE_PERSISTENT_NOTIFICATION = booleanPreferencesKey("enable_persistent_notification")
         val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
         val BLURRED_WALLPAPER_URI = stringPreferencesKey("blurred_wallpaper_uri")
+        val BACKGROUND_BLUR = floatPreferencesKey("background_blur")
+        val BACKGROUND_BRIGHTNESS = floatPreferencesKey("background_brightness")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -136,6 +138,8 @@ class SettingsRepositoryImpl @Inject constructor(
         val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
         val enableAutoMute = preferences[PreferencesKeys.ENABLE_AUTO_MUTE] ?: false
         val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
+        val backgroundBlur = preferences[PreferencesKeys.BACKGROUND_BLUR] ?: 0f
+        val backgroundBrightness = preferences[PreferencesKeys.BACKGROUND_BRIGHTNESS] ?: 1.0f
 
         AppSettings(
             dynamicColor = dynamicColor,
@@ -167,7 +171,9 @@ class SettingsRepositoryImpl @Inject constructor(
             reminderMinutes = reminderMinutes,
             enablePersistentNotification = enablePersistentNotification,
             enableAutoMute = enableAutoMute,
-            blurredWallpaperUri = blurredWallpaperUri
+            blurredWallpaperUri = blurredWallpaperUri,
+            backgroundBlur = backgroundBlur,
+            backgroundBrightness = backgroundBrightness
         )
     }
 
@@ -325,6 +331,14 @@ class SettingsRepositoryImpl @Inject constructor(
                 preferences[PreferencesKeys.BLURRED_WALLPAPER_URI] = uri
             }
         }
+    }
+
+    override suspend fun setBackgroundBlur(blur: Float) {
+        dataStore.edit { it[PreferencesKeys.BACKGROUND_BLUR] = blur }
+    }
+
+    override suspend fun setBackgroundBrightness(brightness: Float) {
+        dataStore.edit { it[PreferencesKeys.BACKGROUND_BRIGHTNESS] = brightness }
     }
 
     override suspend fun generateBlurredWallpaper(uri: String?) {

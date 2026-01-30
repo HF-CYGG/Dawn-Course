@@ -56,6 +56,9 @@ interface SettingsRepository {
     suspend fun setWallpaperMode(mode: com.dawncourse.core.domain.model.WallpaperMode)
     suspend fun setThemeMode(mode: com.dawncourse.core.domain.model.AppThemeMode)
     suspend fun setShowWeekend(show: Boolean)
+
+    suspend fun setBackgroundBlur(blur: Float)
+    suspend fun setBackgroundBrightness(brightness: Float)
     suspend fun setShowSidebarTime(show: Boolean)
     suspend fun setShowSidebarIndex(show: Boolean)
     suspend fun setHideNonThisWeek(hide: Boolean)

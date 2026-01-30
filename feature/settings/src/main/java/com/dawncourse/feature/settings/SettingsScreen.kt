@@ -219,13 +219,33 @@ fun SettingsScreen(
                             )
                         }
                     }
-                SliderSetting(
+                SmoothSliderSetting(
                     title = "背景遮罩浓度",
                     value = settings.transparency,
-                    onValueChange = { viewModel.setTransparency(it) },
+                    onValueChangeFinished = { viewModel.setTransparency(it) },
                     valueRange = 0f..1f,
-                    valueText = "${(settings.transparency * 100).toInt()}%",
+                    valueText = { "${(it * 100).toInt()}%" },
                     description = "调节背景图上覆盖颜色的浓度",
+                    showDivider = true
+                )
+
+                SmoothSliderSetting(
+                    title = "背景模糊程度",
+                    value = settings.backgroundBlur,
+                    onValueChangeFinished = { viewModel.setBackgroundBlur(it) },
+                    valueRange = 0f..100f,
+                    valueText = { "${it.toInt()} dp" },
+                    description = "调节背景图的模糊程度",
+                    showDivider = true
+                )
+
+                SmoothSliderSetting(
+                    title = "背景亮度",
+                    value = settings.backgroundBrightness,
+                    onValueChangeFinished = { viewModel.setBackgroundBrightness(it) },
+                    valueRange = 0f..1f,
+                    valueText = { "${(it * 100).toInt()}%" },
+                    description = "调节背景图的亮度",
                     showDivider = true
                 )
             }

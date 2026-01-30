@@ -71,7 +71,11 @@ data class AppSettings(
     val enableAutoMute: Boolean = false,
 
     // Performance
-    val blurredWallpaperUri: String? = null
+    val blurredWallpaperUri: String? = null,
+
+    // Custom Background
+    val backgroundBlur: Float = 0f, // 0 - 100 dp
+    val backgroundBrightness: Float = 1.0f // 0.0 - 1.0
 )
 
 data class SectionTime(
