@@ -102,8 +102,8 @@ fun SettingsScreen(
                     showDivider = true
                 )
                 SettingRow(
-                    title = "上课时间与节数",
-                    description = "调整每天节数、每节课起止时间",
+                    title = "课表布局与网格",
+                    description = "调整每天节数、每节课时间及网格样式",
                     icon = { Icon(Icons.Default.AccessTime, null) },
                     onClick = onNavigateToTimetableSettings
                 )
@@ -151,21 +151,28 @@ fun SettingsScreen(
                     showDivider = true
                 )
 
-                // 壁纸
+                // 壁纸选择
                 SettingRow(
-                    title = "背景壁纸",
+                    title = "自定义壁纸",
                     description = if (settings.wallpaperUri != null) "已设置自定义壁纸" else "未设置",
-                    icon = { Icon(Icons.Default.Image, null) },
+                    icon = { Icon(Icons.Default.Wallpaper, null) },
                     action = {
                         Row {
                             if (settings.wallpaperUri != null) {
                                 TextButton(onClick = { viewModel.setWallpaperUri(null) }) { Text("清除") }
                             }
-                            Button(onClick = { wallpaperLauncher.launch("image/*") }) {
+                            Button(onClick = { 
+                                try {
+                                    wallpaperLauncher.launch("image/*")
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(context, "无法打开图片选择器", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
                                 Text("选择")
                             }
                         }
-                    }
+                    },
+                    showDivider = true
                 )
 
                 if (settings.wallpaperUri != null) {
@@ -190,7 +197,8 @@ fun SettingsScreen(
                         onValueChange = { viewModel.setTransparency(it) },
                         valueRange = 0f..1f,
                         valueText = "${(settings.transparency * 100).toInt()}%",
-                        description = "调节背景图上覆盖颜色的浓度"
+                        description = "调节背景图上覆盖颜色的浓度",
+                        showDivider = true
                     )
                 }
 
@@ -203,7 +211,8 @@ fun SettingsScreen(
                     onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
                     valueRange = 0f..32f,
                     valueText = "${settings.cardCornerRadius} dp",
-                    icon = { Icon(Icons.Default.RoundedCorner, null) }
+                    icon = { Icon(Icons.Default.RoundedCorner, null) },
+                    showDivider = true
                 )
                 
                 SliderSetting(
@@ -220,20 +229,8 @@ fun SettingsScreen(
                     title = "显示课程图标",
                     icon = { Icon(Icons.Default.EmojiEmotions, null) },
                     checked = settings.showCourseIcons,
-                    onCheckedChange = { viewModel.setShowCourseIcons(it) },
-                    showDivider = true
+                    onCheckedChange = { viewModel.setShowCourseIcons(it) }
                 )
-
-                // Divider Color
-                SettingRow(
-                    title = "网格线颜色",
-                    icon = { Icon(Icons.Default.Grid3x3, null) }
-                ) {
-                    ColorPicker(
-                        selectedColor = settings.dividerColor,
-                        onColorSelected = { viewModel.setDividerColor(it) }
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -403,7 +400,7 @@ private fun CourseCardPreview(
             repeat(3) {
                 HorizontalDivider(
                     color = dividerColor.copy(alpha = settings.dividerAlpha),
-                    thickness = settings.dividerWidth.dp,
+                    thickness = settings.dividerWidthDp.dp,
                     modifier = Modifier.padding(top = 40.dp)
                 )
             }

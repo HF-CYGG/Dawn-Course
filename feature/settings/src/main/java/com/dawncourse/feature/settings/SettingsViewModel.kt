@@ -97,9 +97,9 @@ class SettingsViewModel @Inject constructor(
     /**
      * 设置课表分割线宽度
      *
-     * @param width 宽度值 (px)
+     * @param width 宽度值 (dp)
      */
-    fun setDividerWidth(width: Int) {
+    fun setDividerWidth(width: Float) {
         viewModelScope.launch {
             settingsRepository.setDividerWidth(width)
         }

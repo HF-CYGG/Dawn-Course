@@ -38,7 +38,7 @@ interface SettingsRepository {
     suspend fun setFontStyle(style: AppFontStyle)
     
     suspend fun setDividerType(type: com.dawncourse.core.domain.model.DividerType)
-    suspend fun setDividerWidth(width: Int)
+    suspend fun setDividerWidth(width: Float)
     suspend fun setDividerColor(color: String)
     suspend fun setDividerAlpha(alpha: Float)
 

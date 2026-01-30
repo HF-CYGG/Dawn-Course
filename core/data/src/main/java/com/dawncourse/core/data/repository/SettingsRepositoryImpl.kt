@@ -39,7 +39,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val TRANSPARENCY = floatPreferencesKey("transparency")
         val FONT_STYLE = stringPreferencesKey("font_style")
         val DIVIDER_TYPE = stringPreferencesKey("divider_type")
-        val DIVIDER_WIDTH = intPreferencesKey("divider_width")
+        val DIVIDER_WIDTH = floatPreferencesKey("divider_width_float")
         val DIVIDER_COLOR = stringPreferencesKey("divider_color")
         val DIVIDER_ALPHA = floatPreferencesKey("divider_alpha")
         val MAX_DAILY_SECTIONS = intPreferencesKey("max_daily_sections")
@@ -80,7 +80,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val dividerType = try {
             DividerType.valueOf(dividerTypeName)
         } catch (e: Exception) { DividerType.SOLID }
-        val dividerWidth = preferences[PreferencesKeys.DIVIDER_WIDTH] ?: 1
+        val dividerWidthDp = preferences[PreferencesKeys.DIVIDER_WIDTH] ?: 1f
         val dividerColor = preferences[PreferencesKeys.DIVIDER_COLOR] ?: "#E5E7EB"
         val dividerAlpha = preferences[PreferencesKeys.DIVIDER_ALPHA] ?: 1.0f
         val maxDailySections = preferences[PreferencesKeys.MAX_DAILY_SECTIONS] ?: 12
@@ -124,7 +124,7 @@ class SettingsRepositoryImpl @Inject constructor(
             transparency = transparency,
             fontStyle = fontStyle,
             dividerType = dividerType,
-            dividerWidth = dividerWidth,
+            dividerWidthDp = dividerWidthDp,
             dividerColor = dividerColor,
             dividerAlpha = dividerAlpha,
             maxDailySections = maxDailySections,
@@ -179,7 +179,7 @@ class SettingsRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun setDividerWidth(width: Int) {
+    override suspend fun setDividerWidth(width: Float) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.DIVIDER_WIDTH] = width
         }

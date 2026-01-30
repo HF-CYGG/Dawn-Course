@@ -34,7 +34,7 @@ data class AppSettings(
     
     // Divider Settings
     val dividerType: DividerType = DividerType.SOLID,
-    val dividerWidth: Int = 1,
+    val dividerWidthDp: Float = 1f,
     val dividerColor: String = "#E5E7EB",
     val dividerAlpha: Float = 1.0f,
     
