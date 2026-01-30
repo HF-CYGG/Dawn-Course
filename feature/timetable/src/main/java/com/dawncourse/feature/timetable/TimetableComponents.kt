@@ -167,7 +167,6 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
 
     Column(
         modifier = modifier
-            .fillMaxHeight()
             .width(TIME_COLUMN_WIDTH), // 限制宽度
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
