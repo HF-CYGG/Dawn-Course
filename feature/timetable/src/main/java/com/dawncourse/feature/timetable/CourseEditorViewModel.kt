@@ -51,37 +51,6 @@ class CourseEditorViewModel @Inject constructor(
     private val _conflictCourses = MutableStateFlow<List<Course>>(emptyList())
     val conflictCourses: StateFlow<List<Course>> = _conflictCourses.asStateFlow()
 
-    private val coursesInSemester = _currentSemesterId
-        .flatMapLatest { semesterId -> repository.getCoursesBySemester(semesterId) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val nameSuggestions: StateFlow<List<String>> = coursesInSemester
-        .map { courses ->
-            courses.map { it.name }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .sorted()
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val locationSuggestions: StateFlow<List<String>> = coursesInSemester
-        .map { courses ->
-            courses.map { it.location }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .sorted()
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val teacherSuggestions: StateFlow<List<String>> = coursesInSemester
-        .map { courses ->
-            courses.map { it.teacher }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .sorted()
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     init {
         viewModelScope.launch {
             val semester = semesterRepository.getCurrentSemester().firstOrNull()

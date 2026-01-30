@@ -97,9 +97,6 @@ import kotlin.math.roundToInt
 fun CourseEditorScreen(
     course: Course? = null,
     currentSemesterId: Long = 1L,
-    nameSuggestions: List<String> = emptyList(),
-    locationSuggestions: List<String> = emptyList(),
-    teacherSuggestions: List<String> = emptyList(),
     onBackClick: () -> Unit,
     onSaveClick: (List<Course>) -> Unit
 ) {
@@ -203,9 +200,6 @@ fun CourseEditorScreen(
                 onLocationChange = { location = it },
                 teacher = teacher,
                 onTeacherChange = { teacher = it },
-                nameSuggestions = nameSuggestions,
-                locationSuggestions = locationSuggestions,
-                teacherSuggestions = teacherSuggestions,
                 onDone = { focusManager.clearFocus() }
             )
             
@@ -319,168 +313,59 @@ private fun BasicInfoSection(
     onLocationChange: (String) -> Unit,
     teacher: String,
     onTeacherChange: (String) -> Unit,
-    nameSuggestions: List<String>,
-    locationSuggestions: List<String>,
-    teacherSuggestions: List<String>,
     onDone: () -> Unit
 ) {
     EditorSection(title = "基本信息", icon = Icons.Default.Edit) {
-        var nameExpanded by remember { mutableStateOf(false) }
-        var locationExpanded by remember { mutableStateOf(false) }
-        var teacherExpanded by remember { mutableStateOf(false) }
-
-        val nameCandidates = remember(name, nameSuggestions) {
-            filterSuggestions(name, nameSuggestions)
-        }
-        val locationCandidates = remember(location, locationSuggestions) {
-            filterSuggestions(location, locationSuggestions)
-        }
-        val teacherCandidates = remember(teacher, teacherSuggestions) {
-            filterSuggestions(teacher, teacherSuggestions)
-        }
-
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            ExposedDropdownMenuBox(
-                expanded = nameExpanded,
-                onExpandedChange = { expanded -> nameExpanded = expanded }
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { value ->
-                        onNameChange(value)
-                        nameExpanded = true
-                    },
-                    label = { Text("课程名称") },
-                    placeholder = { Text("例如：高等数学") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
-                        .onFocusChanged { if (it.isFocused) nameExpanded = true },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                        imeAction = ImeAction.Next
-                    ),
-                    trailingIcon = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (name.isNotEmpty()) {
-                                IconButton(onClick = { onNameChange("") }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "清除")
-                                }
-                            }
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = nameExpanded)
+            OutlinedTextField(
+                value = name,
+                onValueChange = onNameChange,
+                label = { Text("课程名称") },
+                placeholder = { Text("例如：高等数学") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Next
+                ),
+                trailingIcon = {
+                    if (name.isNotEmpty()) {
+                        IconButton(onClick = { onNameChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "清除")
                         }
                     }
-                )
-                DropdownMenu(
-                    expanded = nameExpanded && nameCandidates.isNotEmpty(),
-                    onDismissRequest = { nameExpanded = false }
-                ) {
-                    nameCandidates.forEach { suggestion ->
-                        DropdownMenuItem(
-                            text = { Text(suggestion) },
-                            onClick = {
-                                onNameChange(suggestion)
-                                nameExpanded = false
-                            }
-                        )
-                    }
                 }
-            }
+            )
             
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ExposedDropdownMenuBox(
-                    expanded = locationExpanded,
-                    onExpandedChange = { expanded -> locationExpanded = expanded },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = location,
-                        onValueChange = { value ->
-                            onLocationChange(value)
-                            locationExpanded = true
-                        },
-                        label = { Text("上课地点") },
-                        placeholder = { Text("例如：教三 101") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                            .onFocusChanged { if (it.isFocused) locationExpanded = true },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                        leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = locationExpanded) }
-                    )
-                    DropdownMenu(
-                        expanded = locationExpanded && locationCandidates.isNotEmpty(),
-                        onDismissRequest = { locationExpanded = false }
-                    ) {
-                        locationCandidates.forEach { suggestion ->
-                            DropdownMenuItem(
-                                text = { Text(suggestion) },
-                                onClick = {
-                                    onLocationChange(suggestion)
-                                    locationExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = onLocationChange,
+                    label = { Text("上课地点") },
+                    placeholder = { Text("例如：教三 101") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                )
 
-                ExposedDropdownMenuBox(
-                    expanded = teacherExpanded,
-                    onExpandedChange = { expanded -> teacherExpanded = expanded },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = teacher,
-                        onValueChange = { value ->
-                            onTeacherChange(value)
-                            teacherExpanded = true
-                        },
-                        label = { Text("授课教师") },
-                        placeholder = { Text("选填") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                            .onFocusChanged { if (it.isFocused) teacherExpanded = true },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { onDone() }),
-                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp)) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = teacherExpanded) }
-                    )
-                    ExposedDropdownMenu(
-                        expanded = teacherExpanded && teacherCandidates.isNotEmpty(),
-                        onDismissRequest = { teacherExpanded = false }
-                    ) {
-                        teacherCandidates.forEach { suggestion ->
-                            DropdownMenuItem(
-                                text = { Text(suggestion) },
-                                onClick = {
-                                    onTeacherChange(suggestion)
-                                    teacherExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = teacher,
+                    onValueChange = onTeacherChange,
+                    label = { Text("授课教师") },
+                    placeholder = { Text("选填") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onDone() }),
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                )
             }
         }
     }
-}
-
-private fun filterSuggestions(input: String, suggestions: List<String>): List<String> {
-    val keyword = input.trim()
-    val filtered = if (keyword.isEmpty()) {
-        suggestions
-    } else {
-        suggestions.filter { it.contains(keyword, ignoreCase = true) }
-    }
-    return filtered.take(6)
 }
 
 @Composable
