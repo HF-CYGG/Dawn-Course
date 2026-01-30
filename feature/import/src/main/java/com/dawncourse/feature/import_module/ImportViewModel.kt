@@ -53,6 +53,7 @@ data class ImportUiState(
     val breakDuration: Int = 10,
     val bigBreakDuration: Int = 20, // 大节间隔时长
     val sectionsPerBigSection: Int = 2, // 每个大节包含的小节数
+    val sectionTimes: List<SectionTime> = emptyList(),
 
     val resultText: String = "",
     val isLoading: Boolean = false
@@ -122,6 +123,22 @@ class ImportViewModel @Inject constructor(
                 bigBreakDuration = bigBreakDuration,
                 sectionsPerBigSection = sectionsPerBigSection
             ) 
+        }
+    }
+
+    fun updateSectionTimes(times: List<SectionTime>) {
+        _uiState.update { it.copy(sectionTimes = times) }
+    }
+
+    fun updateSectionTime(index: Int, time: SectionTime) {
+        _uiState.update { state ->
+            if (index < 0) return@update state
+            val current = state.sectionTimes.toMutableList()
+            if (index >= current.size) {
+                return@update state
+            }
+            current[index] = time
+            state.copy(sectionTimes = current)
         }
     }
 
@@ -253,30 +270,32 @@ class ImportViewModel @Inject constructor(
                 // 1. Update Time Settings
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
                 
-                // Generate SectionTimes (Start from 8:00, 10min break)
-                val times = mutableListOf<SectionTime>()
-                var currentMinute = 8 * 60 // 8:00 AM
+                val generatedTimes = mutableListOf<SectionTime>()
+                var currentMinute = 8 * 60
                 for (i in 1..state.detectedMaxSection) {
                     val startH = currentMinute / 60
                     val startM = currentMinute % 60
-                    
                     currentMinute += state.courseDuration
                     val endH = currentMinute / 60
                     val endM = currentMinute % 60
-                    
-                    times.add(
+                    generatedTimes.add(
                         SectionTime(
                             startTime = String.format("%02d:%02d", startH, startM),
                             endTime = String.format("%02d:%02d", endH, endM)
                         )
                     )
-                    
-                    // Determine break duration
                     val isBigBreak = (i % state.sectionsPerBigSection == 0)
                     val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
                     currentMinute += gap
                 }
-                settingsRepository.setSectionTimes(times)
+                val finalTimes = if (state.sectionTimes.isNotEmpty()) {
+                    (1..state.detectedMaxSection).map { index ->
+                        state.sectionTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
+                    }
+                } else {
+                    generatedTimes
+                }
+                settingsRepository.setSectionTimes(finalTimes)
                 
                 val mostFrequentDuration = state.parsedCourses
                     .groupingBy { it.duration }
