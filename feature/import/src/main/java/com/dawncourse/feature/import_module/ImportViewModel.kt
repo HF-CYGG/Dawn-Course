@@ -4,8 +4,10 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.convertXiaoaiCoursesToParsedCourses
@@ -45,6 +47,10 @@ data class ImportUiState(
     val semesterStartDate: Long = System.currentTimeMillis(), // Timestamp
     val weekCount: Int = 20,
     
+    // Time Settings
+    val detectedMaxSection: Int = 12,
+    val courseDuration: Int = 45,
+
     val resultText: String = "",
     val isLoading: Boolean = false
 )
@@ -58,7 +64,8 @@ class ImportViewModel @Inject constructor(
     private val application: Application,
     private val scriptEngine: ScriptEngine,
     private val courseRepository: CourseRepository,
-    private val semesterRepository: SemesterRepository
+    private val semesterRepository: SemesterRepository,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImportUiState())
@@ -93,6 +100,10 @@ class ImportViewModel @Inject constructor(
     
     fun updateSemesterSettings(startDate: Long, weeks: Int) {
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
+    }
+    
+    fun updateTimeSettings(maxSection: Int, duration: Int) {
+        _uiState.update { it.copy(detectedMaxSection = maxSection, courseDuration = duration) }
     }
 
     /**
@@ -131,11 +142,13 @@ class ImportViewModel @Inject constructor(
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
                 } else {
+                    val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsed,
                             step = ImportStep.Review,
+                            detectedMaxSection = maxSection.coerceAtLeast(12),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         )
                     }
@@ -172,11 +185,13 @@ class ImportViewModel @Inject constructor(
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
                 } else {
+                    val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     _uiState.update { 
                         it.copy(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
+                            detectedMaxSection = maxSection.coerceAtLeast(12),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         ) 
                     }
@@ -196,7 +211,32 @@ class ImportViewModel @Inject constructor(
             try {
                 val state = _uiState.value
                 
-                // 1. Create Semester
+                // 1. Update Time Settings
+                settingsRepository.setMaxDailySections(state.detectedMaxSection)
+                settingsRepository.setDefaultCourseDuration(state.courseDuration)
+                
+                // Generate SectionTimes (Start from 8:00, 10min break)
+                val times = mutableListOf<SectionTime>()
+                var currentMinute = 8 * 60 // 8:00 AM
+                for (i in 1..state.detectedMaxSection) {
+                    val startH = currentMinute / 60
+                    val startM = currentMinute % 60
+                    
+                    currentMinute += state.courseDuration
+                    val endH = currentMinute / 60
+                    val endM = currentMinute % 60
+                    
+                    times.add(
+                        SectionTime(
+                            startTime = String.format("%02d:%02d", startH, startM),
+                            endTime = String.format("%02d:%02d", endH, endM)
+                        )
+                    )
+                    currentMinute += 10 // 10 min break
+                }
+                settingsRepository.setSectionTimes(times)
+                
+                // 2. Create Semester
                 val newSemester = Semester(
                     name = "导入学期 ${LocalDate.now()}",
                     startDate = state.semesterStartDate,
@@ -205,7 +245,7 @@ class ImportViewModel @Inject constructor(
                 )
                 val semesterId = semesterRepository.insertSemester(newSemester)
                 
-                // 2. Insert Courses
+                // 3. Insert Courses
                 val domainCourses = state.parsedCourses.map { parsed ->
                     parsed.toDomainCourse().copy(semesterId = semesterId)
                 }
@@ -225,7 +265,6 @@ class ImportViewModel @Inject constructor(
     }
 
     fun runIcsImport(icsContent: String) {
-        // ... (Keep ICS logic but maybe adapt to use confirm flow? For now keep separate)
         viewModelScope.launch {
              _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
@@ -234,35 +273,20 @@ class ImportViewModel @Inject constructor(
                 }
                 if (parsedCourses.isEmpty()) {
                     _uiState.update { it.copy(resultText = "ICS 解析失败: 未识别到课程", isLoading = false) }
-                    return@launch
+                } else {
+                    val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = parsedCourses,
+                            step = ImportStep.Review,
+                            detectedMaxSection = maxSection.coerceAtLeast(12),
+                            resultText = "ICS 解析成功: ${parsedCourses.size} 门课程"
+                        )
+                    }
                 }
-                
-                // For ICS, we might also want to show Review screen? 
-                // But to minimize changes, let's just insert with default semester (or create one).
-                // Let's create a semester for ICS too.
-                
-                 val newSemester = Semester(
-                    name = "ICS 导入 ${LocalDate.now()}",
-                    startDate = System.currentTimeMillis(), // Default today
-                    weekCount = 20,
-                    isCurrent = true
-                )
-                val semesterId = semesterRepository.insertSemester(newSemester)
-
-                val domainCourses = parsedCourses.map { course ->
-                    course.toDomainCourse().copy(semesterId = semesterId)
-                }
-                courseRepository.insertCourses(domainCourses)
-                
-                _uiState.update {
-                    it.copy(
-                        resultText = "ICS 导入成功: ${parsedCourses.size} 门课程",
-                        isLoading = false
-                    )
-                }
-                _events.emit(ImportEvent.Success)
             } catch (e: Exception) {
-                _uiState.update { it.copy(resultText = "ICS 导入失败: ${e.message}", isLoading = false) }
+                _uiState.update { it.copy(resultText = "ICS 解析失败: ${e.message}", isLoading = false) }
             }
         }
     }

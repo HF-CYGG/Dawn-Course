@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -593,6 +594,78 @@ private fun ReviewStep(
                         steps = 29,
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Time Settings
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Schedule, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "时间设置", 
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Max Section
+                        OutlinedCard(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("每天节数", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "${uiState.detectedMaxSection} 节",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Slider(
+                                    value = uiState.detectedMaxSection.toFloat(),
+                                    onValueChange = { viewModel.updateTimeSettings(it.toInt(), uiState.courseDuration) },
+                                    valueRange = 8f..16f,
+                                    steps = 7
+                                )
+                            }
+                        }
+                        
+                        // Duration
+                        OutlinedCard(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                             Column(modifier = Modifier.padding(12.dp)) {
+                                Text("单节时长", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "${uiState.courseDuration} 分钟",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Slider(
+                                    value = uiState.courseDuration.toFloat(),
+                                    onValueChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it.toInt()) },
+                                    valueRange = 30f..60f,
+                                    steps = 29
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
