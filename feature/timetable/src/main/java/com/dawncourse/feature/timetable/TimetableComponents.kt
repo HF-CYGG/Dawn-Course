@@ -400,15 +400,8 @@ fun CourseCard(
             // 2. 底部信息块 (仅本周显示)
             if (isCurrentWeek) {
                 Column {
-                    // 教室：带小图标
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.LocationOn,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = Color(0xFF49454F) // 次级文本色
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
+                    // 教室
+                    if (course.location.isNotEmpty()) {
                         Text(
                             text = course.location,
                             style = MaterialTheme.typography.bodySmall.copy(
