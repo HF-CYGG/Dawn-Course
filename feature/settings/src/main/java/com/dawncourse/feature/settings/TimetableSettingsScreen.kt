@@ -99,7 +99,7 @@ fun TimetableSettingsScreen(
                     title = "卡片高度",
                     value = settings.courseItemHeightDp.toFloat(),
                     onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
-                    valueRange = 40f..120f,
+                    valueRange = 20f..80f,
                     valueText = "${settings.courseItemHeightDp} dp",
                     icon = { Icon(Icons.Default.UnfoldMore, null) },
                     showDivider = true
