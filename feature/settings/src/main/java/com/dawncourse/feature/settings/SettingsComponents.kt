@@ -1,20 +1,22 @@
 package com.dawncourse.feature.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -210,6 +212,27 @@ fun ColorPicker(
         Color(0xFFEC4899)  // Pink
     )
 ) {
+    var showCustomDialog by remember { mutableStateOf(false) }
+
+    if (showCustomDialog) {
+        val initialColor = remember(selectedColor) {
+            try {
+                Color(android.graphics.Color.parseColor(selectedColor))
+            } catch (e: Exception) {
+                Color.Gray
+            }
+        }
+        ColorPickerDialog(
+            initialColor = initialColor,
+            onDismiss = { showCustomDialog = false },
+            onConfirm = { color ->
+                val hex = "#" + Integer.toHexString(color.toArgb()).uppercase().takeLast(6)
+                onColorSelected(hex)
+                showCustomDialog = false
+            }
+        )
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -217,7 +240,7 @@ fun ColorPicker(
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
         colors.forEach { color ->
-            val hex = "#" + Integer.toHexString(color.value.toInt()).uppercase().takeLast(6)
+            val hex = "#" + Integer.toHexString(color.toArgb()).uppercase().takeLast(6)
             val isSelected = selectedColor.equals(hex, ignoreCase = true)
             
             Box(
@@ -228,7 +251,7 @@ fun ColorPicker(
                     .clickable { onColorSelected(hex) }
                     .then(
                         if (isSelected) {
-                            Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape)
+                            Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
                         } else Modifier
                     )
             ) {
@@ -241,6 +264,26 @@ fun ColorPicker(
                     )
                 }
             }
+        }
+
+        // Custom Color Button
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(
+                    brush = androidx.compose.ui.graphics.Brush.sweepGradient(
+                        listOf(Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red)
+                    )
+                )
+                .clickable { showCustomDialog = true }
+        ) {
+             Icon(
+                imageVector = androidx.compose.material.icons.Icons.Default.Add,
+                contentDescription = "Custom",
+                tint = Color.White,
+                modifier = Modifier.align(Alignment.Center).size(20.dp)
+            )
         }
     }
 }
