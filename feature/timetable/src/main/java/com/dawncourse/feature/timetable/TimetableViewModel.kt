@@ -17,12 +17,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+import java.time.Instant
+import java.time.ZoneId
+import java.time.LocalDate
+
 sealed interface TimetableUiState {
     data object Loading : TimetableUiState
     data class Success(
         val courses: List<Course>,
         val currentWeek: Int,
-        val totalWeeks: Int = 20
+        val totalWeeks: Int = 20,
+        val semesterStartDate: LocalDate? = null
     ) : TimetableUiState
 }
 
@@ -37,21 +42,30 @@ class TimetableViewModel @Inject constructor(
     
     init {
         viewModelScope.launch {
-            val semester = semesterRepository.getCurrentSemester().first()
-            if (semester != null) {
-                val week = calculateWeekUseCase(semester.startDate)
-                // Ensure week is within range
-                val validWeek = week.coerceIn(1, semester.weekCount)
-                _currentWeek.value = validWeek
+            semesterRepository.getCurrentSemester().collect { semester ->
+                if (semester != null) {
+                    val week = calculateWeekUseCase(semester.startDate)
+                    val validWeek = week.coerceIn(1, semester.weekCount)
+                    _currentWeek.value = validWeek
+                }
             }
         }
     }
 
     val uiState: StateFlow<TimetableUiState> = combine(
         repository.getAllCourses(),
-        _currentWeek
-    ) { courses, currentWeek ->
-        TimetableUiState.Success(courses, currentWeek)
+        _currentWeek,
+        semesterRepository.getCurrentSemester()
+    ) { courses, currentWeek, semester ->
+        val startDate = semester?.startDate?.let { 
+            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() 
+        }
+        TimetableUiState.Success(
+            courses = courses, 
+            currentWeek = currentWeek,
+            totalWeeks = semester?.weekCount ?: 20,
+            semesterStartDate = startDate
+        )
     }
     .stateIn(
         scope = viewModelScope,

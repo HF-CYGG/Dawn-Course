@@ -73,14 +73,19 @@ val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
  *
  * @param modifier 修饰符
  * @param isCurrentWeek 是否为本周 (只有本周才高亮今天)
+ * @param displayedWeek 当前显示的周次 (1-based)
+ * @param semesterStartDate 学期开始日期
  */
 @Composable
 fun WeekHeader(
     modifier: Modifier = Modifier,
-    isCurrentWeek: Boolean
+    isCurrentWeek: Boolean,
+    displayedWeek: Int = 1,
+    semesterStartDate: LocalDate? = null
 ) {
     val days = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
     val today = LocalDate.now().dayOfWeek.value // 1 (Mon) - 7 (Sun)
+    val settings = LocalAppSettings.current
     
     Row(
         modifier = modifier
@@ -102,20 +107,43 @@ fun WeekHeader(
                     Box(
                         modifier = Modifier
                             .width(36.dp)
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .height(42.dp) // Height increased to accommodate date
+                            .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)) // 变淡
                     )
                 }
                 
-                Text(
-                    text = day,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                        fontSize = if (isToday) 14.sp else 12.sp // 选中放大
-                    ),
-                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f) // 选中色
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = day,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = if (isToday) 14.sp else 12.sp // 选中放大
+                        ),
+                        color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f) // 选中色
+                    )
+
+                    // Date display (e.g., 09.01)
+                    if (settings.showDateInHeader && semesterStartDate != null) {
+                        val date = semesterStartDate.plusWeeks((displayedWeek - 1).toLong())
+                            .plusDays(index.toLong())
+                        val dateText = "${date.monthValue}.${date.dayOfMonth}"
+                        
+                        Text(
+                            text = dateText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = if (isToday) FontWeight.Medium else FontWeight.Normal
+                            ),
+                            color = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
+                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
             }
         }
     }

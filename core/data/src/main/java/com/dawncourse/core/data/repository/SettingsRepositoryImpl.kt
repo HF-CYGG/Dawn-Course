@@ -56,6 +56,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val SHOW_SIDEBAR_TIME = booleanPreferencesKey("show_sidebar_time")
         val SHOW_SIDEBAR_INDEX = booleanPreferencesKey("show_sidebar_index")
         val HIDE_NON_THIS_WEEK = booleanPreferencesKey("hide_non_this_week")
+        val SHOW_DATE_IN_HEADER = booleanPreferencesKey("show_date_in_header")
         val CURRENT_SEMESTER_NAME = stringPreferencesKey("current_semester_name")
         val TOTAL_WEEKS = intPreferencesKey("total_weeks")
         val START_DATE_TIMESTAMP = androidx.datastore.preferences.core.longPreferencesKey("start_date_timestamp")
@@ -114,6 +115,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val showSidebarTime = preferences[PreferencesKeys.SHOW_SIDEBAR_TIME] ?: true
         val showSidebarIndex = preferences[PreferencesKeys.SHOW_SIDEBAR_INDEX] ?: true
         val hideNonThisWeek = preferences[PreferencesKeys.HIDE_NON_THIS_WEEK] ?: false
+        val showDateInHeader = preferences[PreferencesKeys.SHOW_DATE_IN_HEADER] ?: false
         val currentSemesterName = preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] ?: "2025年春季学期"
         val totalWeeks = preferences[PreferencesKeys.TOTAL_WEEKS] ?: 20
         val startDateTimestamp = preferences[PreferencesKeys.START_DATE_TIMESTAMP] ?: 0L
@@ -139,6 +141,7 @@ class SettingsRepositoryImpl @Inject constructor(
             showSidebarTime = showSidebarTime,
             showSidebarIndex = showSidebarIndex,
             hideNonThisWeek = hideNonThisWeek,
+            showDateInHeader = showDateInHeader,
             currentSemesterName = currentSemesterName,
             totalWeeks = totalWeeks,
             startDateTimestamp = startDateTimestamp
@@ -250,6 +253,10 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setHideNonThisWeek(hide: Boolean) {
         dataStore.edit { it[PreferencesKeys.HIDE_NON_THIS_WEEK] = hide }
+    }
+
+    override suspend fun setShowDateInHeader(show: Boolean) {
+        dataStore.edit { it[PreferencesKeys.SHOW_DATE_IN_HEADER] = show }
     }
 
     override suspend fun setCurrentSemesterName(name: String) {

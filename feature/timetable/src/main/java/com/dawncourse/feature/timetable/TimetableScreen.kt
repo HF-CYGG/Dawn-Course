@@ -172,7 +172,11 @@ internal fun TimetableScreen(
                     
                     Column(modifier = Modifier.fillMaxSize()) {
                         // 2. 星期栏头部 (跟随页面滑动)
-                        WeekHeader(isCurrentWeek = week == realCurrentWeek)
+                        WeekHeader(
+                            isCurrentWeek = week == realCurrentWeek,
+                            displayedWeek = week,
+                            semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+                        )
 
                         Row(
                             modifier = Modifier

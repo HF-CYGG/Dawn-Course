@@ -56,6 +56,7 @@ interface SettingsRepository {
     suspend fun setShowSidebarTime(show: Boolean)
     suspend fun setShowSidebarIndex(show: Boolean)
     suspend fun setHideNonThisWeek(hide: Boolean)
+    suspend fun setShowDateInHeader(show: Boolean)
     suspend fun setCurrentSemesterName(name: String)
     suspend fun setTotalWeeks(weeks: Int)
     suspend fun setStartDateTimestamp(timestamp: Long)

@@ -57,6 +57,7 @@ data class AppSettings(
     val showSidebarTime: Boolean = true,
     val showSidebarIndex: Boolean = true,
     val hideNonThisWeek: Boolean = false,
+    val showDateInHeader: Boolean = false,
 
     // Semester Info (Simple version for now)
     val currentSemesterName: String = "2025年春季学期",

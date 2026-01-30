@@ -198,6 +198,23 @@ fun TimetableSettingsScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 4. 显示设置
+            PreferenceCategory(title = "显示设置") {
+                SettingRow(
+                    title = "显示日期",
+                    description = "在星期下方显示具体日期 (如 9.1)",
+                    showDivider = false,
+                    action = {
+                        Switch(
+                            checked = settings.showDateInHeader,
+                            onCheckedChange = { viewModel.setShowDateInHeader(it) }
+                        )
+                    }
+                )
+            }
             
             Spacer(modifier = Modifier.height(32.dp))
         }

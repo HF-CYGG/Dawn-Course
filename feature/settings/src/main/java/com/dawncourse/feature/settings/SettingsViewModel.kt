@@ -191,6 +191,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setHideNonThisWeek(hide) }
     }
 
+    fun setShowDateInHeader(show: Boolean) {
+        viewModelScope.launch { settingsRepository.setShowDateInHeader(show) }
+    }
+
     fun setCurrentSemesterName(name: String) {
         viewModelScope.launch { settingsRepository.setCurrentSemesterName(name) }
     }
