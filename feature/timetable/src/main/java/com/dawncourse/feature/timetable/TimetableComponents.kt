@@ -397,7 +397,7 @@ fun CourseDetailSheet(
     onDeleteClick: () -> Unit
 ) {
     // 获取课程颜色
-    val courseColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
+    val themePrimary = MaterialTheme.colorScheme.primary
     
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -420,7 +420,7 @@ fun CourseDetailSheet(
                     modifier = Modifier
                         .size(width = 6.dp, height = 32.dp)
                         .clip(RoundedCornerShape(3.dp))
-                        .background(courseColor)
+                        .background(themePrimary)
                 )
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
@@ -438,7 +438,7 @@ fun CourseDetailSheet(
                     icon = Icons.Default.Schedule,
                     label = "时间",
                     value = "周${getDayText(course.dayOfWeek)} 第${course.startSection}-${course.startSection + course.duration - 1}节",
-                    iconTint = courseColor
+                    iconTint = themePrimary
                 )
                 
                 // 地点
@@ -447,7 +447,7 @@ fun CourseDetailSheet(
                         icon = Icons.Default.Place,
                         label = "地点",
                         value = course.location,
-                        iconTint = courseColor
+                        iconTint = themePrimary
                     )
                 }
                 
@@ -457,7 +457,7 @@ fun CourseDetailSheet(
                         icon = Icons.Default.Person,
                         label = "教师",
                         value = course.teacher,
-                        iconTint = courseColor
+                        iconTint = themePrimary
                     )
                 }
                 
@@ -466,7 +466,7 @@ fun CourseDetailSheet(
                     icon = Icons.Default.DateRange,
                     label = "周次",
                     value = "${course.startWeek}-${course.endWeek}周 ${getWeekType(course.weekType)}",
-                    iconTint = courseColor
+                    iconTint = themePrimary
                 )
             }
             
@@ -499,8 +499,8 @@ fun CourseDetailSheet(
                     onClick = onEditClick,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = courseColor,
-                        contentColor = CourseColorUtils.getBestContentColor(courseColor)
+                        containerColor = themePrimary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                     ),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
                 ) {
