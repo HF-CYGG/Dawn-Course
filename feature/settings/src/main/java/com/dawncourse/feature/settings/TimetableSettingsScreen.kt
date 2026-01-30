@@ -30,6 +30,7 @@ fun TimetableSettingsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     var showTimePickerDialog by remember { mutableStateOf<Int?>(null) } // Int is the section index (1-based) being edited
+    var showBatchGenerateDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -83,12 +84,22 @@ fun TimetableSettingsScreen(
 
             // 2. 节次时间设置
             PreferenceCategory(title = "节次时间") {
-                Text(
-                    text = "点击修改每节课的起止时间",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "点击修改每节课的起止时间",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { showBatchGenerateDialog = true }) {
+                        Text("一键设置")
+                    }
+                }
 
                 // Generate display list (merge settings with defaults)
                 val sectionTimes = remember(settings.sectionTimes, settings.maxDailySections) {
@@ -249,6 +260,17 @@ fun TimetableSettingsScreen(
                 newList[sectionIndex - 1] = SectionTime(start, end)
                 viewModel.setSectionTimes(newList)
                 showTimePickerDialog = null
+            }
+        )
+    }
+
+    if (showBatchGenerateDialog) {
+        BatchGenerateTimeDialog(
+            maxDailySections = settings.maxDailySections,
+            onDismissRequest = { showBatchGenerateDialog = false },
+            onConfirm = { newTimes ->
+                viewModel.setSectionTimes(newTimes)
+                showBatchGenerateDialog = false
             }
         )
     }
