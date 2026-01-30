@@ -501,6 +501,22 @@ private fun ReviewStep(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var editingCourseIndex by remember { mutableIntStateOf(-1) }
+
+    if (editingCourseIndex != -1 && editingCourseIndex < uiState.parsedCourses.size) {
+        EditParsedCourseDialog(
+            course = uiState.parsedCourses[editingCourseIndex],
+            onDismiss = { editingCourseIndex = -1 },
+            onConfirm = { 
+                viewModel.updateParsedCourse(editingCourseIndex, it)
+                editingCourseIndex = -1
+            },
+            onDelete = {
+                viewModel.deleteParsedCourse(editingCourseIndex)
+                editingCourseIndex = -1
+            }
+        )
+    }
 
     Scaffold(
         bottomBar = {
@@ -555,14 +571,15 @@ private fun ReviewStep(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    uiState.parsedCourses.forEach { course ->
+                    uiState.parsedCourses.forEachIndexed { index, course ->
                         ParsedCourseItem(
                             course = course,
                             maxSection = uiState.detectedMaxSection,
                             courseDuration = uiState.courseDuration,
                             breakDuration = uiState.breakDuration,
                             bigBreakDuration = uiState.bigBreakDuration,
-                            sectionsPerBigSection = uiState.sectionsPerBigSection
+                            sectionsPerBigSection = uiState.sectionsPerBigSection,
+                            onClick = { editingCourseIndex = index }
                         )
                     }
                 }
@@ -776,7 +793,8 @@ private fun StepperRowItem(
         
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp) {
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             FilledIconButton(
                 onClick = { if (value - step >= range.first) onValueChange(value - step) },
                 enabled = value - step >= range.first,
@@ -819,7 +837,8 @@ private fun ParsedCourseItem(
     courseDuration: Int,
     breakDuration: Int,
     bigBreakDuration: Int,
-    sectionsPerBigSection: Int
+    sectionsPerBigSection: Int,
+    onClick: () -> Unit
 ) {
     val isOutOfBounds = course.endSection > maxSection
     
@@ -868,6 +887,7 @@ private fun ParsedCourseItem(
     }
 
     ElevatedCard(
+        onClick = onClick,
         colors = CardDefaults.elevatedCardColors(
             containerColor = cardColor
         ),
@@ -954,4 +974,114 @@ private fun getDayText(day: Int): String {
         7 -> "日"
         else -> ""
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditParsedCourseDialog(
+    course: com.dawncourse.feature.import_module.model.ParsedCourse,
+    onDismiss: () -> Unit,
+    onConfirm: (com.dawncourse.feature.import_module.model.ParsedCourse) -> Unit,
+    onDelete: () -> Unit
+) {
+    var name by remember { mutableStateOf(course.name) }
+    var location by remember { mutableStateOf(course.location) }
+    var teacher by remember { mutableStateOf(course.teacher) }
+    var startSection by remember { mutableStateOf(course.startSection.toString()) }
+    var endSection by remember { mutableStateOf(course.endSection.toString()) }
+    var dayOfWeek by remember { mutableStateOf(course.dayOfWeek) } // Int 1-7
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑课程") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("课程名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("教室") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = teacher,
+                    onValueChange = { teacher = it },
+                    label = { Text("教师") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = startSection,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) startSection = it },
+                        label = { Text("开始节次") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = endSection,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) endSection = it },
+                        label = { Text("结束节次") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                    )
+                }
+                
+                Column {
+                    Text("星期", style = MaterialTheme.typography.bodyMedium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(7) { index ->
+                            val day = index + 1
+                            FilterChip(
+                                selected = dayOfWeek == day,
+                                onClick = { dayOfWeek = day },
+                                label = { Text(getDayText(day)) }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val s = startSection.toIntOrNull() ?: course.startSection
+                    val e = endSection.toIntOrNull() ?: course.endSection
+                    onConfirm(course.copy(
+                        name = name,
+                        location = location,
+                        teacher = teacher,
+                        startSection = s,
+                        endSection = e,
+                        dayOfWeek = dayOfWeek
+                    ))
+                }
+            ) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Text("删除")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    )
 }

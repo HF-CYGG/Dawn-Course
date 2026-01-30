@@ -125,6 +125,26 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    fun updateParsedCourse(index: Int, course: ParsedCourse) {
+        _uiState.update { state ->
+            val newCourses = state.parsedCourses.toMutableList()
+            if (index in newCourses.indices) {
+                newCourses[index] = course
+            }
+            state.copy(parsedCourses = newCourses)
+        }
+    }
+
+    fun deleteParsedCourse(index: Int) {
+        _uiState.update { state ->
+            val newCourses = state.parsedCourses.toMutableList()
+            if (index in newCourses.indices) {
+                newCourses.removeAt(index)
+            }
+            state.copy(parsedCourses = newCourses, resultText = "已删除 1 个课程")
+        }
+    }
+
     /**
      * 解析 WebView 返回的 JSON 结果
      */
