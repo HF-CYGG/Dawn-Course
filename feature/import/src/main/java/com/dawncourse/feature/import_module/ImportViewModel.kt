@@ -113,13 +113,14 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
     }
     
-    fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int, bigBreakDuration: Int) {
+    fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int, bigBreakDuration: Int, sectionsPerBigSection: Int) {
         _uiState.update { 
             it.copy(
                 detectedMaxSection = maxSection, 
                 courseDuration = duration, 
                 breakDuration = breakDuration,
-                bigBreakDuration = bigBreakDuration
+                bigBreakDuration = bigBreakDuration,
+                sectionsPerBigSection = sectionsPerBigSection
             ) 
         }
     }

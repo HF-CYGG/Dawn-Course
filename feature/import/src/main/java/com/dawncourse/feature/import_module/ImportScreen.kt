@@ -10,52 +10,49 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material.icons.Icons
-import com.dawncourse.core.ui.util.CourseColorUtils
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.ui.zIndex
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.dawncourse.core.ui.components.DawnDatePickerDialog
+import androidx.compose.runtime.*
+import com.dawncourse.core.ui.util.CourseColorUtils
 import org.json.JSONTokener
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -501,317 +498,313 @@ private fun WebViewStep(
 @Composable
 private fun ReviewStep(
     viewModel: ImportViewModel,
-    modifier: Modifier
+    modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    
-    var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = uiState.semesterStartDate,
-        initialDisplayedMonthMillis = uiState.semesterStartDate
-    )
-    
-    if (showDatePicker) {
-        DawnDatePickerDialog(
-            state = datePickerState,
-            onDismissRequest = { showDatePicker = false },
-            onConfirm = {
-                datePickerState.selectedDateMillis?.let { millis ->
-                    viewModel.updateSemesterSettings(millis, uiState.weekCount)
-                }
-                showDatePicker = false
-            }
-        )
-    }
 
     Scaffold(
-        modifier = modifier,
         bottomBar = {
-            Surface(
-                tonalElevation = 8.dp,
-                shadowElevation = 8.dp,
+            Button(
+                onClick = { viewModel.confirmImport() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
             ) {
-                Button(
-                    onClick = { viewModel.confirmImport() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Icon(Icons.Default.Check, null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("确认导入", style = MaterialTheme.typography.titleMedium)
-                }
-            }
-        }
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(MaterialTheme.colorScheme.surface),
-            contentPadding = PaddingValues(bottom = 24.dp)
-        ) {
-            item {
-                val date = Instant.ofEpochMilli(uiState.semesterStartDate)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate()
-                
-                ImportSettingsSection(
-                    startDate = date.format(DateTimeFormatter.ISO_LOCAL_DATE),
-                    totalWeeks = uiState.weekCount,
-                    dailySections = uiState.detectedMaxSection,
-                    sectionDuration = uiState.courseDuration,
-                    breakDuration = uiState.breakDuration,
-                    bigBreakDuration = uiState.bigBreakDuration,
-                    onDateClick = { showDatePicker = true },
-                    onWeekChange = { viewModel.updateSemesterSettings(uiState.semesterStartDate, it) },
-                    onDailySectionChange = { viewModel.updateTimeSettings(it, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration) },
-                    onDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration) },
-                    onBreakDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration) },
-                    onBigBreakDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it) }
+                Icon(Icons.Default.Check, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "确认导入 ${uiState.parsedCourses.size} 门课程",
+                    style = MaterialTheme.typography.titleMedium
                 )
             }
+        },
+        containerColor = Color.Transparent
+    ) { padding ->
+        Column(
+            modifier = modifier
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            // 1. Settings Section
+            ImportSettingsSection(
+                uiState = uiState,
+                onSemesterSettingsChange = viewModel::updateSemesterSettings,
+                onTimeSettingsChange = viewModel::updateTimeSettings
+            )
 
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            // 2. Course List Section
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    "解析结果",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                
+                if (uiState.parsedCourses.isEmpty()) {
                     Text(
-                        text = "解析结果",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        "没有找到课程数据",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Badge(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ) {
-                        Text(
-                            "${uiState.parsedCourses.size}",
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                } else {
+                    uiState.parsedCourses.forEach { course ->
+                        ParsedCourseItem(
+                            course = course,
+                            maxSection = uiState.detectedMaxSection,
+                            courseDuration = uiState.courseDuration,
+                            breakDuration = uiState.breakDuration,
+                            bigBreakDuration = uiState.bigBreakDuration,
+                            sectionsPerBigSection = uiState.sectionsPerBigSection
                         )
                     }
                 }
             }
+            
+            Spacer(modifier = Modifier.height(80.dp)) // Bottom padding for FAB
+        }
+    }
+}
 
-            items(uiState.parsedCourses) { course ->
-                ParsedCourseItem(
-                    course = course,
-                    maxSection = uiState.detectedMaxSection,
-                    courseDuration = uiState.courseDuration,
-                    breakDuration = uiState.breakDuration,
-                    bigBreakDuration = uiState.bigBreakDuration,
-                    sectionsPerBigSection = uiState.sectionsPerBigSection
-                )
+@Composable
+private fun ImportSettingsSection(
+    uiState: ImportUiState,
+    onSemesterSettingsChange: (Long, Int) -> Unit,
+    onTimeSettingsChange: (Int, Int, Int, Int, Int) -> Unit
+) {
+    // Wrapper for time settings updates
+    val updateTime = { max: Int, dur: Int, brk: Int, bigBrk: Int, bigSec: Int ->
+        onTimeSettingsChange(max, dur, brk, bigBrk, bigSec)
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Title
+        Text(
+            "基础配置",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer
+            ),
+            shape = RoundedCornerShape(24.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                // Group 1: Semester
+                SettingGroup(title = "学期设置", icon = Icons.Default.DateRange) {
+                    StepperRowItem(
+                        label = "学期周数",
+                        value = uiState.weekCount,
+                        onValueChange = { onSemesterSettingsChange(uiState.semesterStartDate, it) },
+                        range = 10..30
+                    )
+                }
+                
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                // Group 2: Time
+                SettingGroup(title = "时间设置", icon = Icons.Default.AccessTime) {
+                    StepperRowItem(
+                        label = "每日节数",
+                        value = uiState.detectedMaxSection,
+                        onValueChange = { updateTime(it, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                        range = 4..20
+                    )
+                    StepperRowItem(
+                        label = "单节时长",
+                        value = uiState.courseDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                        suffix = "分钟",
+                        range = 30..120,
+                        step = 5
+                    )
+                    StepperRowItem(
+                        label = "课间时长",
+                        value = uiState.breakDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                        suffix = "分钟",
+                        range = 0..30,
+                        step = 5
+                    )
+                     StepperRowItem(
+                        label = "大节间隔",
+                        value = uiState.bigBreakDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it, uiState.sectionsPerBigSection) },
+                        suffix = "分钟",
+                        range = 0..60,
+                        step = 5
+                    )
+                    StepperRowItem(
+                        label = "大节节数",
+                        value = uiState.sectionsPerBigSection,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, it) },
+                        suffix = "节",
+                        range = 1..4
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                // Group 3: Section Time Preview
+                SettingGroup(title = "节次时间", icon = Icons.Default.FormatListNumbered) {
+                     SectionTimePreviewRow(
+                        maxSections = uiState.detectedMaxSection,
+                        duration = uiState.courseDuration,
+                        breakDuration = uiState.breakDuration,
+                        bigBreakDuration = uiState.bigBreakDuration,
+                        sectionsPerBigSection = uiState.sectionsPerBigSection
+                     )
+                }
             }
         }
     }
 }
 
 @Composable
-fun ImportSettingsSection(
-    startDate: String,
-    totalWeeks: Int,
-    dailySections: Int,
-    sectionDuration: Int,
+private fun SectionTimePreviewRow(
+    maxSections: Int,
+    duration: Int,
     breakDuration: Int,
     bigBreakDuration: Int,
-    onDateClick: () -> Unit,
-    onWeekChange: (Int) -> Unit,
-    onDailySectionChange: (Int) -> Unit,
-    onDurationChange: (Int) -> Unit,
-    onBreakDurationChange: (Int) -> Unit,
-    onBigBreakDurationChange: (Int) -> Unit
+    sectionsPerBigSection: Int
 ) {
-    Column(modifier = Modifier.padding(16.dp)) {
-        // 标题
-        Text(
-            text = "基础配置",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
+    // Generate times locally for preview
+    // Start 8:00
+    val times = remember(maxSections, duration, breakDuration, bigBreakDuration, sectionsPerBigSection) {
+        val list = mutableListOf<String>()
+        var currentMinutes = 8 * 60
+        for (i in 1..maxSections) {
+            val start = currentMinutes
+            val end = start + duration
+            
+            val startStr = String.format("%02d:%02d", start / 60, start % 60)
+            val endStr = String.format("%02d:%02d", end / 60, end % 60)
+            list.add("$startStr - $endStr")
+            
+            val isBigBreak = (i % sectionsPerBigSection == 0)
+            currentMinutes = end + if (isBigBreak) bigBreakDuration else breakDuration
+        }
+        list
+    }
 
-        // 大卡片容器
-        ElevatedCard(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(2.dp)
-        ) {
-            Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                // 1. 开学日期 (点击选择)
-                SettingRowItem(
-                    icon = Icons.Default.CalendarMonth,
-                    title = "开学日期",
-                    value = startDate,
-                    onClick = onDateClick
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-
-                // 2. 学期周数 (步进器)
-                StepperRowItem(
-                    icon = Icons.Default.DateRange,
-                    title = "学期周数",
-                    value = totalWeeks,
-                    unit = "周",
-                    onValueChange = onWeekChange,
-                    range = 1..30
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-
-                // 3. 每天节数
-                StepperRowItem(
-                    icon = Icons.Default.FormatListNumbered,
-                    title = "每天节数",
-                    value = dailySections,
-                    unit = "节",
-                    onValueChange = onDailySectionChange,
-                    range = 4..20
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-
-                // 4. 单节时长
-                StepperRowItem(
-                    icon = Icons.Default.AccessTime,
-                    title = "单节时长",
-                    value = sectionDuration,
-                    unit = "分钟",
-                    onValueChange = onDurationChange,
-                    range = 20..120
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-                
-                // 5. 课间时长
-                StepperRowItem(
-                    icon = Icons.Default.Timer,
-                    title = "课间时长",
-                    value = breakDuration,
-                    unit = "分钟",
-                    onValueChange = onBreakDurationChange,
-                    range = 0..30
-                )
-                // 说明文字
-                Text(
-                    text = "每小节间的休息时间（如第1-2节间）。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp)
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-
-                // 6. 大节间隔
-                StepperRowItem(
-                    icon = Icons.Default.Warning, // 或者用其他图标，如 FreeBreakfast (Coffee)
-                    title = "大节间隔",
-                    value = bigBreakDuration,
-                    unit = "分钟",
-                    onValueChange = onBigBreakDurationChange,
-                    range = 0..60
-                )
-                // 说明文字及示例
-                Text(
-                    text = "每2小节为一大节，大节间的休息时间。\n示例：第1大节(1-2节)结束到第2大节(3-4节)开始间隔${bigBreakDuration}分钟。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 16.dp)
-                )
-            }
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp)
+    ) {
+        items(times.size) { index ->
+            SuggestionChip(
+                onClick = { /* TODO: Open detailed editor */ },
+                label = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "第${index + 1}节",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            times[index],
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                colors = SuggestionChipDefaults.suggestionChipColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                border = null
+            )
         }
     }
 }
 
 @Composable
-fun SettingRowItem(
-    icon: ImageVector,
+private fun SettingGroup(
     title: String,
-    value: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(16.dp)
-            .fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 图标背景
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
-        }
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        
-        // 数值高亮
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-            color = MaterialTheme.colorScheme.primary
-        )
-        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Color.Gray)
-    }
-}
-
-@Composable
-fun StepperRowItem(
     icon: ImageVector,
-    title: String,
-    value: Int,
-    unit: String,
-    onValueChange: (Int) -> Unit,
-    range: IntRange = 0..100
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .padding(16.dp)
-            .fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.secondary)
-        }
-        Spacer(modifier = Modifier.width(16.dp))
-        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-
-        // 步进控制器
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                icon,
+                null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        content()
+    }
+}
+
+@Composable
+private fun StepperRowItem(
+    label: String,
+    value: Int,
+    onValueChange: (Int) -> Unit,
+    range: IntRange,
+    step: Int = 1,
+    suffix: String = ""
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp) {
             FilledIconButton(
-                onClick = { if (value > range.first) onValueChange(value - 1) },
+                onClick = { if (value - step >= range.first) onValueChange(value - step) },
+                enabled = value - step >= range.first,
                 modifier = Modifier.size(32.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
             ) {
                 Icon(Icons.Default.Remove, null, modifier = Modifier.size(16.dp))
             }
             
             Text(
-                text = "$value $unit",
-                modifier = Modifier.padding(horizontal = 12.dp),
+                text = "$value$suffix",
+                style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.bodyMedium
+                modifier = Modifier.widthIn(min = 40.dp),
+                textAlign = TextAlign.Center
             )
             
             FilledIconButton(
-                onClick = { if (value < range.last) onValueChange(value + 1) },
+                onClick = { if (value + step <= range.last) onValueChange(value + step) },
+                enabled = value + step <= range.last,
                 modifier = Modifier.size(32.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
             ) {
                 Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
             }
