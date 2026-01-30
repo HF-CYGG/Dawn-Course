@@ -87,7 +87,7 @@ fun TimetableSettingsScreen(
                     text = "点击修改每节课的起止时间",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
                 )
 
                 // Generate display list (merge settings with defaults)
@@ -116,7 +116,7 @@ fun TimetableSettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { showTimePickerDialog = sectionIndex }
-                            .padding(vertical = 12.dp),
+                            .padding(vertical = 12.dp, horizontal = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -132,7 +132,10 @@ fun TimetableSettingsScreen(
                         )
                     }
                     if (index < sectionTimes.size - 1) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        )
                     }
                 }
             }
@@ -143,7 +146,7 @@ fun TimetableSettingsScreen(
             PreferenceCategory(title = "网格线设置") {
                 // 样式选择
                 SettingRow(title = "线样式") {
-                    Row(modifier = Modifier.padding(top = 8.dp)) {
+                    Row(modifier = Modifier.padding(top = 8.dp, start = 16.dp, end = 16.dp)) {
                         DividerType.entries.forEach { type ->
                             val selected = settings.dividerType == type
                             FilterChip(
