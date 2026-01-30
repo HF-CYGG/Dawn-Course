@@ -19,6 +19,7 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
         WidgetSyncManager.scheduleUpdate(context)
+        MidnightUpdateReceiver.scheduleNextMidnightUpdate(context)
     }
 
     override fun onDisabled(context: Context) {

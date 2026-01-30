@@ -14,6 +14,11 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".MidnightUpdateReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>
