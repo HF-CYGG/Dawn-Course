@@ -44,6 +44,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val DIVIDER_ALPHA = floatPreferencesKey("divider_alpha")
         val MAX_DAILY_SECTIONS = intPreferencesKey("max_daily_sections")
         val DEFAULT_COURSE_DURATION = intPreferencesKey("default_course_duration")
+        val SECTION_TIMES = stringPreferencesKey("section_times")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -66,6 +67,18 @@ class SettingsRepositoryImpl @Inject constructor(
         val dividerAlpha = preferences[PreferencesKeys.DIVIDER_ALPHA] ?: 1.0f
         val maxDailySections = preferences[PreferencesKeys.MAX_DAILY_SECTIONS] ?: 12
         val defaultCourseDuration = preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] ?: 2
+        
+        val sectionTimesString = preferences[PreferencesKeys.SECTION_TIMES] ?: ""
+        val sectionTimes = if (sectionTimesString.isNotEmpty()) {
+            sectionTimesString.split("|").mapNotNull { pair ->
+                val parts = pair.split(",")
+                if (parts.size == 2) {
+                    com.dawncourse.core.domain.model.SectionTime(parts[0], parts[1])
+                } else null
+            }
+        } else {
+            emptyList()
+        }
 
         AppSettings(
             dynamicColor = dynamicColor,
@@ -77,7 +90,8 @@ class SettingsRepositoryImpl @Inject constructor(
             dividerColor = dividerColor,
             dividerAlpha = dividerAlpha,
             maxDailySections = maxDailySections,
-            defaultCourseDuration = defaultCourseDuration
+            defaultCourseDuration = defaultCourseDuration,
+            sectionTimes = sectionTimes
         )
     }
 
@@ -142,6 +156,13 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setDefaultCourseDuration(duration: Int) {
         dataStore.edit { preferences ->
             preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] = duration
+        }
+    }
+
+    override suspend fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>) {
+        dataStore.edit { preferences ->
+            val serialized = times.joinToString("|") { "${it.startTime},${it.endTime}" }
+            preferences[PreferencesKeys.SECTION_TIMES] = serialized
         }
     }
 }

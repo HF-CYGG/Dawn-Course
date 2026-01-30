@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +34,7 @@ import com.dawncourse.core.domain.model.DividerType
 @Composable
 fun SettingsScreen(
     onBackClick: () -> Unit,
+    onNavigateToTimetableSettings: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -140,88 +142,11 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // 2. 课表设置
-            PreferenceCategory(title = "课表显示") {
-                // 每天总节数
-                SliderSetting(
-                    title = "每天总节数",
-                    value = settings.maxDailySections.toFloat(),
-                    onValueChange = { viewModel.setMaxDailySections(it.toInt()) },
-                    valueRange = 8f..16f,
-                    steps = 7,
-                    valueText = "${settings.maxDailySections} 节"
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 默认课程时长
-                SliderSetting(
-                    title = "默认课程时长",
-                    value = settings.defaultCourseDuration.toFloat(),
-                    onValueChange = { viewModel.setDefaultCourseDuration(it.toInt()) },
-                    valueRange = 1f..4f,
-                    steps = 2,
-                    valueText = "${settings.defaultCourseDuration} 节",
-                    description = "新建课程时默认选中的时长"
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 3. 网格样式 (高级)
-            PreferenceCategory(title = "网格样式 (高级)") {
-                // 样式选择
-                SettingItem(title = "分割线样式") {
-                    Row(modifier = Modifier.padding(top = 8.dp)) {
-                        DividerType.entries.forEach { type ->
-                            val selected = settings.dividerType == type
-                            FilterChip(
-                                selected = selected,
-                                onClick = { viewModel.setDividerType(type) },
-                                label = { 
-                                    Text(when(type) {
-                                        DividerType.SOLID -> "实线"
-                                        DividerType.DASHED -> "虚线"
-                                        DividerType.DOTTED -> "点线"
-                                    }) 
-                                },
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 宽度
-                SliderSetting(
-                    title = "线条宽度",
-                    value = settings.dividerWidth.toFloat(),
-                    onValueChange = { viewModel.setDividerWidth(it.toInt()) },
-                    valueRange = 1f..4f,
-                    steps = 2,
-                    valueText = "${settings.dividerWidth} dp"
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 不透明度
-                SliderSetting(
-                    title = "线条不透明度",
-                    value = settings.dividerAlpha,
-                    onValueChange = { viewModel.setDividerAlpha(it) },
-                    valueRange = 0f..1f,
-                    valueText = "${(settings.dividerAlpha * 100).toInt()}%"
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // 颜色 (简单文本框，简化处理)
-                OutlinedTextField(
-                    value = settings.dividerColor,
-                    onValueChange = { viewModel.setDividerColor(it) },
-                    label = { Text("线条颜色 (Hex)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+            PreferenceCategory(title = "课表") {
+                SettingItem(
+                    title = "课表显示设置",
+                    description = "调整节数、时间段及网格样式",
+                    onClick = onNavigateToTimetableSettings
                 )
             }
             
@@ -259,9 +184,16 @@ fun PreferenceCategory(
 fun SettingItem(
     title: String,
     description: String? = null,
+    onClick: (() -> Unit)? = null,
     content: @Composable (() -> Unit)? = null
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 8.dp)
+    ) {
         Text(
             text = title,
             style = MaterialTheme.typography.bodyLarge,

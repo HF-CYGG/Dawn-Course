@@ -44,4 +44,6 @@ interface SettingsRepository {
 
     suspend fun setMaxDailySections(count: Int)
     suspend fun setDefaultCourseDuration(duration: Int)
+    
+    suspend fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>)
 }

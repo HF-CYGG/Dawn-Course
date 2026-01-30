@@ -40,7 +40,15 @@ data class AppSettings(
     
     // Course Settings
     val maxDailySections: Int = 12,
-    val defaultCourseDuration: Int = 2
+    val defaultCourseDuration: Int = 2,
+    
+    // Time Settings
+    val sectionTimes: List<SectionTime> = emptyList()
+)
+
+data class SectionTime(
+    val startTime: String, // "HH:mm"
+    val endTime: String    // "HH:mm"
 )
 
 enum class DividerType {

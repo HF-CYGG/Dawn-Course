@@ -148,11 +148,15 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
                     fontFamily = FontFamily.SansSerif, // Google Sans-like (System Sans)
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) // Darker grey
                 )
-                // Optional: Show time in very small font if needed, or remove it as requested
-                // User said: "remove specific time or make it tiny (8sp)"
-                // Let's keep it tiny for now as it's useful
+                // Show configured time or default
+                val timeText = if (i <= settings.sectionTimes.size) {
+                    settings.sectionTimes[i - 1].startTime
+                } else {
+                    "${TIMETABLE_START_HOUR + i - 1}:00"
+                }
+                
                 Text(
-                    text = "${TIMETABLE_START_HOUR + i - 1}:00",
+                    text = timeText,
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 8.sp, // Tiny
                     fontFamily = FontFamily.Monospace,

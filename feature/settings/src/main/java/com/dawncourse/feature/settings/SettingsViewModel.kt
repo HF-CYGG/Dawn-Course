@@ -148,4 +148,10 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setDefaultCourseDuration(duration)
         }
     }
+
+    fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>) {
+        viewModelScope.launch {
+            settingsRepository.setSectionTimes(times)
+        }
+    }
 }
