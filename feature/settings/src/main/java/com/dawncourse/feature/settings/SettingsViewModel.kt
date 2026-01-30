@@ -6,13 +6,17 @@ import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import android.content.Context
+import android.content.Intent
 
 /**
  * 设置页面的 ViewModel
@@ -25,7 +29,9 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
-    private val courseRepository: CourseRepository
+    private val courseRepository: CourseRepository,
+    private val semesterRepository: SemesterRepository,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
     /**
@@ -216,15 +222,42 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setCurrentSemesterName(name: String) {
-        viewModelScope.launch { settingsRepository.setCurrentSemesterName(name) }
+        viewModelScope.launch { 
+            settingsRepository.setCurrentSemesterName(name)
+            val currentSemester = semesterRepository.getCurrentSemester().first()
+            if (currentSemester != null) {
+                semesterRepository.updateSemester(currentSemester.copy(name = name))
+            }
+            sendWidgetUpdateBroadcast()
+        }
     }
 
     fun setTotalWeeks(weeks: Int) {
-        viewModelScope.launch { settingsRepository.setTotalWeeks(weeks) }
+        viewModelScope.launch { 
+            settingsRepository.setTotalWeeks(weeks) 
+            val currentSemester = semesterRepository.getCurrentSemester().first()
+            if (currentSemester != null) {
+                semesterRepository.updateSemester(currentSemester.copy(weekCount = weeks))
+            }
+            sendWidgetUpdateBroadcast()
+        }
     }
 
     fun setStartDateTimestamp(timestamp: Long) {
-        viewModelScope.launch { settingsRepository.setStartDateTimestamp(timestamp) }
+        viewModelScope.launch { 
+            settingsRepository.setStartDateTimestamp(timestamp)
+            val currentSemester = semesterRepository.getCurrentSemester().first()
+            if (currentSemester != null) {
+                semesterRepository.updateSemester(currentSemester.copy(startDate = timestamp))
+            }
+            sendWidgetUpdateBroadcast()
+        }
+    }
+
+    private fun sendWidgetUpdateBroadcast() {
+        val intent = Intent("com.dawncourse.widget.FORCE_UPDATE")
+        intent.setPackage(context.packageName)
+        context.sendBroadcast(intent)
     }
 
     fun setEnableClassReminder(enable: Boolean) {

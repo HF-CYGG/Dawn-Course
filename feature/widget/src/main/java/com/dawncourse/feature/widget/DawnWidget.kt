@@ -39,6 +39,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.SemesterRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -46,8 +47,10 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 class DawnWidget : GlanceAppWidget() {
@@ -69,13 +72,24 @@ class DawnWidget : GlanceAppWidget() {
             WidgetEntryPoint::class.java
         )
         val repository = entryPoint.courseRepository()
+        val semesterRepository = entryPoint.semesterRepository()
 
         val today = LocalDate.now()
-        // 临时逻辑：假设开学第一周是 2025-02-17 (周一)
-        // TODO: 应该从 SettingsRepository 获取开学日期
-        val termStartDate = LocalDate.of(2025, 2, 17)
-        val daysDiff = ChronoUnit.DAYS.between(termStartDate, today)
-        val currentWeek = (daysDiff / 7).toInt() + 1
+        
+        val semester = withContext(Dispatchers.IO) {
+            semesterRepository.getCurrentSemester().first()
+        }
+
+        val currentWeek = if (semester != null) {
+            val termStartDate = Instant.ofEpochMilli(semester.startDate)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate()
+            val daysDiff = ChronoUnit.DAYS.between(termStartDate, today)
+            (daysDiff / 7).toInt() + 1
+        } else {
+            1 // 没读取到数据时的保底值
+        }
+        
         val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
 
         val courses = withContext(Dispatchers.IO) {
@@ -101,7 +115,7 @@ class DawnWidget : GlanceAppWidget() {
                 val size = LocalSize.current
                 // 根据宽度判断使用哪种视图
                 if (size.width < 200.dp) {
-                    NextClassView(courses, today, currentWeek)
+                    NextClassView(courses)
                 } else {
                     DailyListView(courses, today, currentWeek)
                 }
@@ -113,12 +127,12 @@ class DawnWidget : GlanceAppWidget() {
     @InstallIn(SingletonComponent::class)
     interface WidgetEntryPoint {
         fun courseRepository(): CourseRepository
+        fun semesterRepository(): SemesterRepository
     }
 
     @Composable
-    fun NextClassView(courses: List<Course>, today: LocalDate, currentWeek: Int) {
+    fun NextClassView(courses: List<Course>) {
         // 寻找当前正在上或即将开始的课
-        val now = LocalTime.now()
         // 这里只是简单的取第一节课，实际应该根据 SectionTime 判断
         // TODO: 引入 SectionTime 逻辑判断当前课程
         val nextCourse = courses.firstOrNull { 
@@ -132,7 +146,7 @@ class DawnWidget : GlanceAppWidget() {
                 .background(GlanceTheme.colors.primaryContainer)
                 .appWidgetBackground()
                 .padding(16.dp)
-                .clickable(actionStartActivity(getMainActivityClassName(LocalSize.current.width))),
+                .clickable(actionStartActivity(getMainActivityClassName())),
             contentAlignment = Alignment.Center
         ) {
             if (nextCourse != null) {
@@ -200,7 +214,7 @@ class DawnWidget : GlanceAppWidget() {
                 .background(GlanceTheme.colors.surface)
                 .appWidgetBackground()
                 .padding(12.dp)
-                .clickable(actionStartActivity(getMainActivityClassName(LocalSize.current.width)))
+                .clickable(actionStartActivity(getMainActivityClassName()))
         ) {
             // 标题栏
             Row(
@@ -303,7 +317,7 @@ class DawnWidget : GlanceAppWidget() {
     }
     
     // 这里的 ComponentName 需要根据你的 App 实际情况填写，或者直接用 Intent
-    private fun getMainActivityClassName(width: androidx.compose.ui.unit.Dp): android.content.ComponentName {
+    private fun getMainActivityClassName(): android.content.ComponentName {
         // 这里只是为了演示，实际可以直接传 Intent
          return android.content.ComponentName("com.dawncourse.app", "com.dawncourse.app.MainActivity")
     }

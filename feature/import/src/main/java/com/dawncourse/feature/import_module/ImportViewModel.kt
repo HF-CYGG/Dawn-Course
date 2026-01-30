@@ -356,6 +356,11 @@ class ImportViewModel @Inject constructor(
                 }
                 courseRepository.insertCourses(domainCourses)
                 
+                // Trigger Widget Update
+                val intent = android.content.Intent("com.dawncourse.widget.FORCE_UPDATE")
+                intent.setPackage(application.packageName)
+                application.sendBroadcast(intent)
+                
                 _uiState.update { it.copy(isLoading = false, resultText = "导入成功！") }
                 _events.emit(ImportEvent.Success)
             } catch (e: Exception) {

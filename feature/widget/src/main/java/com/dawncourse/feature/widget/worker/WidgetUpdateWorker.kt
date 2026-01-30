@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -44,5 +45,14 @@ object WidgetSyncManager {
 
     fun cancelUpdate(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+    }
+
+    /**
+     * 立即触发一次更新
+     */
+    fun triggerImmediateUpdate(context: Context) {
+        val request = OneTimeWorkRequestBuilder<WidgetUpdateWorker>()
+            .build()
+        WorkManager.getInstance(context).enqueue(request)
     }
 }

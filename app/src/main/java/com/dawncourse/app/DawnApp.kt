@@ -1,6 +1,7 @@
 package com.dawncourse.app
 
 import android.app.Application
+import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.android.HiltAndroidApp
 
 /**
@@ -11,4 +12,10 @@ import dagger.hilt.android.HiltAndroidApp
  * 所有使用 Hilt 的模块都必须依赖此类。
  */
 @HiltAndroidApp
-class DawnApp : Application()
+class DawnApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        // 调度 Widget 后台更新任务
+        WidgetSyncManager.scheduleUpdate(this)
+    }
+}
