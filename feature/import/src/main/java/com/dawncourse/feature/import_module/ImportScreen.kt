@@ -48,6 +48,10 @@ import androidx.compose.material3.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
+import java.util.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -897,21 +901,46 @@ private fun ImportSettingsSection(
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = uiState.semesterStartDate
         )
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let {
-                        onSemesterSettingsChange(it, uiState.weekCount)
-                    }
-                    showDatePicker = false
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+        val configuration = LocalConfiguration.current
+        val newConfiguration = remember(configuration) {
+            Configuration(configuration).apply {
+                setLocale(Locale.SIMPLIFIED_CHINESE)
             }
-        ) {
-            DatePicker(state = datePickerState)
+        }
+
+        CompositionLocalProvider(LocalConfiguration provides newConfiguration) {
+            DatePickerDialog(
+                onDismissRequest = { showDatePicker = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        datePickerState.selectedDateMillis?.let {
+                            onSemesterSettingsChange(it, uiState.weekCount)
+                        }
+                        showDatePicker = false
+                    }) { Text("确定") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+                }
+            ) {
+                DatePicker(
+                    state = datePickerState,
+                    title = {
+                        Text(
+                            text = "选择开学日期",
+                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
+                        )
+                    },
+                    headline = {
+                        DatePickerDefaults.DatePickerHeadline(
+                            selectedDateMillis = datePickerState.selectedDateMillis,
+                            displayMode = datePickerState.displayMode,
+                            dateFormatter = remember { DatePickerDefaults.dateFormatter() },
+                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp)
+                        )
+                    }
+                )
+            }
         }
     }
 }
