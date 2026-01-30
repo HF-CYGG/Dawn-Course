@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,7 +50,31 @@ fun SemesterSettingsDialog(
                 }
             }
         ) {
-            DatePicker(state = datePickerState)
+            DatePicker(
+                state = datePickerState,
+                title = {
+                    Text(
+                        text = "选择日期",
+                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
+                    )
+                },
+                headline = {
+                    val selectedDate = datePickerState.selectedDateMillis
+                    val dateText = if (selectedDate != null) {
+                        val date = Instant.ofEpochMilli(selectedDate)
+                            .atZone(ZoneId.of("UTC"))
+                            .toLocalDate()
+                        "${date.year}年${date.monthValue}月${date.dayOfMonth}日"
+                    } else {
+                        "请选择日期"
+                    }
+                    Text(
+                        text = dateText,
+                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
+                        style = MaterialTheme.typography.headlineLarge
+                    )
+                }
+            )
         }
     }
 
