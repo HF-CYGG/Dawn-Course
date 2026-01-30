@@ -25,7 +25,10 @@ data class ParsedCourse(
     val startWeek: Int,
     val endWeek: Int,
     val weekType: Int // 0=All, 1=Odd, 2=Even
-)
+) {
+    val endSection: Int
+        get() = startSection + duration - 1
+}
 
 /**
  * 小爱课程表标准课程结构
