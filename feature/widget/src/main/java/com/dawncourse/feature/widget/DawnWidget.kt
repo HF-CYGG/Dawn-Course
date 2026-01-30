@@ -5,16 +5,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
+import androidx.glance.GlanceTheme
+import androidx.glance.Image
+import androidx.glance.ImageProvider
 import androidx.glance.LocalSize
+import androidx.glance.action.actionStartActivity
+import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.appWidgetBackground
+import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.items
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+import androidx.glance.color.ColorProvider
 import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
@@ -23,10 +33,10 @@ import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
+import androidx.glance.material3.ColorProviders
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import dagger.hilt.EntryPoint
@@ -37,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 
 class DawnWidget : GlanceAppWidget() {
@@ -86,8 +97,15 @@ class DawnWidget : GlanceAppWidget() {
         }.sortedBy { it.startSection }
 
         provideContent {
-            val size = LocalSize.current
-            DawnWidgetContent(courses, today, currentWeek, size)
+            GlanceTheme {
+                val size = LocalSize.current
+                // 根据宽度判断使用哪种视图
+                if (size.width < 200.dp) {
+                    NextClassView(courses, today, currentWeek)
+                } else {
+                    DailyListView(courses, today, currentWeek)
+                }
+            }
         }
     }
 
@@ -98,135 +116,174 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun DawnWidgetContent(
-        courses: List<Course>,
-        today: LocalDate,
-        currentWeek: Int,
-        size: DpSize
-    ) {
-        val isSmall = size.width < 150.dp
-        
-        Column(
+    fun NextClassView(courses: List<Course>, today: LocalDate, currentWeek: Int) {
+        // 寻找当前正在上或即将开始的课
+        val now = LocalTime.now()
+        // 这里只是简单的取第一节课，实际应该根据 SectionTime 判断
+        // TODO: 引入 SectionTime 逻辑判断当前课程
+        val nextCourse = courses.firstOrNull { 
+            // 简单假设：只要是今天的课，且还没结束（这里暂时无法精确判断，取第一个）
+            true 
+        }
+
+        Box(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ColorProvider(Color(0xFFFFFFFF)))
-                .padding(12.dp)
+                .background(GlanceTheme.colors.primaryContainer)
+                .appWidgetBackground()
+                .padding(16.dp)
+                .clickable(actionStartActivity(getMainActivityClassName(LocalSize.current.width))),
+            contentAlignment = Alignment.Center
         ) {
-            // Header
-            if (isSmall) {
-                Column(modifier = GlanceModifier.fillMaxWidth()) {
+            if (nextCourse != null) {
+                Column {
                     Text(
-                        text = "${today.monthValue}/${today.dayOfMonth}",
+                        text = nextCourse.name,
                         style = TextStyle(
-                            fontWeight = FontWeight.Bold,
-                            color = ColorProvider(Color(0xFF000000))
-                        )
+                            color = GlanceTheme.colors.onPrimaryContainer,
+                            fontSize = 20.sp, // 稍微调小一点以防溢出
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 2
                     )
+                    Spacer(GlanceModifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 注意：Glance 不支持所有 VectorIcon，这里暂时用文本代替图标，或使用 drawable 资源
+                        Text(
+                            text = "📍", 
+                            style = TextStyle(color = GlanceTheme.colors.onPrimaryContainer, fontSize = 12.sp)
+                        )
+                        Spacer(GlanceModifier.width(4.dp))
+                        Text(
+                            text = nextCourse.location.ifEmpty { "未知地点" },
+                            style = TextStyle(
+                                color = GlanceTheme.colors.onPrimaryContainer,
+                                fontSize = 14.sp
+                            )
+                        )
+                    }
                     Text(
-                        text = "第${currentWeek}周",
-                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
+                        text = "${nextCourse.startSection}-${nextCourse.startSection + nextCourse.duration - 1}节",
+                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 14.sp),
+                        modifier = GlanceModifier.padding(top = 4.dp)
                     )
                 }
             } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
-                ) {
-                    Text(
-                        text = "${today.monthValue}月${today.dayOfMonth}日",
-                        style = TextStyle(
-                            fontWeight = FontWeight.Bold,
-                            color = ColorProvider(Color(0xFF000000))
-                        )
-                    )
-                    Spacer(modifier = GlanceModifier.width(8.dp))
-                    Text(
-                        text = "第${currentWeek}周",
-                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
-                    )
-                    Spacer(modifier = GlanceModifier.defaultWeight())
-                    Text(
-                        text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
-                    )
-                }
-            }
-
-            Spacer(modifier = GlanceModifier.height(8.dp))
-
-            // List
-            if (courses.isEmpty()) {
-                Column(
-                    modifier = GlanceModifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically,
+                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "今日无课",
-                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
-                    )
-                }
-            } else {
-                if (isSmall) {
-                    // Small mode: Show only first course or "Next" logic (simplified to first for now)
-                    val firstCourse = courses.first()
-                    CourseItem(firstCourse, isCompact = true)
-                    if (courses.size > 1) {
-                        Text(
-                            text = "+${courses.size - 1} more",
-                            style = TextStyle(color = ColorProvider(Color(0xFF888888))),
-                            modifier = GlanceModifier.padding(top = 4.dp)
+                        text = "今日课程已结束",
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onPrimaryContainer,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
                         )
-                    }
-                } else {
-                    // Normal mode: List
-                    LazyColumn(
-                        modifier = GlanceModifier.fillMaxSize()
-                    ) {
-                        items(courses) { course ->
-                            CourseItem(course, isCompact = false)
-                            Spacer(modifier = GlanceModifier.height(8.dp))
-                        }
-                    }
+                    )
+                     Text(
+                        text = "好好休息",
+                        style = TextStyle(
+                            color = GlanceTheme.colors.onPrimaryContainer,
+                            fontSize = 12.sp
+                        )
+                    )
                 }
             }
         }
     }
 
     @Composable
-    private fun CourseItem(course: Course, isCompact: Boolean) {
+    fun DailyListView(courses: List<Course>, today: LocalDate, currentWeek: Int) {
         Column(
             modifier = GlanceModifier
-                .fillMaxWidth()
-                .background(ColorProvider(Color(0xFFF0F0F0)))
-                .padding(if (isCompact) 4.dp else 8.dp)
+                .fillMaxSize()
+                .background(GlanceTheme.colors.surface)
+                .appWidgetBackground()
+                .padding(12.dp)
+                .clickable(actionStartActivity(getMainActivityClassName(LocalSize.current.width)))
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // 标题栏
+            Row(
+                modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = course.name,
+                    text = "第${currentWeek}周 · 周${getDayOfWeekText(today.dayOfWeek.value)}",
                     style = TextStyle(
-                        fontWeight = FontWeight.Bold,
-                        color = ColorProvider(Color(0xFF000000))
-                    ),
-                    modifier = GlanceModifier.defaultWeight()
+                        color = GlanceTheme.colors.onSurface,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 )
-                if (!isCompact) {
+                Spacer(GlanceModifier.defaultWeight())
+                Text(
+                    text = "${today.monthValue}月${today.dayOfMonth}日",
+                    style = TextStyle(
+                        color = GlanceTheme.colors.onSurfaceVariant,
+                        fontSize = 14.sp
+                    )
+                )
+            }
+
+            if (courses.isEmpty()) {
+                 Box(
+                    modifier = GlanceModifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
-                        text = "${course.startSection}-${course.startSection + course.duration - 1}节",
-                        style = TextStyle(color = ColorProvider(Color(0xFF444444)))
+                        text = "今日无课",
+                        style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant)
                     )
                 }
+            } else {
+                LazyColumn {
+                    items(courses) { course ->
+                        // 模拟判断当前课程 (需要真实时间逻辑)
+                        val isCurrent = false 
+                        CourseItemRow(course, isCurrent)
+                        Spacer(GlanceModifier.height(8.dp))
+                    }
+                }
             }
-            if (course.location.isNotEmpty()) {
+        }
+    }
+    
+    @Composable
+    fun CourseItemRow(course: Course, isCurrent: Boolean) {
+        // 动态计算背景色
+        val bgColor = if (isCurrent) GlanceTheme.colors.primary else GlanceTheme.colors.surfaceVariant
+        val contentColor = if (isCurrent) GlanceTheme.colors.onPrimary else GlanceTheme.colors.onSurfaceVariant
+        
+        Row(
+            modifier = GlanceModifier
+                .fillMaxWidth()
+                .background(bgColor)
+                .cornerRadius(12.dp)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 时间 (这里暂时只显示节次，因为 Course 模型里可能没有具体时间)
+            // 理想情况是根据 SectionTime 算出 08:00
+            Text(
+                text = "${course.startSection}节", 
+                style = TextStyle(color = contentColor, fontSize = 12.sp)
+            )
+            Spacer(GlanceModifier.width(12.dp))
+            Column {
                 Text(
-                    text = "@${course.location}",
-                    style = TextStyle(color = ColorProvider(Color(0xFF888888)))
+                    text = course.name, 
+                    style = TextStyle(
+                        color = contentColor, 
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 )
-            }
-            if (isCompact) {
-                 Text(
-                    text = "${course.startSection}-${course.startSection + course.duration - 1}节",
-                    style = TextStyle(color = ColorProvider(Color(0xFF444444)))
+                Text(
+                    text = "${course.location} · ${course.teacher}", 
+                    style = TextStyle(
+                        color = contentColor, 
+                        fontSize = 12.sp
+                    )
                 )
             }
         }
@@ -243,5 +300,11 @@ class DawnWidget : GlanceAppWidget() {
             7 -> "日"
             else -> ""
         }
+    }
+    
+    // 这里的 ComponentName 需要根据你的 App 实际情况填写，或者直接用 Intent
+    private fun getMainActivityClassName(width: androidx.compose.ui.unit.Dp): android.content.ComponentName {
+        // 这里只是为了演示，实际可以直接传 Intent
+         return android.content.ComponentName("com.dawncourse.app", "com.dawncourse.app.MainActivity")
     }
 }
