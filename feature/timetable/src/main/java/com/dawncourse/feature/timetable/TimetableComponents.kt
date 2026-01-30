@@ -186,19 +186,27 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) // Darker grey
                 )
                 // Show configured time or default
-                val timeText = if (i <= settings.sectionTimes.size) {
-                    settings.sectionTimes[i - 1].startTime
-                } else {
-                    "${TIMETABLE_START_HOUR + i - 1}:00"
-                }
+                val sectionTime = settings.sectionTimes.getOrNull(i - 1)
+                val startTime = sectionTime?.startTime ?: "${TIMETABLE_START_HOUR + i - 1}:00"
+                val endTime = sectionTime?.endTime
                 
                 Text(
-                    text = timeText,
+                    text = startTime,
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 8.sp, // Tiny
                     fontFamily = FontFamily.Monospace,
                     color = Color.Gray
                 )
+                
+                if (endTime != null) {
+                    Text(
+                        text = endTime,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 8.sp, // Tiny
+                        fontFamily = FontFamily.Monospace,
+                        color = Color.Gray.copy(alpha = 0.8f)
+                    )
+                }
             }
         }
     }
@@ -479,6 +487,7 @@ fun CourseDetailSheet(
 ) {
     // 获取课程颜色
     val themePrimary = MaterialTheme.colorScheme.primary
+    val settings = LocalAppSettings.current
     
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -515,10 +524,20 @@ fun CourseDetailSheet(
             // 2. Info Grid
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 // 时间
+                val startSectionIndex = course.startSection - 1
+                val endSectionIndex = course.startSection + course.duration - 2
+                val timeRangeText = if (startSectionIndex >= 0 && endSectionIndex < settings.sectionTimes.size && startSectionIndex <= endSectionIndex) {
+                     val start = settings.sectionTimes[startSectionIndex].startTime
+                     val end = settings.sectionTimes[endSectionIndex].endTime
+                     " ($start-$end)"
+                } else {
+                    ""
+                }
+
                 CourseDetailItem(
                     icon = Icons.Default.Schedule,
                     label = "时间",
-                    value = "周${getDayText(course.dayOfWeek)} 第${course.startSection}-${course.startSection + course.duration - 1}节",
+                    value = "周${getDayText(course.dayOfWeek)} 第${course.startSection}-${course.startSection + course.duration - 1}节$timeRangeText",
                     iconTint = themePrimary
                 )
                 
