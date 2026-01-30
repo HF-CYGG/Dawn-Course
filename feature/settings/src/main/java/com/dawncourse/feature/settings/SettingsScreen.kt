@@ -229,6 +229,7 @@ fun SettingsScreen(
                     showDivider = true
                 )
             }
+        }
 
             Spacer(modifier = Modifier.height(24.dp))
 
