@@ -68,7 +68,10 @@ data class AppSettings(
     val enableClassReminder: Boolean = false,
     val reminderMinutes: Int = 10,
     val enablePersistentNotification: Boolean = false,
-    val enableAutoMute: Boolean = false
+    val enableAutoMute: Boolean = false,
+
+    // Performance
+    val blurredWallpaperUri: String? = null
 )
 
 data class SectionTime(

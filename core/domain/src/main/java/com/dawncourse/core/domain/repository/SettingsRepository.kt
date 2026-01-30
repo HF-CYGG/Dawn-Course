@@ -66,4 +66,6 @@ interface SettingsRepository {
     suspend fun setReminderMinutes(minutes: Int)
     suspend fun setEnablePersistentNotification(enable: Boolean)
     suspend fun setEnableAutoMute(enable: Boolean)
+    
+    suspend fun setBlurredWallpaperUri(uri: String?)
 }

@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
@@ -42,6 +43,9 @@ import com.dawncourse.feature.timetable.notification.ReminderScheduler
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install Splash Screen before super.onCreate
+        installSplashScreen()
+        
         super.onCreate(savedInstanceState)
         
         // 开启 Edge-to-Edge 沉浸式模式

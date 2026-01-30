@@ -20,9 +20,12 @@ import javax.inject.Inject
 import java.time.Instant
 import java.time.ZoneId
 import java.time.LocalDate
+import androidx.compose.runtime.Immutable
 
 sealed interface TimetableUiState {
+    @Immutable
     data object Loading : TimetableUiState
+    @Immutable
     data class Success(
         val courses: List<Course>,
         val currentWeek: Int,

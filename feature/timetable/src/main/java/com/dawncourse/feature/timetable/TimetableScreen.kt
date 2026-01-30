@@ -104,14 +104,23 @@ internal fun TimetableScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 1. 背景图 (沉浸式)
-        if (settings.wallpaperUri != null) {
+        if (settings.blurredWallpaperUri != null) {
+            // 优先使用预生成的模糊壁纸（高性能）
+            AsyncImage(
+                model = settings.blurredWallpaperUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (settings.wallpaperUri != null) {
+            // 降级方案：实时模糊（低性能，仅作为兜底）
             AsyncImage(
                 model = settings.wallpaperUri,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(30.dp) // 高斯模糊 (20-30dp)
+                    .blur(30.dp)
             )
             
             // 2. 遮罩层
@@ -178,10 +187,12 @@ internal fun TimetableScreen(
                             semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
                         )
 
+                        // Use derivedStateOf for scroll-dependent logic if needed (e.g., sticky headers)
+                        val scrollState = rememberScrollState()
                         Row(
                             modifier = Modifier
                                 .weight(1f)
-                                .verticalScroll(rememberScrollState())
+                                .verticalScroll(scrollState)
                         ) {
                             // 左侧时间轴 (固定宽度)
                             TimeColumnIndicator()

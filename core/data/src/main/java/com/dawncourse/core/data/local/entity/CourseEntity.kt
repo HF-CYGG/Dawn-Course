@@ -1,6 +1,7 @@
 package com.dawncourse.core.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.dawncourse.core.domain.model.Course
 
@@ -11,7 +12,13 @@ import com.dawncourse.core.domain.model.Course
  * 使用 Room 注解 @Entity 标记，tableName 指定表名为 "courses"。
  * 此类仅用于 Data 层内部存储，对外交互时需转换为 Domain 层的 [Course] 模型。
  */
-@Entity(tableName = "courses")
+@Entity(
+    tableName = "courses",
+    indices = [
+        Index(value = ["semesterId"]),
+        Index(value = ["dayOfWeek"])
+    ]
+)
 data class CourseEntity(
     /** 主键 ID，自增长 */
     @PrimaryKey(autoGenerate = true)

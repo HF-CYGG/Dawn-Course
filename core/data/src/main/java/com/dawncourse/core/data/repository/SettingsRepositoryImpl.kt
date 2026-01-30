@@ -65,6 +65,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val REMINDER_MINUTES = intPreferencesKey("reminder_minutes")
         val ENABLE_PERSISTENT_NOTIFICATION = booleanPreferencesKey("enable_persistent_notification")
         val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
+        val BLURRED_WALLPAPER_URI = stringPreferencesKey("blurred_wallpaper_uri")
     }
 
     override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
@@ -121,6 +122,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val currentSemesterName = preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] ?: "2025年春季学期"
         val totalWeeks = preferences[PreferencesKeys.TOTAL_WEEKS] ?: 20
         val startDateTimestamp = preferences[PreferencesKeys.START_DATE_TIMESTAMP] ?: 0L
+        val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
 
         AppSettings(
             dynamicColor = dynamicColor,
@@ -147,7 +149,12 @@ class SettingsRepositoryImpl @Inject constructor(
             showDateInHeader = showDateInHeader,
             currentSemesterName = currentSemesterName,
             totalWeeks = totalWeeks,
-            startDateTimestamp = startDateTimestamp
+            startDateTimestamp = startDateTimestamp,
+            enableClassReminder = enableClassReminder,
+            reminderMinutes = reminderMinutes,
+            enablePersistentNotification = enablePersistentNotification,
+            enableAutoMute = enableAutoMute,
+            blurredWallpaperUri = blurredWallpaperUri
         )
     }
 
@@ -294,5 +301,15 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setEnableAutoMute(enable: Boolean) {
         dataStore.edit { it[PreferencesKeys.ENABLE_AUTO_MUTE] = enable }
+    }
+
+    override suspend fun setBlurredWallpaperUri(uri: String?) {
+        dataStore.edit { preferences ->
+            if (uri == null) {
+                preferences.remove(PreferencesKeys.BLURRED_WALLPAPER_URI)
+            } else {
+                preferences[PreferencesKeys.BLURRED_WALLPAPER_URI] = uri
+            }
+        }
     }
 }
