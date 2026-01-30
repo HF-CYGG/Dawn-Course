@@ -99,6 +99,41 @@ fun SettingsScreen(
         }
     }
 
+    // Notification Permission Handling
+    var pendingNotificationAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            pendingNotificationAction?.invoke()
+        } else {
+            android.widget.Toast.makeText(context, "开启通知失败：请授予通知权限", android.widget.Toast.LENGTH_SHORT).show()
+            // Turn off switches if permission denied? 
+            // Since we only call setEnable... inside onGranted, the switch state shouldn't change if we don't call it.
+            // But SwitchSetting might optimistically toggle if it wasn't tied to state source of truth correctly?
+            // SwitchSetting uses `checked = settings.enable...` which is from ViewModel flow. So it's safe.
+        }
+        pendingNotificationAction = null
+    }
+
+    fun checkAndRequestNotificationPermission(onGranted: () -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                onGranted()
+            } else {
+                pendingNotificationAction = onGranted
+                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            onGranted()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -298,7 +333,13 @@ fun SettingsScreen(
                     description = "上课前 ${settings.reminderMinutes} 分钟发送通知",
                     icon = { Icon(Icons.Default.Notifications, null) },
                     checked = settings.enableClassReminder,
-                    onCheckedChange = { viewModel.setEnableClassReminder(it) },
+                    onCheckedChange = { 
+                        if (it) {
+                            checkAndRequestNotificationPermission { viewModel.setEnableClassReminder(true) }
+                        } else {
+                            viewModel.setEnableClassReminder(false)
+                        }
+                    },
                     showDivider = settings.enableClassReminder
                 )
                 
@@ -319,7 +360,13 @@ fun SettingsScreen(
                     description = "在通知栏显示下一节课信息",
                     icon = { Icon(Icons.AutoMirrored.Filled.StickyNote2, null) },
                     checked = settings.enablePersistentNotification,
-                    onCheckedChange = { viewModel.setEnablePersistentNotification(it) },
+                    onCheckedChange = { 
+                        if (it) {
+                            checkAndRequestNotificationPermission { viewModel.setEnablePersistentNotification(true) }
+                        } else {
+                            viewModel.setEnablePersistentNotification(false)
+                        }
+                    },
                     showDivider = true
                 )
                 SwitchSetting(
