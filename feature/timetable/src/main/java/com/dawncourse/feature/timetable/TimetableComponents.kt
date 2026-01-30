@@ -245,7 +245,7 @@ fun TimetableGrid(
                         color = dividerColor, // Use color from settings (includes alpha)
                         start = Offset(0f, i * nodeHeightPx),
                         end = Offset(width, i * nodeHeightPx),
-                        strokeWidth = settings.dividerWidth.toFloat(), // Use width from settings (px)
+                        strokeWidth = settings.dividerWidth.dp.toPx(), // Use width from settings (dp)
                         pathEffect = pathEffect
                     )
                 }

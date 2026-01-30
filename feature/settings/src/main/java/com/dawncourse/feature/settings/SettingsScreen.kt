@@ -199,7 +199,7 @@ fun SettingsScreen(
                     onValueChange = { viewModel.setDividerWidth(it.toInt()) },
                     valueRange = 1f..4f,
                     steps = 2,
-                    valueText = "${settings.dividerWidth} px"
+                    valueText = "${settings.dividerWidth} dp"
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
