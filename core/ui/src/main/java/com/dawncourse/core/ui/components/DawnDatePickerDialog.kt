@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -37,8 +38,10 @@ fun DawnDatePickerDialog(
 ) {
     // 强制使用简体中文配置
     val configuration = LocalConfiguration.current
-    val newConfiguration = android.content.res.Configuration(configuration).apply {
-        setLocale(Locale.SIMPLIFIED_CHINESE)
+    val newConfiguration = remember(configuration) {
+        android.content.res.Configuration(configuration).apply {
+            setLocale(Locale.SIMPLIFIED_CHINESE)
+        }
     }
 
     CompositionLocalProvider(

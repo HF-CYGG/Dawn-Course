@@ -13,12 +13,14 @@ import com.dawncourse.feature.import_module.model.parseParsedCoursesFromRaw
 import com.dawncourse.feature.import_module.model.parseXiaoaiProviderResult
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
@@ -98,14 +100,16 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
-                val parsedFromRaw = parseParsedCoursesFromRaw(raw)
-                val parsedFromXiaoai = if (parsedFromRaw.isEmpty()) {
-                    val xiaoaiResult = parseXiaoaiProviderResult(raw)
-                    convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
-                } else {
-                    emptyList()
+                val parsed = withContext(Dispatchers.IO) {
+                    val parsedFromRaw = parseParsedCoursesFromRaw(raw)
+                    val parsedFromXiaoai = if (parsedFromRaw.isEmpty()) {
+                        val xiaoaiResult = parseXiaoaiProviderResult(raw)
+                        convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
+                    } else {
+                        emptyList()
+                    }
+                    if (parsedFromRaw.isNotEmpty()) parsedFromRaw else parsedFromXiaoai
                 }
-                val parsed = if (parsedFromRaw.isNotEmpty()) parsedFromRaw else parsedFromXiaoai
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
                 } else {
@@ -131,18 +135,20 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
-                // 1. Run Script
-                val jsonResult = scriptEngine.parseHtml(script, html)
-                
-                // 2. Parse JSON to Xiaoai Model
-                val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
-                
-                // 3. Convert to ParsedCourse
-                val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
-                val parsed = if (parsedFromXiaoai.isNotEmpty()) {
-                    parsedFromXiaoai
-                } else {
-                    parseParsedCoursesFromRaw(jsonResult)
+                val parsed = withContext(Dispatchers.IO) {
+                    // 1. Run Script
+                    val jsonResult = scriptEngine.parseHtml(script, html)
+                    
+                    // 2. Parse JSON to Xiaoai Model
+                    val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
+                    
+                    // 3. Convert to ParsedCourse
+                    val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
+                    if (parsedFromXiaoai.isNotEmpty()) {
+                        parsedFromXiaoai
+                    } else {
+                        parseParsedCoursesFromRaw(jsonResult)
+                    }
                 }
                 
                 if (parsed.isEmpty()) {
@@ -205,7 +211,9 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
              _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
-                val parsedCourses = parseIcsToParsedCourses(icsContent)
+                val parsedCourses = withContext(Dispatchers.IO) {
+                    parseIcsToParsedCourses(icsContent)
+                }
                 if (parsedCourses.isEmpty()) {
                     _uiState.update { it.copy(resultText = "ICS 解析失败: 未识别到课程", isLoading = false) }
                     return@launch
