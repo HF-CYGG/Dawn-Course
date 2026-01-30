@@ -353,7 +353,8 @@ private fun BasicInfoSection(
                     placeholder = { Text("例如：高等数学") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .menuAnchor(),
+                        .menuAnchor()
+                        .onFocusChanged { if (it.isFocused) nameExpanded = true },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     keyboardOptions = KeyboardOptions(
@@ -403,7 +404,8 @@ private fun BasicInfoSection(
                         placeholder = { Text("例如：教三 101") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .menuAnchor(),
+                            .menuAnchor()
+                            .onFocusChanged { if (it.isFocused) locationExpanded = true },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -441,7 +443,8 @@ private fun BasicInfoSection(
                         placeholder = { Text("选填") },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .menuAnchor(),
+                            .menuAnchor()
+                            .onFocusChanged { if (it.isFocused) teacherExpanded = true },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -557,15 +560,36 @@ private fun WeekSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SuggestionChip(
-                    onClick = { onWeeksChange((1..totalWeeks).toSet()) },
+                    onClick = {
+                        val allWeeks = (1..totalWeeks).toSet()
+                        if (selectedWeeks.containsAll(allWeeks)) {
+                            onWeeksChange(emptySet())
+                        } else {
+                            onWeeksChange(allWeeks)
+                        }
+                    },
                     label = { Text("全选") }
                 )
                 SuggestionChip(
-                    onClick = { onWeeksChange(buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_ODD)) },
+                    onClick = {
+                        val oddWeeks = buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_ODD)
+                        if (selectedWeeks.containsAll(oddWeeks)) {
+                            onWeeksChange(selectedWeeks - oddWeeks)
+                        } else {
+                            onWeeksChange(selectedWeeks + oddWeeks)
+                        }
+                    },
                     label = { Text("单周") }
                 )
                 SuggestionChip(
-                    onClick = { onWeeksChange(buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_EVEN)) },
+                    onClick = {
+                        val evenWeeks = buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_EVEN)
+                        if (selectedWeeks.containsAll(evenWeeks)) {
+                            onWeeksChange(selectedWeeks - evenWeeks)
+                        } else {
+                            onWeeksChange(selectedWeeks + evenWeeks)
+                        }
+                    },
                     label = { Text("双周") }
                 )
             }

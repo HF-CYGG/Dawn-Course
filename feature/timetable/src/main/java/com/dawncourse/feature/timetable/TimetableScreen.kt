@@ -55,6 +55,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 
+import androidx.compose.runtime.saveable.rememberSaveable
+
 /**
  * 课表功能入口路由 (Composable Route)
  */
@@ -73,8 +75,6 @@ fun TimetableRoute(
         uiState = uiState,
         userMessage = userMessage,
         onUserMessageShown = { viewModel.userMessageShown() },
-        hasScrolledToCurrentWeek = viewModel.hasScrolledToCurrentWeek,
-        onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
         onImportClick = onImportClick,
         onSettingsClick = onSettingsClick,
@@ -96,8 +96,6 @@ internal fun TimetableScreen(
     uiState: TimetableUiState,
     userMessage: String? = null,
     onUserMessageShown: () -> Unit = {},
-    hasScrolledToCurrentWeek: Boolean = false,
-    onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -114,6 +112,9 @@ internal fun TimetableScreen(
     var coursesToDelete by remember { mutableStateOf<List<Course>?>(null) }
     // 待删除的目标课程（用于区分“仅删除本时段”）
     var targetCourseForDelete by remember { mutableStateOf<Course?>(null) }
+    
+    // 标记是否已自动滚动到当前周 (使用 rememberSaveable 在配置变更/导航返回时保持状态，冷启动时重置)
+    var hasScrolledToCurrentWeek by rememberSaveable { mutableStateOf(false) }
     
     val snackbarHostState = remember { SnackbarHostState() }
     
@@ -153,11 +154,15 @@ internal fun TimetableScreen(
     // Auto-scroll to current week on first load
     LaunchedEffect(uiState) {
         if (!hasScrolledToCurrentWeek && uiState is TimetableUiState.Success) {
-            val targetPage = (uiState.currentWeek - 1).coerceIn(0, maxWeeks - 1)
-            if (targetPage != pagerState.currentPage) {
-                pagerState.scrollToPage(targetPage)
+            // 仅当学期数据已加载（semesterStartDate != null）时才执行自动滚动，
+            // 避免在数据加载初期（Success 但无 semesterStartDate）错误消耗滚动标记。
+            if (uiState.semesterStartDate != null) {
+                val targetPage = (uiState.currentWeek - 1).coerceIn(0, maxWeeks - 1)
+                if (targetPage != pagerState.currentPage) {
+                    pagerState.scrollToPage(targetPage)
+                }
+                hasScrolledToCurrentWeek = true
             }
-            onScrolledToCurrentWeek()
         }
     }
 
