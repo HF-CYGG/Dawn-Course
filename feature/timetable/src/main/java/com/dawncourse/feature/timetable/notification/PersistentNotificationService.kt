@@ -5,12 +5,18 @@ import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
-import javax.inject.Inject
 import kotlinx.coroutines.flow.first
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class PersistentNotificationService : Service() {
@@ -24,13 +30,17 @@ class PersistentNotificationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NotificationHelper.NOTIFICATION_ID_BASE + 999, createNotification("正在加载课程信息..."))
+        // Start with a loading notification
+        startForeground(NotificationHelper.NOTIFICATION_ID_BASE + 999, createNotification("正在加载课程信息...", ""))
         
         job?.cancel()
         job = serviceScope.launch {
             while (isActive) {
                 updateNotification()
-                delay(60 * 1000L) // Update every minute
+                // Align to the next minute start for better precision
+                val now = LocalTime.now()
+                val secondsUntilNextMinute = 60 - now.second
+                delay(secondsUntilNextMinute * 1000L)
             }
         }
         
@@ -38,23 +48,128 @@ class PersistentNotificationService : Service() {
     }
 
     private suspend fun updateNotification() {
-        // Here we could implement logic to find the next course
-        // For now, we keep it simple to avoid complex logic duplication
-        val notification = createNotification("课程表正在后台运行")
-        val manager = androidx.core.app.NotificationManagerCompat.from(this)
         try {
-            manager.notify(NotificationHelper.NOTIFICATION_ID_BASE + 999, notification)
-        } catch (e: SecurityException) { }
+            val settings = settingsRepository.settings.first()
+            if (!settings.enablePersistentNotification) {
+                stopSelf()
+                return
+            }
+
+            val today = LocalDate.now()
+            val dayOfWeek = today.dayOfWeek.value // 1 (Mon) to 7 (Sun)
+            
+            // Calculate Current Week
+            var currentWeek = 1
+            if (settings.startDateTimestamp > 0L) {
+                val startDate = java.time.Instant.ofEpochMilli(settings.startDateTimestamp)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                val daysDiff = ChronoUnit.DAYS.between(startDate, today)
+                if (daysDiff >= 0) {
+                    currentWeek = (daysDiff / 7).toInt() + 1
+                }
+            }
+
+            val allCourses = courseRepository.getAllCourses().first()
+            val todayCourses = allCourses.filter { course ->
+                // 1. Check Day of Week
+                if (course.dayOfWeek != dayOfWeek) return@filter false
+                
+                // 2. Check Week Range
+                if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@filter false
+                
+                // 3. Check Week Type
+                when (course.weekType) {
+                    Course.WEEK_TYPE_ODD -> if (currentWeek % 2 == 0) return@filter false
+                    Course.WEEK_TYPE_EVEN -> if (currentWeek % 2 != 0) return@filter false
+                }
+                true
+            }.sortedBy { it.startSection }
+
+            val sectionTimes = settings.sectionTimes
+            val nowTime = LocalTime.now()
+            
+            var title = "今日课程已结束"
+            var content = "好好休息，准备明天的课程吧"
+            
+            if (todayCourses.isEmpty()) {
+                title = "今天没有安排课程"
+                content = "享受美好的一天"
+            } else {
+                // Find current status
+                var foundStatus = false
+                
+                for (course in todayCourses) {
+                    if (sectionTimes.isNotEmpty() && 
+                        course.startSection <= sectionTimes.size && 
+                        course.endSection <= sectionTimes.size &&
+                        course.startSection > 0 && course.endSection > 0) {
+                        
+                        val startTimeStr = sectionTimes[course.startSection - 1].startTime
+                        val endTimeStr = sectionTimes[course.endSection - 1].endTime
+                        
+                        try {
+                            val startParts = startTimeStr.split(":")
+                            val endParts = endTimeStr.split(":")
+                            val startTime = LocalTime.of(startParts[0].toInt(), startParts[1].toInt())
+                            val endTime = LocalTime.of(endParts[0].toInt(), endParts[1].toInt())
+                            
+                            if (nowTime.isBefore(startTime)) {
+                                // Upcoming course
+                                title = "下节课: ${course.name}"
+                                content = "${startTimeStr} @ ${course.location}"
+                                foundStatus = true
+                                break
+                            } else if (!nowTime.isAfter(endTime)) {
+                                // Currently in class
+                                title = "正在上课: ${course.name}"
+                                content = "下课时间: ${endTimeStr} @ ${course.location}"
+                                foundStatus = true
+                                break
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                
+                if (!foundStatus) {
+                    // All courses finished
+                    title = "今日课程已结束"
+                    content = "共完成 ${todayCourses.size} 门课程"
+                }
+            }
+
+            val notification = createNotification(title, content)
+            val manager = androidx.core.app.NotificationManagerCompat.from(this)
+            try {
+                manager.notify(NotificationHelper.NOTIFICATION_ID_BASE + 999, notification)
+            } catch (e: SecurityException) { }
+            
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    private fun createNotification(content: String): Notification {
+    private fun createNotification(title: String, content: String): Notification {
         NotificationHelper.createNotificationChannel(this)
+        
+        // Create an Intent to open the app when clicking the notification
+        val intent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, intent, 
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, NotificationHelper.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Dawn Course")
+            .setContentTitle(title)
             .setContentText(content)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_LOW) // Low priority for persistent notifications
             .setOngoing(true)
+            .setContentIntent(pendingIntent)
             .build()
     }
 
