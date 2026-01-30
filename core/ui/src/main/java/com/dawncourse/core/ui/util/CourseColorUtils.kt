@@ -1,4 +1,4 @@
-package com.dawncourse.feature.timetable.util
+package com.dawncourse.core.ui.util
 
 import androidx.compose.ui.graphics.Color
 import com.dawncourse.core.domain.model.Course
@@ -37,8 +37,14 @@ object CourseColorUtils {
         if (course.color.isNotEmpty()) {
             return course.color
         }
-        // 使用 Hash 算法分配颜色
-        val hash = abs((course.name + course.teacher).hashCode())
+        return generateColor(course.name, course.teacher)
+    }
+
+    /**
+     * 根据名称和教师生成颜色 (用于导入预览等没有完整 Course 对象的场景)
+     */
+    fun generateColor(name: String, teacher: String?): String {
+        val hash = abs((name + (teacher ?: "")).hashCode())
         val index = hash % PRESET_COLORS.size
         return PRESET_COLORS[index]
     }

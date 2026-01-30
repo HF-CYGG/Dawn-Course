@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import com.dawncourse.core.ui.util.CourseColorUtils
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
@@ -860,11 +862,23 @@ private fun ParsedCourseItem(
     val startTimeStr = String.format("%02d:%02d", startMinute / 60, startMinute % 60)
     val endTimeStr = String.format("%02d:%02d", endMinute / 60, endMinute % 60)
 
+    val cardColor = if (isOutOfBounds) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        CourseColorUtils.parseColor(CourseColorUtils.generateColor(course.name, course.teacher)).copy(alpha = 0.9f)
+    }
+    
+    val contentColor = if (isOutOfBounds) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        CourseColorUtils.getBestContentColor(cardColor)
+    }
+
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(
-            containerColor = if (isOutOfBounds) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainer
+            containerColor = cardColor
         ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -884,21 +898,21 @@ private fun ParsedCourseItem(
                     text = "${course.startSection}-${course.endSection}",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = if (isOutOfBounds) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    color = if (isOutOfBounds) MaterialTheme.colorScheme.error else contentColor
                 )
                 Text(
                     text = "节",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = contentColor.copy(alpha = 0.7f)
                 )
             }
-            
+
             VerticalDivider(
                 modifier = Modifier
                     .height(40.dp)
                     .padding(horizontal = 12.dp),
                 thickness = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant
+                color = contentColor.copy(alpha = 0.2f)
             )
 
             // Right: Course Info
@@ -907,28 +921,28 @@ private fun ParsedCourseItem(
                     text = course.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isOutOfBounds) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+                    color = contentColor
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.LocationOn, 
-                        null, 
-                        modifier = Modifier.size(14.dp), 
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        Icons.Default.LocationOn,
+                        null,
+                        modifier = Modifier.size(14.dp),
+                        tint = contentColor.copy(alpha = 0.7f)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "${course.location.ifEmpty { "未知地点" }} · ${course.teacher.ifEmpty { "未知教师" }}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = contentColor.copy(alpha = 0.7f)
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "周${getDayText(course.dayOfWeek)} · $startTimeStr - $endTimeStr",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary
+                    color = contentColor.copy(alpha = 0.8f)
                 )
             }
         }

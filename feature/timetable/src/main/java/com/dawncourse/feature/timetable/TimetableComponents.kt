@@ -55,7 +55,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.theme.LocalAppSettings
-import com.dawncourse.feature.timetable.util.CourseColorUtils
+import com.dawncourse.core.ui.util.CourseColorUtils
 import java.time.LocalDate
 import kotlin.math.abs
 import kotlin.math.roundToInt
