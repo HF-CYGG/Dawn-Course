@@ -232,7 +232,7 @@ class ImportViewModel @Inject constructor(
                             isLoading = false,
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(12),
+                            detectedMaxSection = maxSection.coerceAtLeast(4),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         )
                     }
@@ -275,7 +275,7 @@ class ImportViewModel @Inject constructor(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(12),
+                            detectedMaxSection = maxSection.coerceAtLeast(4),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         ) 
                     }
@@ -385,7 +385,7 @@ class ImportViewModel @Inject constructor(
                             isLoading = false,
                             parsedCourses = parsedCourses,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(12),
+                            detectedMaxSection = maxSection.coerceAtLeast(4),
                             resultText = "ICS 解析成功: ${parsedCourses.size} 门课程"
                         )
                     }
