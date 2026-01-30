@@ -220,20 +220,24 @@ fun TimetableGrid(
     val nodeHeight = settings.courseItemHeightDp.dp
     val totalHeight = nodeHeight * maxNodes
     
-    val dividerColor = try {
-        Color(android.graphics.Color.parseColor(settings.dividerColor))
-    } catch (e: Exception) { Color(0xFFE5E7EB) }.copy(alpha = settings.dividerAlpha)
-    
-    val pathEffect = when (settings.dividerType) {
-        DividerType.SOLID -> null
-        DividerType.DASHED -> PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
-        DividerType.DOTTED -> PathEffect.dashPathEffect(floatArrayOf(2f, 4f), 0f)
+    val dividerColor = remember(settings.dividerColor, settings.dividerAlpha) {
+        runCatching { Color(android.graphics.Color.parseColor(settings.dividerColor)) }
+            .getOrElse { Color(0xFFE5E7EB) }
+            .copy(alpha = settings.dividerAlpha)
+    }
+
+    val pathEffect = remember(settings.dividerType) {
+        when (settings.dividerType) {
+            DividerType.SOLID -> null
+            DividerType.DASHED -> PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+            DividerType.DOTTED -> PathEffect.dashPathEffect(floatArrayOf(2f, 4f), 0f)
+        }
     }
 
     // 1. Prepare display list
     // Filter and process courses
-    val courseGroups = courses.groupBy { "${it.dayOfWeek}-${it.startSection}" }
     val displayList = remember(courses, currentWeek, settings.hideNonThisWeek) {
+        val courseGroups = courses.groupBy { it.dayOfWeek to it.startSection }
         val list = mutableListOf<Pair<Course, Boolean>>() // Course, isCurrentWeek
         courseGroups.forEach { (_, group) ->
             // Conflict resolution logic

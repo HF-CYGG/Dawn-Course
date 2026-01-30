@@ -2,6 +2,7 @@ package com.dawncourse.feature.widget
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.glance.GlanceId
@@ -108,7 +109,7 @@ class DawnWidget : GlanceAppWidget() {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ColorProvider(android.graphics.Color.WHITE))
+                .background(ColorProvider(Color(0xFFFFFFFF)))
                 .padding(12.dp)
         ) {
             // Header
@@ -118,12 +119,12 @@ class DawnWidget : GlanceAppWidget() {
                         text = "${today.monthValue}/${today.dayOfMonth}",
                         style = TextStyle(
                             fontWeight = FontWeight.Bold,
-                            color = ColorProvider(android.graphics.Color.BLACK)
+                            color = ColorProvider(Color(0xFF000000))
                         )
                     )
                     Text(
                         text = "第${currentWeek}周",
-                        style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY))
+                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
                     )
                 }
             } else {
@@ -135,18 +136,18 @@ class DawnWidget : GlanceAppWidget() {
                         text = "${today.monthValue}月${today.dayOfMonth}日",
                         style = TextStyle(
                             fontWeight = FontWeight.Bold,
-                            color = ColorProvider(android.graphics.Color.BLACK)
+                            color = ColorProvider(Color(0xFF000000))
                         )
                     )
                     Spacer(modifier = GlanceModifier.width(8.dp))
                     Text(
                         text = "第${currentWeek}周",
-                        style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY))
+                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
                     )
                     Spacer(modifier = GlanceModifier.defaultWeight())
                     Text(
                         text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                        style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY))
+                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
                     )
                 }
             }
@@ -162,7 +163,7 @@ class DawnWidget : GlanceAppWidget() {
                 ) {
                     Text(
                         text = "今日无课",
-                        style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY))
+                        style = TextStyle(color = ColorProvider(Color(0xFF888888)))
                     )
                 }
             } else {
@@ -173,7 +174,7 @@ class DawnWidget : GlanceAppWidget() {
                     if (courses.size > 1) {
                         Text(
                             text = "+${courses.size - 1} more",
-                            style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY)),
+                            style = TextStyle(color = ColorProvider(Color(0xFF888888))),
                             modifier = GlanceModifier.padding(top = 4.dp)
                         )
                     }
@@ -197,7 +198,7 @@ class DawnWidget : GlanceAppWidget() {
         Column(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .background(ColorProvider(android.graphics.Color.parseColor("#F0F0F0")))
+                .background(ColorProvider(Color(0xFFF0F0F0)))
                 .padding(if (isCompact) 4.dp else 8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -205,27 +206,27 @@ class DawnWidget : GlanceAppWidget() {
                     text = course.name,
                     style = TextStyle(
                         fontWeight = FontWeight.Bold,
-                        color = ColorProvider(android.graphics.Color.BLACK)
+                        color = ColorProvider(Color(0xFF000000))
                     ),
                     modifier = GlanceModifier.defaultWeight()
                 )
                 if (!isCompact) {
                     Text(
                         text = "${course.startSection}-${course.startSection + course.duration - 1}节",
-                        style = TextStyle(color = ColorProvider(android.graphics.Color.DKGRAY))
+                        style = TextStyle(color = ColorProvider(Color(0xFF444444)))
                     )
                 }
             }
             if (course.location.isNotEmpty()) {
                 Text(
                     text = "@${course.location}",
-                    style = TextStyle(color = ColorProvider(android.graphics.Color.GRAY))
+                    style = TextStyle(color = ColorProvider(Color(0xFF888888)))
                 )
             }
             if (isCompact) {
                  Text(
                     text = "${course.startSection}-${course.startSection + course.duration - 1}节",
-                    style = TextStyle(color = ColorProvider(android.graphics.Color.DKGRAY))
+                    style = TextStyle(color = ColorProvider(Color(0xFF444444)))
                 )
             }
         }

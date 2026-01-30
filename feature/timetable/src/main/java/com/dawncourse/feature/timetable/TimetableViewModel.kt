@@ -5,13 +5,16 @@ import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -35,46 +38,63 @@ sealed interface TimetableUiState {
 }
 
 @HiltViewModel
+@OptIn(ExperimentalCoroutinesApi::class)
 class TimetableViewModel @Inject constructor(
     private val repository: CourseRepository,
     private val semesterRepository: SemesterRepository,
     private val calculateWeekUseCase: CalculateWeekUseCase
 ) : ViewModel() {
 
+    /**
+     * 当前周次状态
+     *
+     * 用于在界面层展示当前周次，并支持手动更新周次。
+     */
     private val _currentWeek = MutableStateFlow(1)
-    
-    init {
-        viewModelScope.launch {
-            semesterRepository.getCurrentSemester().collect { semester ->
+
+    /**
+     * 当前学期状态流
+     *
+     * 统一承载对当前学期的订阅，避免重复触发数据库查询。
+     * 同时在数据变化时计算当前周次并更新 [_currentWeek]。
+     */
+    private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
+        semesterRepository.getCurrentSemester()
+            .onEach { semester ->
                 if (semester != null) {
                     val week = calculateWeekUseCase(semester.startDate)
                     val validWeek = week.coerceIn(1, semester.weekCount)
                     _currentWeek.value = validWeek
                 }
             }
-        }
-    }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = null
+            )
 
-    val uiState: StateFlow<TimetableUiState> = combine(
-        repository.getAllCourses(),
-        _currentWeek,
-        semesterRepository.getCurrentSemester()
-    ) { courses, currentWeek, semester ->
-        val startDate = semester?.startDate?.let { 
-            Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() 
+    val uiState: StateFlow<TimetableUiState> = currentSemesterFlow
+        .flatMapLatest { semester ->
+            val startDate = semester?.startDate?.let {
+                Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
+            }
+            val totalWeeks = semester?.weekCount ?: 20
+            val coursesFlow = semester?.id?.let { repository.getCoursesBySemester(it) } ?: flowOf(emptyList())
+
+            combine(coursesFlow, _currentWeek) { courses, currentWeek ->
+                TimetableUiState.Success(
+                    courses = courses,
+                    currentWeek = currentWeek,
+                    totalWeeks = totalWeeks,
+                    semesterStartDate = startDate
+                )
+            }
         }
-        TimetableUiState.Success(
-            courses = courses, 
-            currentWeek = currentWeek,
-            totalWeeks = semester?.weekCount ?: 20,
-            semesterStartDate = startDate
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = TimetableUiState.Loading
         )
-    }
-    .stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = TimetableUiState.Loading
-    )
 
     fun updateCurrentWeek(week: Int) {
         _currentWeek.update { week }

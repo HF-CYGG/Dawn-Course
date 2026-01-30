@@ -26,6 +26,8 @@ interface SettingsRepository {
      * 设置自定义壁纸 URI
      */
     suspend fun setWallpaperUri(uri: String?)
+
+    suspend fun generateBlurredWallpaper(uri: String?)
     
     /**
      * 设置背景透明度

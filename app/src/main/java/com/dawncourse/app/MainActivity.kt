@@ -11,14 +11,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import coil.compose.AsyncImage
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
@@ -82,16 +80,6 @@ class MainActivity : ComponentActivity() {
             // 应用全局主题
             DawnTheme(appSettings = settings) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    // Wallpaper Background
-                    if (settings.wallpaperUri != null) {
-                        AsyncImage(
-                            model = settings.wallpaperUri,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-
                     // Navigation Host
                     val navController = rememberNavController()
                     NavHost(

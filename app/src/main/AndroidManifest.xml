@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission
+        android:name="android.permission.USE_EXACT_ALARM"
+        tools:targetApi="33" />
 
     <application
         android:name=".DawnApp"

@@ -1,6 +1,11 @@
 package com.dawncourse.core.data.repository
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.os.Build
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -14,8 +19,12 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -122,6 +131,10 @@ class SettingsRepositoryImpl @Inject constructor(
         val currentSemesterName = preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] ?: "2025年春季学期"
         val totalWeeks = preferences[PreferencesKeys.TOTAL_WEEKS] ?: 20
         val startDateTimestamp = preferences[PreferencesKeys.START_DATE_TIMESTAMP] ?: 0L
+        val enableClassReminder = preferences[PreferencesKeys.ENABLE_CLASS_REMINDER] ?: false
+        val reminderMinutes = preferences[PreferencesKeys.REMINDER_MINUTES] ?: 10
+        val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
+        val enableAutoMute = preferences[PreferencesKeys.ENABLE_AUTO_MUTE] ?: false
         val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
 
         AppSettings(
@@ -168,6 +181,7 @@ class SettingsRepositoryImpl @Inject constructor(
         dataStore.edit { preferences ->
             if (uri == null) {
                 preferences.remove(PreferencesKeys.WALLPAPER_URI)
+                preferences.remove(PreferencesKeys.BLURRED_WALLPAPER_URI)
             } else {
                 preferences[PreferencesKeys.WALLPAPER_URI] = uri
             }
@@ -311,5 +325,297 @@ class SettingsRepositoryImpl @Inject constructor(
                 preferences[PreferencesKeys.BLURRED_WALLPAPER_URI] = uri
             }
         }
+    }
+
+    override suspend fun generateBlurredWallpaper(uri: String?) {
+        if (uri == null) {
+            setBlurredWallpaperUri(null)
+            return
+        }
+        val blurredUri = generateBlurredWallpaperInternal(uri)
+        setBlurredWallpaperUri(blurredUri)
+    }
+
+    private suspend fun generateBlurredWallpaperInternal(uriString: String): String? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val uri = Uri.parse(uriString)
+                val bitmap = decodeSampledBitmap(uri) ?: return@withContext null
+                val blurredBitmap = fastBlur(bitmap, 20)
+                val file = File(context.filesDir, "blurred_wallpaper.jpg")
+                FileOutputStream(file).use { out ->
+                    blurredBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                }
+                if (bitmap != blurredBitmap) bitmap.recycle()
+                blurredBitmap.recycle()
+                Uri.fromFile(file).toString()
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    private fun decodeSampledBitmap(uri: Uri): Bitmap? {
+        val targetMaxSize = 320
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.isMutableRequired = true
+                val maxSize = maxOf(info.size.width, info.size.height)
+                if (maxSize > targetMaxSize) {
+                    val scale = maxSize.toFloat() / targetMaxSize.toFloat()
+                    val targetWidth = (info.size.width / scale).toInt().coerceAtLeast(1)
+                    val targetHeight = (info.size.height / scale).toInt().coerceAtLeast(1)
+                    decoder.setTargetSize(targetWidth, targetHeight)
+                }
+            }
+        } else {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null
+            val inSampleSize = calculateInSampleSize(options, targetMaxSize, targetMaxSize)
+            val decodeOptions = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOptions) }
+        }
+    }
+
+    private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+        val height = options.outHeight
+        val width = options.outWidth
+        var inSampleSize = 1
+        if (height > reqHeight || width > reqWidth) {
+            var halfHeight = height / 2
+            var halfWidth = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
+    }
+
+    private fun fastBlur(sentBitmap: Bitmap, radius: Int): Bitmap {
+        val bitmap = sentBitmap.copy(sentBitmap.config, true)
+
+        if (radius < 1) {
+            return (null)!!
+        }
+
+        val w = bitmap.width
+        val h = bitmap.height
+
+        val pix = IntArray(w * h)
+        bitmap.getPixels(pix, 0, w, 0, 0, w, h)
+
+        val wm = w - 1
+        val hm = h - 1
+        val wh = w * h
+        val div = radius + radius + 1
+
+        val r = IntArray(wh)
+        val g = IntArray(wh)
+        val b = IntArray(wh)
+        var rsum: Int
+        var gsum: Int
+        var bsum: Int
+        var p: Int
+        var yp: Int
+        var yi: Int
+        var yw: Int
+        val vmin = IntArray(Math.max(w, h))
+
+        var divsum = (div + 1) shr 1
+        divsum *= divsum
+        val dv = IntArray(256 * divsum)
+        for (i in 0 until 256 * divsum) {
+            dv[i] = (i / divsum)
+        }
+
+        yw = 0
+        yi = 0
+
+        val stack = Array(div) { IntArray(3) }
+        var stackpointer: Int
+        var stackstart: Int
+        var sir: IntArray
+        var rbs: Int
+        val r1 = radius + 1
+        var routsum: Int
+        var goutsum: Int
+        var boutsum: Int
+        var rinsum: Int
+        var ginsum: Int
+        var binsum: Int
+
+        for (y in 0 until h) {
+            rinsum = 0
+            ginsum = 0
+            binsum = 0
+            routsum = 0
+            goutsum = 0
+            boutsum = 0
+            rsum = 0
+            gsum = 0
+            bsum = 0
+            for (i in -radius..radius) {
+                p = pix[yi + Math.min(wm, Math.max(i, 0))]
+                sir = stack[i + radius]
+                sir[0] = (p and 0xff0000) shr 16
+                sir[1] = (p and 0x00ff00) shr 8
+                sir[2] = (p and 0x0000ff)
+                rbs = r1 - Math.abs(i)
+                rsum += sir[0] * rbs
+                gsum += sir[1] * rbs
+                bsum += sir[2] * rbs
+                if (i > 0) {
+                    rinsum += sir[0]
+                    ginsum += sir[1]
+                    binsum += sir[2]
+                } else {
+                    routsum += sir[0]
+                    goutsum += sir[1]
+                    boutsum += sir[2]
+                }
+            }
+            stackpointer = radius
+
+            for (x in 0 until w) {
+                r[yi] = dv[rsum]
+                g[yi] = dv[gsum]
+                b[yi] = dv[bsum]
+
+                rsum -= routsum
+                gsum -= goutsum
+                bsum -= boutsum
+
+                stackstart = stackpointer - radius + div
+                sir = stack[stackstart % div]
+
+                routsum -= sir[0]
+                goutsum -= sir[1]
+                boutsum -= sir[2]
+
+                if (y == 0) {
+                    vmin[x] = Math.min(x + radius + 1, wm)
+                }
+                p = pix[yw + vmin[x]]
+
+                sir[0] = (p and 0xff0000) shr 16
+                sir[1] = (p and 0x00ff00) shr 8
+                sir[2] = (p and 0x0000ff)
+
+                rinsum += sir[0]
+                ginsum += sir[1]
+                binsum += sir[2]
+
+                rsum += rinsum
+                gsum += ginsum
+                bsum += binsum
+
+                stackpointer = (stackpointer + 1) % div
+                sir = stack[(stackpointer) % div]
+
+                routsum += sir[0]
+                goutsum += sir[1]
+                boutsum += sir[2]
+
+                rinsum -= sir[0]
+                ginsum -= sir[1]
+                binsum -= sir[2]
+
+                yi++
+            }
+            yw += w
+        }
+
+        for (x in 0 until w) {
+            rinsum = 0
+            ginsum = 0
+            binsum = 0
+            routsum = 0
+            goutsum = 0
+            boutsum = 0
+            rsum = 0
+            gsum = 0
+            bsum = 0
+            yp = -radius * w
+            for (i in -radius..radius) {
+                yi = Math.max(0, yp) + x
+
+                sir = stack[i + radius]
+
+                sir[0] = r[yi]
+                sir[1] = g[yi]
+                sir[2] = b[yi]
+
+                rbs = r1 - Math.abs(i)
+
+                rsum += r[yi] * rbs
+                gsum += g[yi] * rbs
+                bsum += b[yi] * rbs
+
+                if (i > 0) {
+                    rinsum += sir[0]
+                    ginsum += sir[1]
+                    binsum += sir[2]
+                } else {
+                    routsum += sir[0]
+                    goutsum += sir[1]
+                    boutsum += sir[2]
+                }
+
+                if (i < hm) {
+                    yp += w
+                }
+            }
+            yi = x
+            stackpointer = radius
+            for (y in 0 until h) {
+                pix[yi] = (0xff000000.toInt() and pix[yi]) or (dv[rsum] shl 16) or (dv[gsum] shl 8) or dv[bsum]
+
+                rsum -= routsum
+                gsum -= goutsum
+                bsum -= boutsum
+
+                stackstart = stackpointer - radius + div
+                sir = stack[stackstart % div]
+
+                routsum -= sir[0]
+                goutsum -= sir[1]
+                boutsum -= sir[2]
+
+                if (x == 0) {
+                    vmin[y] = Math.min(y + r1, hm) * w
+                }
+                p = x + vmin[y]
+
+                sir[0] = r[p]
+                sir[1] = g[p]
+                sir[2] = b[p]
+
+                rinsum += sir[0]
+                ginsum += sir[1]
+                binsum += sir[2]
+
+                rsum += rinsum
+                gsum += ginsum
+                bsum += binsum
+
+                stackpointer = (stackpointer + 1) % div
+                sir = stack[stackpointer]
+
+                routsum += sir[0]
+                goutsum += sir[1]
+                boutsum += sir[2]
+
+                rinsum -= sir[0]
+                ginsum -= sir[1]
+                binsum -= sir[2]
+
+                yi += w
+            }
+        }
+
+        bitmap.setPixels(pix, 0, w, 0, 0, w, h)
+        return bitmap
     }
 }

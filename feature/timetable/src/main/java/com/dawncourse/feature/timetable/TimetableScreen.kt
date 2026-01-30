@@ -24,6 +24,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -100,7 +101,7 @@ internal fun TimetableScreen(
     )
     
     // Calculate displayed week from pager state
-    val displayedWeek = pagerState.currentPage + 1
+    val displayedWeek by remember { derivedStateOf { pagerState.currentPage + 1 } }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // 1. 背景图 (沉浸式)
