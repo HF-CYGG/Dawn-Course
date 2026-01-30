@@ -562,11 +562,13 @@ private fun ReviewStep(
                     dailySections = uiState.detectedMaxSection,
                     sectionDuration = uiState.courseDuration,
                     breakDuration = uiState.breakDuration,
+                    bigBreakDuration = uiState.bigBreakDuration,
                     onDateClick = { showDatePicker = true },
                     onWeekChange = { viewModel.updateSemesterSettings(uiState.semesterStartDate, it) },
-                    onDailySectionChange = { viewModel.updateTimeSettings(it, uiState.courseDuration, uiState.breakDuration) },
-                    onDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it, uiState.breakDuration) },
-                    onBreakDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, it) }
+                    onDailySectionChange = { viewModel.updateTimeSettings(it, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration) },
+                    onDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration) },
+                    onBreakDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration) },
+                    onBigBreakDurationChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it) }
                 )
             }
 
@@ -600,7 +602,9 @@ private fun ReviewStep(
                     course = course,
                     maxSection = uiState.detectedMaxSection,
                     courseDuration = uiState.courseDuration,
-                    breakDuration = uiState.breakDuration
+                    breakDuration = uiState.breakDuration,
+                    bigBreakDuration = uiState.bigBreakDuration,
+                    sectionsPerBigSection = uiState.sectionsPerBigSection
                 )
             }
         }
@@ -614,11 +618,13 @@ fun ImportSettingsSection(
     dailySections: Int,
     sectionDuration: Int,
     breakDuration: Int,
+    bigBreakDuration: Int,
     onDateClick: () -> Unit,
     onWeekChange: (Int) -> Unit,
     onDailySectionChange: (Int) -> Unit,
     onDurationChange: (Int) -> Unit,
-    onBreakDurationChange: (Int) -> Unit
+    onBreakDurationChange: (Int) -> Unit,
+    onBigBreakDurationChange: (Int) -> Unit
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         // 标题
@@ -687,6 +693,32 @@ fun ImportSettingsSection(
                     unit = "分钟",
                     onValueChange = onBreakDurationChange,
                     range = 0..30
+                )
+                // 说明文字
+                Text(
+                    text = "每小节间的休息时间（如第1-2节间）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 12.dp)
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+
+                // 6. 大节间隔
+                StepperRowItem(
+                    icon = Icons.Default.Warning, // 或者用其他图标，如 FreeBreakfast (Coffee)
+                    title = "大节间隔",
+                    value = bigBreakDuration,
+                    unit = "分钟",
+                    onValueChange = onBigBreakDurationChange,
+                    range = 0..60
+                )
+                // 说明文字及示例
+                Text(
+                    text = "每2小节为一大节，大节间的休息时间。\n示例：第1大节(1-2节)结束到第2大节(3-4节)开始间隔${bigBreakDuration}分钟。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 72.dp, end = 16.dp, bottom = 16.dp)
                 )
             }
         }
@@ -790,14 +822,40 @@ private fun ParsedCourseItem(
     course: com.dawncourse.feature.import_module.model.ParsedCourse,
     maxSection: Int,
     courseDuration: Int,
-    breakDuration: Int
+    breakDuration: Int,
+    bigBreakDuration: Int,
+    sectionsPerBigSection: Int
 ) {
     val isOutOfBounds = course.endSection > maxSection
     
     // Calculate time range (Start 8:00)
-    // Formula: StartTime + (SectionIndex - 1) * (Duration + Break)
-    val startMinute = 480 + (course.startSection - 1) * (courseDuration + breakDuration)
-    val endMinute = 480 + (course.endSection - 1) * (courseDuration + breakDuration) + courseDuration
+    fun calculateMinutes(section: Int): Int {
+        // Section start logic: 
+        // 8:00 (480 min)
+        // + (section - 1) * duration
+        // + breaks
+        var minutes = 480
+        for (i in 1 until section) {
+            minutes += courseDuration
+            val isBigBreak = (i % sectionsPerBigSection == 0)
+            minutes += if (isBigBreak) bigBreakDuration else breakDuration
+        }
+        return minutes
+    }
+
+    val startMinute = calculateMinutes(course.startSection)
+    // End time is start time + duration + internal breaks if spans multiple sections
+    // But usually courses are contiguous.
+    // Logic: calculate end of last section
+    var endMinute = startMinute
+    // For multi-section course, add duration and breaks between its internal sections
+    for (i in course.startSection..course.endSection) {
+        endMinute += courseDuration
+        if (i < course.endSection) {
+             val isBigBreak = (i % sectionsPerBigSection == 0)
+             endMinute += if (isBigBreak) bigBreakDuration else breakDuration
+        }
+    }
     
     val startTimeStr = String.format("%02d:%02d", startMinute / 60, startMinute % 60)
     val endTimeStr = String.format("%02d:%02d", endMinute / 60, endMinute % 60)

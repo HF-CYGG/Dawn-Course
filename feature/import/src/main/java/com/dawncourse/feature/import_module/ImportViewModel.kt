@@ -51,6 +51,8 @@ data class ImportUiState(
     val detectedMaxSection: Int = 12,
     val courseDuration: Int = 45,
     val breakDuration: Int = 10,
+    val bigBreakDuration: Int = 20, // 大节间隔时长
+    val sectionsPerBigSection: Int = 2, // 每个大节包含的小节数
 
     val resultText: String = "",
     val isLoading: Boolean = false
@@ -111,8 +113,15 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
     }
     
-    fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int) {
-        _uiState.update { it.copy(detectedMaxSection = maxSection, courseDuration = duration, breakDuration = breakDuration) }
+    fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int, bigBreakDuration: Int) {
+        _uiState.update { 
+            it.copy(
+                detectedMaxSection = maxSection, 
+                courseDuration = duration, 
+                breakDuration = breakDuration,
+                bigBreakDuration = bigBreakDuration
+            ) 
+        }
     }
 
     /**
@@ -241,7 +250,11 @@ class ImportViewModel @Inject constructor(
                             endTime = String.format("%02d:%02d", endH, endM)
                         )
                     )
-                    currentMinute += state.breakDuration // Use configured break duration
+                    
+                    // Determine break duration
+                    val isBigBreak = (i % state.sectionsPerBigSection == 0)
+                    val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
+                    currentMinute += gap
                 }
                 settingsRepository.setSectionTimes(times)
                 
