@@ -11,10 +11,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,8 +53,7 @@ fun TimetableRoute(
     viewModel: TimetableViewModel = hiltViewModel(),
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
-    onCourseClick: (Long) -> Unit,
-    onImportClick: () -> Unit
+    onCourseClick: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     
@@ -66,8 +63,7 @@ fun TimetableRoute(
         onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
         onSettingsClick = onSettingsClick,
-        onCourseClick = onCourseClick,
-        onImportClick = onImportClick
+        onCourseClick = onCourseClick
     )
 }
 
@@ -84,8 +80,7 @@ internal fun TimetableScreen(
     onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onCourseClick: (Long) -> Unit,
-    onImportClick: () -> Unit
+    onCourseClick: (Long) -> Unit
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
@@ -168,17 +163,8 @@ internal fun TimetableScreen(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
                     onSettingsClick = onSettingsClick,
-                    onImportClick = onImportClick
+                    onAddClick = onAddClick
                 )
-            },
-            floatingActionButton = {
-                FloatingActionButton(
-                    onClick = onAddClick,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "添加课程")
-                }
             },
             contentColor = MaterialTheme.colorScheme.onBackground
         ) { padding ->
@@ -261,7 +247,7 @@ private fun TimetableTopBar(
     currentWeek: Int,
     isRealCurrentWeek: Boolean,
     onSettingsClick: () -> Unit,
-    onImportClick: () -> Unit
+    onAddClick: () -> Unit
 ) {
     TopAppBar(
         title = {
@@ -284,8 +270,8 @@ private fun TimetableTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onImportClick) {
-                Icon(Icons.Default.Download, contentDescription = "导入")
+            IconButton(onClick = onAddClick) {
+                Icon(Icons.Default.Add, contentDescription = "添加课程")
             }
             IconButton(onClick = onSettingsClick) {
                 Icon(Icons.Default.Settings, contentDescription = "设置")

@@ -106,7 +106,7 @@ private fun SelectionStep(
     ) {
         ImportOptionCard(
             title = "教务系统网页导入",
-            description = "通过内置浏览器访问教务系统自动解析",
+            description = "通过内置浏览器访问教务系统自动解析（仅支持正方新教务系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )

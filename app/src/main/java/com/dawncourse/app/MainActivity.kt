@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -17,6 +18,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
@@ -29,7 +31,6 @@ import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
-import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
 
 /**
@@ -77,8 +78,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // 计算是否应使用深色模式
+            val darkTheme = when (settings.themeMode) {
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.DARK -> true
+            }
+
             // 应用全局主题
-            DawnTheme(appSettings = settings) {
+            DawnTheme(
+                appSettings = settings,
+                darkTheme = darkTheme
+            ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Navigation Host
                     val navController = rememberNavController()
@@ -97,9 +108,6 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onCourseClick = { courseId ->
                                     navController.navigate("course_editor?courseId=$courseId")
-                                },
-                                onImportClick = {
-                                    navController.navigate("import")
                                 }
                             )
                         }
@@ -120,15 +128,6 @@ class MainActivity : ComponentActivity() {
                         composable("timetable_settings") {
                             com.dawncourse.feature.settings.TimetableSettingsScreen(
                                 onBackClick = {
-                                    navController.popBackStack()
-                                }
-                            )
-                        }
-                        
-                        // 导入页面
-                        composable("import") {
-                            ImportScreen(
-                                onImportSuccess = {
                                     navController.popBackStack()
                                 }
                             )

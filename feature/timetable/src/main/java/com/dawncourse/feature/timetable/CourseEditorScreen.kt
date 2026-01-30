@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
@@ -42,7 +43,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -70,6 +75,7 @@ import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 课程编辑/添加界面
@@ -329,105 +335,118 @@ private fun WeekSection(
     onRangeChange: (start: Int, end: Int) -> Unit,
     onTypeChange: (Int) -> Unit
 ) {
-    EditorSection(title = "上课周次", icon = null) {
+    val totalWeeks = LocalAppSettings.current.totalWeeks.coerceAtLeast(20)
+
+    EditorSection(title = "上课周次", icon = Icons.Default.DateRange) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            // Week Type Segmented Control
+            // 1. 常用预设 (Quick Presets)
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val types = listOf(
-                    Course.WEEK_TYPE_ALL to "全周",
-                    Course.WEEK_TYPE_ODD to "单周",
-                    Course.WEEK_TYPE_EVEN to "双周"
+                val presets = listOf(
+                    "1-16周" to (1 to 16),
+                    "前8周" to (1 to 8),
+                    "后8周" to (9 to 16),
+                    "全学期" to (1 to totalWeeks)
                 )
                 
-                types.forEach { (type, label) ->
-                    val isSelected = weekType == type
-                    val containerColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
-                    val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                    
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxSize()
-                            .clip(CircleShape)
-                            .background(containerColor)
-                            .clickable { onTypeChange(type) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = contentColor
+                presets.forEach { (label, range) ->
+                    SuggestionChip(
+                        onClick = { onRangeChange(range.first, range.second) },
+                        label = { Text(label) },
+                        colors = SuggestionChipDefaults.suggestionChipColors(
+                            containerColor = if (startWeek == range.first && endWeek == range.second) 
+                                MaterialTheme.colorScheme.secondaryContainer 
+                            else Color.Transparent
+                        ),
+                        border = SuggestionChipDefaults.suggestionChipBorder(
+                            enabled = true,
+                            borderColor = if (startWeek == range.first && endWeek == range.second)
+                                Color.Transparent
+                            else MaterialTheme.colorScheme.outline
                         )
-                    }
+                    )
                 }
             }
-            
-            // Week Grid
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                for (i in 1..20) {
-                    val isSelected = i in startWeek..endWeek
-                    val isActive = isSelected && when (weekType) {
-                        Course.WEEK_TYPE_ODD -> i % 2 != 0
-                        Course.WEEK_TYPE_EVEN -> i % 2 == 0
-                        else -> true
-                    }
+
+            // 2. 范围滑块 (Range Slider)
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "第 $startWeek - $endWeek 周",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
                     
-                    val backgroundColor = when {
-                        isActive -> MaterialTheme.colorScheme.primary
-                        isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                        else -> MaterialTheme.colorScheme.surfaceContainerHigh
-                    }
-                    
-                    val textColor = when {
-                        isActive -> MaterialTheme.colorScheme.onPrimary
-                        isSelected -> MaterialTheme.colorScheme.onSurface
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    
-                    Box(
+                    // 周次类型选择 (Week Type)
+                    Row(
                         modifier = Modifier
-                            .size(width = 32.dp, height = 32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(backgroundColor)
-                            .pointerInput(Unit) {
-                                detectTapGestures {
-                                    if (i < startWeek) onRangeChange(i, endWeek)
-                                    else if (i > endWeek) onRangeChange(startWeek, i)
-                                    else {
-                                        if (i - startWeek < endWeek - i) onRangeChange(i, endWeek) else onRangeChange(startWeek, i)
-                                    }
-                                }
-                            },
-                        contentAlignment = Alignment.Center
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Text(
-                            text = "$i",
-                            color = textColor,
-                            style = MaterialTheme.typography.labelSmall
+                        val types = listOf(
+                            Course.WEEK_TYPE_ALL to "全周",
+                            Course.WEEK_TYPE_ODD to "单周",
+                            Course.WEEK_TYPE_EVEN to "双周"
                         )
+                        
+                        types.forEach { (type, label) ->
+                            val isSelected = weekType == type
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    .clickable { onTypeChange(type) }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                RangeSlider(
+                    value = startWeek.toFloat()..endWeek.toFloat(),
+                    onValueChange = { range ->
+                        val start = range.start.roundToInt().coerceIn(1, totalWeeks)
+                        val end = range.endInclusive.roundToInt().coerceIn(1, totalWeeks)
+                        if (start <= end) {
+                            onRangeChange(start, end)
+                        }
+                    },
+                    valueRange = 1f..totalWeeks.toFloat(),
+                    steps = totalWeeks - 2, // steps = (max - min) / step - 1
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("第1周", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text("第${totalWeeks}周", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                }
             }
-            
-            Text(
-                text = "点击首尾周次可快速调整范围",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
         }
     }
 }
