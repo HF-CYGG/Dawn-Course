@@ -50,6 +50,7 @@ data class ImportUiState(
     // Time Settings
     val detectedMaxSection: Int = 12,
     val courseDuration: Int = 45,
+    val breakDuration: Int = 10,
 
     val resultText: String = "",
     val isLoading: Boolean = false
@@ -102,8 +103,8 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
     }
     
-    fun updateTimeSettings(maxSection: Int, duration: Int) {
-        _uiState.update { it.copy(detectedMaxSection = maxSection, courseDuration = duration) }
+    fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int) {
+        _uiState.update { it.copy(detectedMaxSection = maxSection, courseDuration = duration, breakDuration = breakDuration) }
     }
 
     /**
@@ -232,7 +233,7 @@ class ImportViewModel @Inject constructor(
                             endTime = String.format("%02d:%02d", endH, endM)
                         )
                     )
-                    currentMinute += 10 // 10 min break
+                    currentMinute += state.breakDuration // Use configured break duration
                 }
                 settingsRepository.setSectionTimes(times)
                 

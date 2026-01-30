@@ -638,7 +638,7 @@ private fun ReviewStep(
                                 )
                                 Slider(
                                     value = uiState.detectedMaxSection.toFloat(),
-                                    onValueChange = { viewModel.updateTimeSettings(it.toInt(), uiState.courseDuration) },
+                                    onValueChange = { viewModel.updateTimeSettings(it.toInt(), uiState.courseDuration, uiState.breakDuration) },
                                     valueRange = 8f..16f,
                                     steps = 7
                                 )
@@ -659,11 +659,34 @@ private fun ReviewStep(
                                 )
                                 Slider(
                                     value = uiState.courseDuration.toFloat(),
-                                    onValueChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it.toInt()) },
+                                    onValueChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, it.toInt(), uiState.breakDuration) },
                                     valueRange = 30f..60f,
                                     steps = 29
                                 )
                             }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Break Duration
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                         Column(modifier = Modifier.padding(12.dp)) {
+                            Text("课间休息时长", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "${uiState.breakDuration} 分钟",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Slider(
+                                value = uiState.breakDuration.toFloat(),
+                                onValueChange = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, it.toInt()) },
+                                valueRange = 0f..30f,
+                                steps = 29
+                            )
                         }
                     }
                 }
@@ -705,7 +728,8 @@ private fun ReviewStep(
                     ParsedCourseItem(
                         course = course,
                         maxSection = uiState.detectedMaxSection,
-                        courseDuration = uiState.courseDuration
+                        courseDuration = uiState.courseDuration,
+                        breakDuration = uiState.breakDuration
                     )
                 }
                 
@@ -737,13 +761,15 @@ private fun ReviewStep(
 private fun ParsedCourseItem(
     course: com.dawncourse.feature.import_module.model.ParsedCourse,
     maxSection: Int,
-    courseDuration: Int
+    courseDuration: Int,
+    breakDuration: Int
 ) {
     val isOutOfBounds = course.endSection > maxSection
     
-    // Calculate time range (Start 8:00, 10min break)
-    val startMinute = 480 + (course.startSection - 1) * (courseDuration + 10)
-    val endMinute = 480 + (course.endSection - 1) * (courseDuration + 10) + courseDuration
+    // Calculate time range (Start 8:00)
+    // Formula: StartTime + (SectionIndex - 1) * (Duration + Break)
+    val startMinute = 480 + (course.startSection - 1) * (courseDuration + breakDuration)
+    val endMinute = 480 + (course.endSection - 1) * (courseDuration + breakDuration) + courseDuration
     
     val startTimeStr = String.format("%02d:%02d", startMinute / 60, startMinute % 60)
     val endTimeStr = String.format("%02d:%02d", endMinute / 60, endMinute % 60)
