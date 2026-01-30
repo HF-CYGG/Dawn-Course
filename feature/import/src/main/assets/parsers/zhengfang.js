@@ -30,22 +30,25 @@ function scheduleHtmlParser(html) {
 
             name = extractName(blockHtml);
 
-            var teacherMatch = /title=["']?教师\s*["']?[^>]*>[\s\S]*?<\/span>\s*<font[^>]*>[\s\S]*?<i>([\s\S]*?)<\/i>/i.exec(blockHtml);
-            if (teacherMatch) {
-                var rawTeacher = stripTags(teacherMatch[1]).trim();
-                teacher = rawTeacher.replace(/教师\s*/, '').trim();
+            teacher = extractTextByTitle(blockHtml, "教师");
+            if (teacher) {
+                teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+            }
+            location = extractTextByTitle(blockHtml, "上课地点");
+            if (location) {
+                location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
             }
 
-            var locMatch = /title=["']?上课地点["']?[^>]*>[\s\S]*?<\/span>\s*<font[^>]*>[\s\S]*?<i>([\s\S]*?)<\/i>/i.exec(blockHtml);
-            if (locMatch) {
-                var rawLoc = stripTags(locMatch[1]).trim();
-                location = rawLoc.replace(/上课地点\s*/, '').replace('泰山科技学院', '').trim();
+            var timeText = extractTextByTitle(blockHtml, "节/周");
+            if (timeText) {
+                sectionsStr = extractSectionsStr(timeText);
+                weeksStr = extractWeeksStr(timeText);
             }
 
             var timeMatch = /[\(（](\d+(?:-\d+)?节)[\)）]\s*([^<]*周[^<]*)/i.exec(blockHtml);
             if (timeMatch) {
-                sectionsStr = timeMatch[1]; // 1-2节
-                weeksStr = timeMatch[2];    // 1-4周,7-8周...
+                sectionsStr = timeMatch[1];
+                weeksStr = timeMatch[2];
             }
 
             if (!teacher || !location || !weeksStr || !sectionsStr) {
@@ -97,12 +100,20 @@ function scheduleHtmlParser(html) {
         var listBlockHtml = listMatch[4];
         var listName = extractName(listBlockHtml);
         var listText = normalizeText(listBlockHtml);
-        var listTeacherMatch = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(listText);
-        var listTeacher = listTeacherMatch ? listTeacherMatch[1].trim() : "";
-        var listLocMatch = /上课地点\s*[:：]?\s*([^教师周数节次校区]+)/.exec(listText);
-        var listLocation = listLocMatch ? listLocMatch[1].trim().replace('泰山科技学院', '').trim() : "";
+        var listTeacher = extractTextByTitle(listBlockHtml, "教师");
+        if (listTeacher) {
+            listTeacher = listTeacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+        }
+        var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
+        if (listLocation) {
+            listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+        }
         var listWeeksStr = extractWeeksStr(listText);
         var listSectionsStr = sectionStart ? (sectionStart + "-" + (sectionEnd || sectionStart) + "节") : extractSectionsStr(listText);
+        var listTimeText = extractTextByTitle(listBlockHtml, "节/周");
+        if (!listWeeksStr && listTimeText) {
+            listWeeksStr = extractWeeksStr(listTimeText);
+        }
         if (listName && listWeeksStr && listSectionsStr) {
             var listWeeks = parseWeeks(listWeeksStr);
             var listSections = parseSections(listSectionsStr);
@@ -139,6 +150,15 @@ function extractName(blockHtml) {
     var altMatch = /<u[^>]*class=["']?title[^>]*>([\s\S]*?)<\/u>/i.exec(blockHtml);
     if (altMatch) {
         return stripTags(altMatch[1]).trim();
+    }
+    return "";
+}
+
+function extractTextByTitle(blockHtml, titleText) {
+    var pattern = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
+    var match = new RegExp(pattern, "i").exec(blockHtml);
+    if (match) {
+        return stripTags(match[1]).trim();
     }
     return "";
 }
