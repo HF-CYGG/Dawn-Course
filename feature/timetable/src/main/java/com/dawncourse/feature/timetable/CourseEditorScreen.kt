@@ -4,7 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,22 +38,25 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SuggestionChip
-import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
+import com.dawncourse.core.ui.util.CourseColorUtils
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -91,26 +96,38 @@ import kotlin.math.roundToInt
 fun CourseEditorScreen(
     course: Course? = null,
     currentSemesterId: Long = 1L,
+    nameSuggestions: List<String> = emptyList(),
+    locationSuggestions: List<String> = emptyList(),
+    teacherSuggestions: List<String> = emptyList(),
     onBackClick: () -> Unit,
-    onSaveClick: (Course) -> Unit
+    onSaveClick: (List<Course>) -> Unit
 ) {
     var name by remember(course) { mutableStateOf(course?.name ?: "") }
     var location by remember(course) { mutableStateOf(course?.location ?: "") }
     var teacher by remember(course) { mutableStateOf(course?.teacher ?: "") }
-    
-    // Time selection state
-    val defaultDuration = LocalAppSettings.current.defaultCourseDuration
-    var selectedDay by remember(course) { mutableStateOf(course?.dayOfWeek ?: 1) }
-    var startNode by remember(course) { mutableStateOf(course?.startSection ?: 1) }
-    var duration by remember(course) { mutableStateOf(course?.duration ?: defaultDuration) }
-    
-    // Week selection state
-    var startWeek by remember(course) { mutableStateOf(course?.startWeek ?: 1) }
-    var endWeek by remember(course) { mutableStateOf(course?.endWeek ?: 16) }
-    var weekType by remember(course) { mutableStateOf(course?.weekType ?: Course.WEEK_TYPE_ALL) }
-    
-    // Color selection
-    var selectedColor by remember(course) { mutableStateOf(course?.color ?: "#2196F3") }
+
+    val settings = LocalAppSettings.current
+    val defaultDuration = settings.defaultCourseDuration
+    val totalWeeks = settings.totalWeeks.coerceAtLeast(20)
+
+    val initialSlot = remember(course, defaultDuration, totalWeeks) {
+        val startWeek = course?.startWeek ?: 1
+        val endWeek = course?.endWeek ?: totalWeeks
+        val weekType = course?.weekType ?: Course.WEEK_TYPE_ALL
+        TimeSlotState(
+            dayOfWeek = course?.dayOfWeek ?: 1,
+            startSection = course?.startSection ?: 1,
+            duration = course?.duration ?: defaultDuration,
+            selectedWeeks = buildWeeksFromRange(startWeek, endWeek, weekType)
+        )
+    }
+    var timeSlots by remember(course, defaultDuration, totalWeeks) { mutableStateOf(listOf(initialSlot)) }
+
+    val initialColor = remember(course) {
+        course?.color?.takeIf { it.isNotBlank() } ?: CourseColorUtils.generateColor(course?.name ?: "", course?.teacher)
+    }
+    var selectedColor by remember(course) { mutableStateOf(initialColor) }
+    var isColorLocked by remember(course) { mutableStateOf(course?.color?.isNotBlank() == true) }
 
     val focusManager = LocalFocusManager.current
 
@@ -126,21 +143,27 @@ fun CourseEditorScreen(
                 actions = {
                     Button(
                         onClick = {
-                            val newCourse = Course(
-                                id = course?.id ?: 0,
-                                semesterId = course?.semesterId ?: currentSemesterId,
-                                name = name,
-                                location = location,
-                                teacher = teacher,
-                                dayOfWeek = selectedDay,
-                                startSection = startNode,
-                                duration = duration,
-                                startWeek = startWeek,
-                                endWeek = endWeek,
-                                weekType = weekType,
-                                color = selectedColor
-                            )
-                            onSaveClick(newCourse)
+                            val semesterId = course?.semesterId ?: currentSemesterId
+                            val coursesToSave = timeSlots.flatMapIndexed { slotIndex, slot ->
+                                val segments = convertWeeksToSegments(slot.selectedWeeks)
+                                segments.mapIndexed { segmentIndex, segment ->
+                                    Course(
+                                        id = if (course != null && slotIndex == 0 && segmentIndex == 0) course.id else 0L,
+                                        semesterId = semesterId,
+                                        name = name.trim(),
+                                        location = location.trim(),
+                                        teacher = teacher.trim(),
+                                        dayOfWeek = slot.dayOfWeek,
+                                        startSection = slot.startSection,
+                                        duration = slot.duration,
+                                        startWeek = segment.startWeek,
+                                        endWeek = segment.endWeek,
+                                        weekType = segment.weekType,
+                                        color = selectedColor
+                                    )
+                                }
+                            }
+                            onSaveClick(coursesToSave)
                         },
                         enabled = name.isNotBlank(),
                         modifier = Modifier.padding(end = 8.dp)
@@ -169,42 +192,37 @@ fun CourseEditorScreen(
             // Basic Info
             BasicInfoSection(
                 name = name,
-                onNameChange = { name = it },
+                onNameChange = { newName ->
+                    name = newName
+                    if (!isColorLocked) {
+                        selectedColor = CourseColorUtils.generateColor(newName, teacher)
+                    }
+                },
                 location = location,
                 onLocationChange = { location = it },
                 teacher = teacher,
                 onTeacherChange = { teacher = it },
+                nameSuggestions = nameSuggestions,
+                locationSuggestions = locationSuggestions,
+                teacherSuggestions = teacherSuggestions,
                 onDone = { focusManager.clearFocus() }
-            )
-            
-            // Time Selector
-            TimeSection(
-                selectedDay = selectedDay,
-                startNode = startNode,
-                duration = duration,
-                onSelectionChange = { day, start, dur ->
-                    selectedDay = day
-                    startNode = start
-                    duration = dur
-                }
-            )
-
-            // Week Selector
-            WeekSection(
-                startWeek = startWeek,
-                endWeek = endWeek,
-                weekType = weekType,
-                onRangeChange = { start, end ->
-                    startWeek = start
-                    endWeek = end
-                },
-                onTypeChange = { weekType = it }
             )
             
             // Color Selector
             ColorSection(
                 selectedColor = selectedColor,
-                onColorSelected = { selectedColor = it }
+                onColorSelected = {
+                    selectedColor = it
+                    isColorLocked = true
+                }
+            )
+
+            TimeSlotSection(
+                timeSlots = timeSlots,
+                totalWeeks = totalWeeks,
+                defaultDuration = defaultDuration,
+                allowMultiple = course == null,
+                onSlotsChange = { timeSlots = it }
             )
             
             Spacer(modifier = Modifier.height(32.dp))
@@ -212,6 +230,86 @@ fun CourseEditorScreen(
     }
 }
 
+private data class TimeSlotState(
+    val dayOfWeek: Int,
+    val startSection: Int,
+    val duration: Int,
+    val selectedWeeks: Set<Int>
+)
+
+@Composable
+private fun TimeSlotSection(
+    timeSlots: List<TimeSlotState>,
+    totalWeeks: Int,
+    defaultDuration: Int,
+    allowMultiple: Boolean,
+    onSlotsChange: (List<TimeSlotState>) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        timeSlots.forEachIndexed { index, slot ->
+            EditorSection(
+                title = if (allowMultiple) "时间段 ${index + 1}" else "时间段",
+                icon = Icons.Default.Schedule
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    WeekSection(
+                        selectedWeeks = slot.selectedWeeks,
+                        totalWeeks = totalWeeks,
+                        onWeeksChange = { weeks ->
+                            val updated = timeSlots.toMutableList()
+                            updated[index] = slot.copy(selectedWeeks = weeks)
+                            onSlotsChange(updated)
+                        }
+                    )
+                    TimeSection(
+                        selectedDay = slot.dayOfWeek,
+                        startNode = slot.startSection,
+                        duration = slot.duration,
+                        onSelectionChange = { day, start, duration ->
+                            val updated = timeSlots.toMutableList()
+                            updated[index] = slot.copy(dayOfWeek = day, startSection = start, duration = duration)
+                            onSlotsChange(updated)
+                        }
+                    )
+                    if (allowMultiple && timeSlots.size > 1) {
+                        TextButton(
+                            onClick = {
+                                val updated = timeSlots.toMutableList()
+                                updated.removeAt(index)
+                                onSlotsChange(updated)
+                            },
+                            colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Text("移除此时间段")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (allowMultiple) {
+            Button(
+                onClick = {
+                    val updated = timeSlots + TimeSlotState(
+                        dayOfWeek = 1,
+                        startSection = 1,
+                        duration = defaultDuration,
+                        selectedWeeks = (1..totalWeeks).toSet()
+                    )
+                    onSlotsChange(updated)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("添加上课时间")
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BasicInfoSection(
     name: String,
@@ -220,59 +318,165 @@ private fun BasicInfoSection(
     onLocationChange: (String) -> Unit,
     teacher: String,
     onTeacherChange: (String) -> Unit,
+    nameSuggestions: List<String>,
+    locationSuggestions: List<String>,
+    teacherSuggestions: List<String>,
     onDone: () -> Unit
 ) {
     EditorSection(title = "基本信息", icon = Icons.Default.Edit) {
+        var nameExpanded by remember { mutableStateOf(false) }
+        var locationExpanded by remember { mutableStateOf(false) }
+        var teacherExpanded by remember { mutableStateOf(false) }
+
+        val nameCandidates = remember(name, nameSuggestions) {
+            filterSuggestions(name, nameSuggestions)
+        }
+        val locationCandidates = remember(location, locationSuggestions) {
+            filterSuggestions(location, locationSuggestions)
+        }
+        val teacherCandidates = remember(teacher, teacherSuggestions) {
+            filterSuggestions(teacher, teacherSuggestions)
+        }
+
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = onNameChange,
-                label = { Text("课程名称") },
-                placeholder = { Text("例如：高等数学") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Sentences,
-                    imeAction = ImeAction.Next
-                ),
-                trailingIcon = {
-                    if (name.isNotEmpty()) {
-                        IconButton(onClick = { onNameChange("") }) {
-                            Icon(Icons.Default.Clear, contentDescription = "清除")
+            ExposedDropdownMenuBox(
+                expanded = nameExpanded,
+                onExpandedChange = { expanded -> nameExpanded = expanded }
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { value ->
+                        onNameChange(value)
+                        nameExpanded = true
+                    },
+                    label = { Text("课程名称") },
+                    placeholder = { Text("例如：高等数学") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
+                    trailingIcon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (name.isNotEmpty()) {
+                                IconButton(onClick = { onNameChange("") }) {
+                                    Icon(Icons.Default.Clear, contentDescription = "清除")
+                                }
+                            }
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = nameExpanded)
+                        }
+                    }
+                )
+                DropdownMenu(
+                    expanded = nameExpanded && nameCandidates.isNotEmpty(),
+                    onDismissRequest = { nameExpanded = false }
+                ) {
+                    nameCandidates.forEach { suggestion ->
+                        DropdownMenuItem(
+                            text = { Text(suggestion) },
+                            onClick = {
+                                onNameChange(suggestion)
+                                nameExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                ExposedDropdownMenuBox(
+                    expanded = locationExpanded,
+                    onExpandedChange = { expanded -> locationExpanded = expanded },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = location,
+                        onValueChange = { value ->
+                            onLocationChange(value)
+                            locationExpanded = true
+                        },
+                        label = { Text("上课地点") },
+                        placeholder = { Text("例如：教三 101") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = locationExpanded) }
+                    )
+                    DropdownMenu(
+                        expanded = locationExpanded && locationCandidates.isNotEmpty(),
+                        onDismissRequest = { locationExpanded = false }
+                    ) {
+                        locationCandidates.forEach { suggestion ->
+                            DropdownMenuItem(
+                                text = { Text(suggestion) },
+                                onClick = {
+                                    onLocationChange(suggestion)
+                                    locationExpanded = false
+                                }
+                            )
                         }
                     }
                 }
-            )
-            
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                OutlinedTextField(
-                    value = location,
-                    onValueChange = onLocationChange,
-                    label = { Text("上课地点") },
-                    placeholder = { Text("例如：教三 101") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(20.dp)) }
-                )
-                
-                OutlinedTextField(
-                    value = teacher,
-                    onValueChange = onTeacherChange,
-                    label = { Text("授课教师") },
-                    placeholder = { Text("选填") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { onDone() }),
-                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp)) }
-                )
+
+                ExposedDropdownMenuBox(
+                    expanded = teacherExpanded,
+                    onExpandedChange = { expanded -> teacherExpanded = expanded },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = teacher,
+                        onValueChange = { value ->
+                            onTeacherChange(value)
+                            teacherExpanded = true
+                        },
+                        label = { Text("授课教师") },
+                        placeholder = { Text("选填") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { onDone() }),
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = teacherExpanded) }
+                    )
+                    ExposedDropdownMenu(
+                        expanded = teacherExpanded && teacherCandidates.isNotEmpty(),
+                        onDismissRequest = { teacherExpanded = false }
+                    ) {
+                        teacherCandidates.forEach { suggestion ->
+                            DropdownMenuItem(
+                                text = { Text(suggestion) },
+                                onClick = {
+                                    onTeacherChange(suggestion)
+                                    teacherExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+private fun filterSuggestions(input: String, suggestions: List<String>): List<String> {
+    val keyword = input.trim()
+    val filtered = if (keyword.isEmpty()) {
+        suggestions
+    } else {
+        suggestions.filter { it.contains(keyword, ignoreCase = true) }
+    }
+    return filtered.take(6)
 }
 
 @Composable
@@ -331,124 +535,54 @@ private fun TimeSection(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WeekSection(
-    startWeek: Int,
-    endWeek: Int,
-    weekType: Int,
-    onRangeChange: (start: Int, end: Int) -> Unit,
-    onTypeChange: (Int) -> Unit
+    selectedWeeks: Set<Int>,
+    totalWeeks: Int,
+    onWeeksChange: (Set<Int>) -> Unit
 ) {
-    val totalWeeks = LocalAppSettings.current.totalWeeks.coerceAtLeast(20)
+    val summary by remember(selectedWeeks) {
+        derivedStateOf { formatWeekSummary(selectedWeeks) }
+    }
 
     EditorSection(title = "上课周次", icon = Icons.Default.DateRange) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            // 1. 常用预设 (Quick Presets)
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val presets = listOf(
-                    "1-16周" to (1 to 16),
-                    "前8周" to (1 to 8),
-                    "后8周" to (9 to 16),
-                    "全学期" to (1 to totalWeeks)
+                SuggestionChip(
+                    onClick = { onWeeksChange((1..totalWeeks).toSet()) },
+                    label = { Text("全选") }
                 )
-                
-                presets.forEach { (label, range) ->
-                    SuggestionChip(
-                        onClick = { onRangeChange(range.first, range.second) },
-                        label = { Text(label) },
-                        colors = SuggestionChipDefaults.suggestionChipColors(
-                            containerColor = if (startWeek == range.first && endWeek == range.second) 
-                                MaterialTheme.colorScheme.secondaryContainer 
-                            else Color.Transparent
-                        ),
-                        border = SuggestionChipDefaults.suggestionChipBorder(
-                            enabled = true,
-                            borderColor = if (startWeek == range.first && endWeek == range.second)
-                                Color.Transparent
-                            else MaterialTheme.colorScheme.outline
-                        )
-                    )
-                }
+                SuggestionChip(
+                    onClick = { onWeeksChange(buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_ODD)) },
+                    label = { Text("单周") }
+                )
+                SuggestionChip(
+                    onClick = { onWeeksChange(buildWeeksFromRange(1, totalWeeks, Course.WEEK_TYPE_EVEN)) },
+                    label = { Text("双周") }
+                )
             }
 
-            // 2. 范围滑块 (Range Slider)
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "第 $startWeek - $endWeek 周",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    
-                    // 周次类型选择 (Week Type)
-                    Row(
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            .padding(2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        val types = listOf(
-                            Course.WEEK_TYPE_ALL to "全周",
-                            Course.WEEK_TYPE_ODD to "单周",
-                            Course.WEEK_TYPE_EVEN to "双周"
-                        )
-                        
-                        types.forEach { (type, label) ->
-                            val isSelected = weekType == type
-                            Box(
-                                modifier = Modifier
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                    .clickable { onTypeChange(type) }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            }
-                        }
+            DotMatrixWeekSelector(
+                totalWeeks = totalWeeks,
+                selectedWeeks = selectedWeeks,
+                onWeekToggle = { week ->
+                    val updated = selectedWeeks.toMutableSet()
+                    if (updated.contains(week)) {
+                        updated.remove(week)
+                    } else {
+                        updated.add(week)
                     }
+                    onWeeksChange(updated)
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                RangeSlider(
-                    value = startWeek.toFloat()..endWeek.toFloat(),
-                    onValueChange = { range ->
-                        val start = range.start.roundToInt().coerceIn(1, totalWeeks)
-                        val end = range.endInclusive.roundToInt().coerceIn(1, totalWeeks)
-                        if (start <= end) {
-                            onRangeChange(start, end)
-                        }
-                    },
-                    valueRange = 1f..totalWeeks.toFloat(),
-                    steps = totalWeeks - 2, // steps = (max - min) / step - 1
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                )
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("第1周", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                    Text("第${totalWeeks}周", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                }
-            }
+            )
         }
     }
 }
@@ -639,7 +773,7 @@ fun TimeGridSelector(
                                 }
                             }
                             .pointerInput(day, node) {
-                                detectDragGesturesAfterLongPress(
+                                detectDragGestures(
                                     onDragStart = { offset ->
                                         dragAnchorDay = day
                                         dragAnchorNode = node
@@ -683,5 +817,126 @@ private fun getDayText(day: Int): String {
         6 -> "六"
         7 -> "日"
         else -> ""
+    }
+}
+
+private data class WeekSegment(
+    val startWeek: Int,
+    val endWeek: Int,
+    val weekType: Int
+)
+
+private fun buildWeeksFromRange(startWeek: Int, endWeek: Int, weekType: Int): Set<Int> {
+    val weeks = mutableSetOf<Int>()
+    for (week in startWeek..endWeek) {
+        if (weekType == Course.WEEK_TYPE_ODD && week % 2 == 0) continue
+        if (weekType == Course.WEEK_TYPE_EVEN && week % 2 != 0) continue
+        weeks.add(week)
+    }
+    return weeks
+}
+
+private fun convertWeeksToSegments(weeks: Set<Int>): List<WeekSegment> {
+    if (weeks.isEmpty()) return emptyList()
+    val pending = weeks.sorted().toMutableSet()
+    val segments = mutableListOf<WeekSegment>()
+    while (pending.isNotEmpty()) {
+        val first = pending.minOrNull() ?: break
+        var endAll = first
+        while (pending.contains(endAll + 1)) {
+            endAll++
+        }
+        val countAll = endAll - first + 1
+
+        var endParity = first
+        while (pending.contains(endParity + 2)) {
+            endParity += 2
+        }
+        val countParity = (endParity - first) / 2 + 1
+
+        if (countAll >= countParity) {
+            segments.add(WeekSegment(first, endAll, Course.WEEK_TYPE_ALL))
+            for (week in first..endAll) {
+                pending.remove(week)
+            }
+        } else {
+            val type = if (first % 2 != 0) Course.WEEK_TYPE_ODD else Course.WEEK_TYPE_EVEN
+            segments.add(WeekSegment(first, endParity, type))
+            var current = first
+            while (current <= endParity) {
+                pending.remove(current)
+                current += 2
+            }
+        }
+    }
+    return segments.sortedBy { it.startWeek }
+}
+
+private fun formatWeekSummary(weeks: Set<Int>): String {
+    if (weeks.isEmpty()) return "未选择周次"
+    return convertWeeksToSegments(weeks).joinToString("、") { segment ->
+        val typeText = when (segment.weekType) {
+            Course.WEEK_TYPE_ODD -> "单"
+            Course.WEEK_TYPE_EVEN -> "双"
+            else -> "全"
+        }
+        if (segment.startWeek == segment.endWeek) {
+            "第${segment.startWeek}周($typeText)"
+        } else {
+            "${segment.startWeek}-${segment.endWeek}周($typeText)"
+        }
+    }
+}
+
+@Composable
+private fun DotMatrixWeekSelector(
+    totalWeeks: Int,
+    selectedWeeks: Set<Int>,
+    onWeekToggle: (Int) -> Unit
+) {
+    val columns = 5
+    val rows = (totalWeeks + columns - 1) / columns
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(4.dp)
+    ) {
+        for (row in 0 until rows) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                for (col in 0 until columns) {
+                    val week = row * columns + col + 1
+                    if (week <= totalWeeks) {
+                        val isSelected = selectedWeeks.contains(week)
+                        val background by animateColorAsState(
+                            if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                            label = "WeekCellColor"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .aspectRatio(1f)
+                                .clip(CircleShape)
+                                .background(background)
+                                .clickable { onWeekToggle(week) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = week.toString(),
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f).aspectRatio(1f))
+                    }
+                }
+            }
+        }
     }
 }

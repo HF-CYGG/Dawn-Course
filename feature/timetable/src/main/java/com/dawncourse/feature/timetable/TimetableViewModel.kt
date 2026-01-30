@@ -8,6 +8,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -124,15 +125,66 @@ class TimetableViewModel @Inject constructor(
         }
     }
 
+    private val _userMessage = MutableStateFlow<String?>(null)
+    val userMessage: StateFlow<String?> = _userMessage
+
+    private val deletedCoursesStack = ArrayDeque<List<Course>>()
+
+    fun userMessageShown() {
+        _userMessage.value = null
+    }
+
     /**
-     * 删除课程
+     * 删除课程（支持撤销）
+     *
+     * @param courses 要删除的课程列表
+     */
+    fun deleteCoursesWithUndo(courses: List<Course>) {
+        viewModelScope.launch {
+            // 保存到撤销栈
+            deletedCoursesStack.addFirst(courses)
+            if (deletedCoursesStack.size > 5) {
+                deletedCoursesStack.removeLast()
+            }
+            
+            // 执行删除
+            courses.forEach { repository.deleteCourse(it) }
+            
+            // 显示提示
+            val message = if (courses.size == 1) {
+                "课程已删除"
+            } else {
+                "已删除 ${courses.size} 个课程时段"
+            }
+            _userMessage.value = message
+        }
+    }
+
+    /**
+     * 撤销上一次删除操作
+     */
+    fun undoDelete() {
+        val coursesToRestore = deletedCoursesStack.removeFirstOrNull() ?: return
+        viewModelScope.launch {
+            // 恢复课程 ID 为 0 以作为新记录插入，或者保留原 ID 如果是软删除？
+            // Room 的 insert 策略是 REPLACE，如果保留原 ID 且 ID 未被占用，可以恢复。
+            // 但如果这是自增 ID，删除后可能无法保证 ID 仍可用（虽然通常没问题）。
+            // 安全起见，我们将 ID 设为 0 让数据库重新生成，或者尝试插入原对象。
+            // 考虑到这是“撤销”，最好恢复原状。
+            // 如果使用 insertCourses，ID 会被重置吗？如果对象有 ID，Room 会尝试使用它。
+            // 我们尝试直接插入原对象。
+            repository.insertCourses(coursesToRestore)
+            _userMessage.value = "已撤销删除"
+        }
+    }
+
+    /**
+     * 删除课程 (旧接口，保留兼容)
      *
      * @param course 要删除的课程对象
      */
     fun deleteCourse(course: Course) {
-        viewModelScope.launch {
-            repository.deleteCourse(course)
-        }
+        deleteCoursesWithUndo(listOf(course))
     }
 
     /**

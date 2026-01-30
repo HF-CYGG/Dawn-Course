@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -21,6 +22,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,9 +67,12 @@ fun TimetableRoute(
     onCourseClick: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val userMessage by viewModel.userMessage.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
+        userMessage = userMessage,
+        onUserMessageShown = { viewModel.userMessageShown() },
         hasScrolledToCurrentWeek = viewModel.hasScrolledToCurrentWeek,
         onScrolledToCurrentWeek = { viewModel.hasScrolledToCurrentWeek = true },
         onAddClick = onAddClick,
@@ -71,7 +80,8 @@ fun TimetableRoute(
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },
-        onDeleteCourse = { viewModel.deleteCourse(it) }
+        onConfirmDelete = { viewModel.deleteCoursesWithUndo(it) },
+        onUndoDelete = { viewModel.undoDelete() }
     )
 }
 
@@ -84,6 +94,8 @@ fun TimetableRoute(
 @Composable
 internal fun TimetableScreen(
     uiState: TimetableUiState,
+    userMessage: String? = null,
+    onUserMessageShown: () -> Unit = {},
     hasScrolledToCurrentWeek: Boolean = false,
     onScrolledToCurrentWeek: () -> Unit = {},
     onAddClick: () -> Unit,
@@ -91,15 +103,37 @@ internal fun TimetableScreen(
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
     onUndoReschedule: (Course) -> Unit,
-    onDeleteCourse: (Course) -> Unit
+    onConfirmDelete: (List<Course>) -> Unit,
+    onUndoDelete: () -> Unit
 ) {
     // 选中的课程，用于显示详情弹窗
     var selectedCourse by remember { mutableStateOf<Course?>(null) }
     // 选中的课程 ID，用于显示调课弹窗
     var rescheduleCourseId by remember { mutableStateOf<Long?>(null) }
+    // 待删除的课程列表（用于显示确认弹窗）
+    var coursesToDelete by remember { mutableStateOf<List<Course>?>(null) }
+    // 待删除的目标课程（用于区分“仅删除本时段”）
+    var targetCourseForDelete by remember { mutableStateOf<Course?>(null) }
+    
+    val snackbarHostState = remember { SnackbarHostState() }
     
     val settings = LocalAppSettings.current
     val isDarkTheme = isSystemInDarkTheme()
+
+    // 显示 Snackbar
+    LaunchedEffect(userMessage) {
+        if (userMessage != null) {
+            val result = snackbarHostState.showSnackbar(
+                message = userMessage,
+                actionLabel = "撤销",
+                withDismissAction = true
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                onUndoDelete()
+            }
+            onUserMessageShown()
+        }
+    }
     
     // Determine current week (Real world week)
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
@@ -172,6 +206,7 @@ internal fun TimetableScreen(
         // 关键：Scaffold 背景设为透明，否则会挡住下面的壁纸
         Scaffold(
             containerColor = Color.Transparent, // 透明背景
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 // 1. 顶部栏 (透明背景)
                 TimetableTopBar(
@@ -264,8 +299,89 @@ internal fun TimetableScreen(
                 selectedCourse = null
             },
             onDeleteClick = {
-                onDeleteCourse(selectedCourse!!)
-                selectedCourse = null
+                val currentCourse = selectedCourse!!
+                targetCourseForDelete = currentCourse
+                
+                // 查找同名且同地点的所有课程时段 (简单判断是否为同一门课)
+                val sameCourses = (uiState as? TimetableUiState.Success)?.courses?.filter {
+                    it.name == currentCourse.name && it.teacher == currentCourse.teacher
+                } ?: listOf(currentCourse)
+                
+                coursesToDelete = sameCourses
+                selectedCourse = null // 关闭详情弹窗
+            }
+        )
+    }
+    
+    // 智能删除确认弹窗
+    if (coursesToDelete != null && targetCourseForDelete != null) {
+        val allCourses = coursesToDelete!!
+        val target = targetCourseForDelete!!
+        // 判断是否包含多个不同时间段的课程（忽略完全重复的脏数据）
+        val distinctTimeSlots = allCourses.distinctBy { Triple(it.dayOfWeek, it.startSection, it.duration) }
+        val isMultiple = distinctTimeSlots.size > 1
+        
+        AlertDialog(
+            onDismissRequest = { 
+                coursesToDelete = null 
+                targetCourseForDelete = null
+            },
+            title = { Text("删除课程") },
+            text = { 
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (isMultiple) "该课程包含 ${distinctTimeSlots.size} 个时段，你想如何删除？" else "确定要删除《${target.name}》吗？")
+                }
+            },
+            confirmButton = {
+                if (isMultiple) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.End
+                    ) {
+                        TextButton(
+                            onClick = {
+                                onConfirmDelete(allCourses)
+                                coursesToDelete = null
+                                targetCourseForDelete = null
+                            }
+                        ) { 
+                            Text("删除所有时段", color = MaterialTheme.colorScheme.error) 
+                        }
+                        
+                        TextButton(
+                            onClick = {
+                                // 仅删除本时段（包括该时段下的所有重复记录）
+                                val duplicates = allCourses.filter { 
+                                    it.dayOfWeek == target.dayOfWeek && 
+                                    it.startSection == target.startSection && 
+                                    it.duration == target.duration
+                                }
+                                onConfirmDelete(duplicates)
+                                coursesToDelete = null
+                                targetCourseForDelete = null
+                            }
+                        ) { 
+                            Text("仅删除本时段") 
+                        }
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            // 单时段课程（可能包含重复数据），直接全部删除
+                            onConfirmDelete(allCourses)
+                            coursesToDelete = null
+                            targetCourseForDelete = null
+                        }
+                    ) { 
+                        Text("删除", color = MaterialTheme.colorScheme.error) 
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    coursesToDelete = null 
+                    targetCourseForDelete = null
+                }) { Text("取消") }
             }
         )
     }

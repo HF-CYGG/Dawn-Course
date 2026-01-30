@@ -9,9 +9,13 @@ import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.DetectConflictUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -42,6 +46,37 @@ class CourseEditorViewModel @Inject constructor(
 
     private val _conflictCourses = MutableStateFlow<List<Course>>(emptyList())
     val conflictCourses: StateFlow<List<Course>> = _conflictCourses.asStateFlow()
+
+    private val coursesInSemester = _currentSemesterId
+        .flatMapLatest { semesterId -> repository.getCoursesBySemester(semesterId) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val nameSuggestions: StateFlow<List<String>> = coursesInSemester
+        .map { courses ->
+            courses.map { it.name }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val locationSuggestions: StateFlow<List<String>> = coursesInSemester
+        .map { courses ->
+            courses.map { it.location }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val teacherSuggestions: StateFlow<List<String>> = coursesInSemester
+        .map { courses ->
+            courses.map { it.teacher }
+                .filter { it.isNotBlank() }
+                .distinct()
+                .sorted()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
@@ -78,6 +113,25 @@ class CourseEditorViewModel @Inject constructor(
             } else {
                 repository.updateCourse(course)
             }
+            onSaved()
+        }
+    }
+
+    fun saveCourses(courses: List<Course>, onSaved: () -> Unit) {
+        if (courses.isEmpty()) {
+            onSaved()
+            return
+        }
+        viewModelScope.launch {
+            if (courses.size == 1 && courses.first().id != 0L) {
+                repository.updateCourse(courses.first())
+                onSaved()
+                return@launch
+            }
+            val toInsert = courses.map { course ->
+                if (course.id == 0L) course else course.copy(id = 0L)
+            }
+            repository.insertCourses(toInsert)
             onSaved()
         }
     }

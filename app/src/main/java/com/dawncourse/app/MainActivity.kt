@@ -170,6 +170,9 @@ class MainActivity : ComponentActivity() {
                                 val courseEditorViewModel: CourseEditorViewModel = hiltViewModel()
                                 val course by courseEditorViewModel.course.collectAsState()
                                 val currentSemesterId by courseEditorViewModel.currentSemesterId.collectAsState()
+                                val nameSuggestions by courseEditorViewModel.nameSuggestions.collectAsState()
+                                val locationSuggestions by courseEditorViewModel.locationSuggestions.collectAsState()
+                                val teacherSuggestions by courseEditorViewModel.teacherSuggestions.collectAsState()
                                 
                                 val isEditing = courseId != null && courseId != "0"
                                 if (isEditing && course == null) {
@@ -180,9 +183,12 @@ class MainActivity : ComponentActivity() {
                                     CourseEditorScreen(
                                         course = course,
                                         currentSemesterId = currentSemesterId,
+                                        nameSuggestions = nameSuggestions,
+                                        locationSuggestions = locationSuggestions,
+                                        teacherSuggestions = teacherSuggestions,
                                         onBackClick = { navController.popBackStack() },
-                                        onSaveClick = { newCourse ->
-                                            courseEditorViewModel.saveCourse(newCourse) {
+                                        onSaveClick = { newCourses ->
+                                            courseEditorViewModel.saveCourses(newCourses) {
                                                 navController.popBackStack()
                                             }
                                         }
