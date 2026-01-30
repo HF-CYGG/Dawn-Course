@@ -341,7 +341,9 @@ private fun TimeNodeRow(
             text = time.format(DateTimeFormatter.ofPattern("HH:mm")),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false
         )
     }
 }
