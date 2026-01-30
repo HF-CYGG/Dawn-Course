@@ -48,6 +48,7 @@ import androidx.compose.material3.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -80,6 +81,7 @@ fun ImportScreen(
             if (event is ImportEvent.Success) {
                 onImportSuccess()
             }
+
         }
     }
 
@@ -516,14 +518,18 @@ private fun ReviewStep(
     val uiState by viewModel.uiState.collectAsState()
     var editingCourseIndex by remember { mutableIntStateOf(-1) }
     var editingSectionIndex by remember { mutableStateOf<Int?>(null) }
-    var showBatchTimeDialog by remember { mutableStateOf(false) }
     val effectiveSectionTimes = remember(
         uiState.sectionTimes,
         uiState.detectedMaxSection,
         uiState.courseDuration,
         uiState.breakDuration,
         uiState.bigBreakDuration,
-        uiState.sectionsPerBigSection
+        uiState.sectionsPerBigSection,
+        uiState.amStartTime,
+        uiState.pmStartTime,
+        uiState.pmStartSection,
+        uiState.eveStartTime,
+        uiState.eveStartSection
     ) {
         buildSectionTimes(
             maxSections = uiState.detectedMaxSection,
@@ -531,6 +537,11 @@ private fun ReviewStep(
             breakDuration = uiState.breakDuration,
             bigBreakDuration = uiState.bigBreakDuration,
             sectionsPerBigSection = uiState.sectionsPerBigSection,
+            amStart = uiState.amStartTime,
+            pmStart = uiState.pmStartTime,
+            pmStartSec = uiState.pmStartSection,
+            eveStart = uiState.eveStartTime,
+            eveStartSec = uiState.eveStartSection,
             customTimes = uiState.sectionTimes
         )
     }
@@ -566,18 +577,6 @@ private fun ReviewStep(
                 }
             )
         }
-    }
-    if (showBatchTimeDialog) {
-        ImportBatchGenerateTimeDialog(
-            maxSections = uiState.detectedMaxSection,
-            sectionDuration = uiState.courseDuration,
-            breakDuration = uiState.breakDuration,
-            onDismissRequest = { showBatchTimeDialog = false },
-            onConfirm = { times ->
-                viewModel.updateSectionTimes(times)
-                showBatchTimeDialog = false
-            }
-        )
     }
 
     Scaffold(
@@ -615,9 +614,9 @@ private fun ReviewStep(
                 uiState = uiState,
                 onSemesterSettingsChange = viewModel::updateSemesterSettings,
                 onTimeSettingsChange = viewModel::updateTimeSettings,
+                onTimeNodeSettingsChange = viewModel::updateTimeNodeSettings,
                 sectionTimes = effectiveSectionTimes,
-                onSectionTimeClick = { index -> editingSectionIndex = index },
-                onBatchTimeClick = { showBatchTimeDialog = true }
+                onSectionTimeClick = { index -> editingSectionIndex = index }
             )
 
             // 2. Course List Section
@@ -655,19 +654,23 @@ private fun ReviewStep(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImportSettingsSection(
     uiState: ImportUiState,
     onSemesterSettingsChange: (Long, Int) -> Unit,
     onTimeSettingsChange: (Int, Int, Int, Int, Int) -> Unit,
+    onTimeNodeSettingsChange: (LocalTime, LocalTime, Int, LocalTime, Int) -> Unit,
     sectionTimes: List<SectionTime>,
-    onSectionTimeClick: (Int) -> Unit,
-    onBatchTimeClick: () -> Unit
+    onSectionTimeClick: (Int) -> Unit
 ) {
     // Wrapper for time settings updates
     val updateTime = { max: Int, dur: Int, brk: Int, bigBrk: Int, bigSec: Int ->
         onTimeSettingsChange(max, dur, brk, bigBrk, bigSec)
     }
+
+    var showTimePickerFor by remember { mutableStateOf<String?>(null) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // Title
@@ -696,41 +699,45 @@ private fun ImportSettingsSection(
                         onValueChange = { onSemesterSettingsChange(uiState.semesterStartDate, it) },
                         range = 10..30
                     )
+                    
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { showDatePicker = true }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "开学日期",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        val dateStr = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate()
+                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+                        Text(
+                            text = dateStr,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                // Group 2: Time
-                SettingGroup(title = "时间设置", icon = Icons.Default.AccessTime) {
+                // Group 2: Section Count Setting
+                SettingGroup(title = "节数设置", icon = Icons.Default.FormatListNumbered) {
                     StepperRowItem(
                         label = "每日节数",
                         value = uiState.detectedMaxSection,
                         onValueChange = { updateTime(it, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
                         range = 4..20
-                    )
-                    StepperRowItem(
-                        label = "单节时长",
-                        value = uiState.courseDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                        suffix = "分钟",
-                        range = 30..120,
-                        step = 5
-                    )
-                    StepperRowItem(
-                        label = "课间时长",
-                        value = uiState.breakDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                        suffix = "分钟",
-                        range = 0..30,
-                        step = 5
-                    )
-                     StepperRowItem(
-                        label = "大节间隔",
-                        value = uiState.bigBreakDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it, uiState.sectionsPerBigSection) },
-                        suffix = "分钟",
-                        range = 0..60,
-                        step = 5
                     )
                     StepperRowItem(
                         label = "大节节数",
@@ -743,28 +750,168 @@ private fun ImportSettingsSection(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                // Group 3: Section Time Preview
-                SettingGroup(title = "节次时间", icon = Icons.Default.FormatListNumbered) {
+                // Group 3: Section Time Setting
+                SettingGroup(title = "节次时间", icon = Icons.Default.AccessTime) {
+                    // Durations
+                    StepperRowItem(
+                        label = "单节时长",
+                        value = uiState.courseDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                        suffix = "分",
+                        range = 20..120,
+                        step = 5
+                    )
+                    StepperRowItem(
+                        label = "课间时长",
+                        value = uiState.breakDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                        suffix = "分",
+                        range = 0..30,
+                        step = 5
+                    )
+                    StepperRowItem(
+                        label = "大节间隔",
+                        value = uiState.bigBreakDuration,
+                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it, uiState.sectionsPerBigSection) },
+                        suffix = "分",
+                        range = 0..60,
+                        step = 5
+                    )
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Time Nodes
+                    ImportTimeNodeRow(
+                        icon = Icons.Filled.WbSunny,
+                        label = "上午 (第1节)",
+                        time = uiState.amStartTime,
+                        onClick = { showTimePickerFor = "morning" }
+                    )
+
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            "点击节次可编辑",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        ImportCompactNumericInput(
+                            value = uiState.pmStartSection.toString(),
+                            onValueChange = { 
+                                val v = it.toIntOrNull()
+                                if (v != null) onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, v, uiState.eveStartTime, uiState.eveStartSection)
+                            },
+                            label = "下午起始",
+                            prefix = "第",
+                            suffix = "节",
+                            modifier = Modifier.width(90.dp)
                         )
-                        TextButton(onClick = onBatchTimeClick) {
-                            Text("一键设置")
-                        }
+                        ImportTimeNodeRow(
+                            icon = Icons.Filled.WbTwilight,
+                            label = "下午时间",
+                            time = uiState.pmStartTime,
+                            onClick = { showTimePickerFor = "afternoon" },
+                            modifier = Modifier.weight(1f)
+                        )
                     }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ImportCompactNumericInput(
+                            value = uiState.eveStartSection.toString(),
+                            onValueChange = {
+                                val v = it.toIntOrNull()
+                                if (v != null) onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, uiState.pmStartSection, uiState.eveStartTime, v)
+                            },
+                            label = "晚上起始",
+                            prefix = "第",
+                            suffix = "节",
+                            modifier = Modifier.width(90.dp)
+                        )
+                        ImportTimeNodeRow(
+                            icon = Icons.Filled.Bedtime,
+                            label = "晚上时间",
+                            time = uiState.eveStartTime,
+                            onClick = { showTimePickerFor = "evening" },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Text(
+                        "点击下方节次可单独微调",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     SectionTimePreviewRow(
                         sectionTimes = sectionTimes,
                         onSectionClick = onSectionTimeClick
                     )
                 }
             }
+        }
+    }
+
+    if (showTimePickerFor != null) {
+        val initialTime = when (showTimePickerFor) {
+            "morning" -> uiState.amStartTime
+            "afternoon" -> uiState.pmStartTime
+            "evening" -> uiState.eveStartTime
+            else -> LocalTime.now()
+        }
+        val pickerState = rememberTimePickerState(
+            initialHour = initialTime.hour,
+            initialMinute = initialTime.minute,
+            is24Hour = true
+        )
+
+        DatePickerDialog(
+            onDismissRequest = { showTimePickerFor = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    val newTime = LocalTime.of(pickerState.hour, pickerState.minute)
+                    when (showTimePickerFor) {
+                        "morning" -> onTimeNodeSettingsChange(newTime, uiState.pmStartTime, uiState.pmStartSection, uiState.eveStartTime, uiState.eveStartSection)
+                        "afternoon" -> onTimeNodeSettingsChange(uiState.amStartTime, newTime, uiState.pmStartSection, uiState.eveStartTime, uiState.eveStartSection)
+                        "evening" -> onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, uiState.pmStartSection, newTime, uiState.eveStartSection)
+                    }
+                    showTimePickerFor = null
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePickerFor = null }) { Text("取消") }
+            }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                TimePicker(state = pickerState)
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = uiState.semesterStartDate
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let {
+                        onSemesterSettingsChange(it, uiState.weekCount)
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 }
@@ -809,26 +956,38 @@ private fun buildSectionTimes(
     breakDuration: Int,
     bigBreakDuration: Int,
     sectionsPerBigSection: Int,
+    amStart: LocalTime,
+    pmStart: LocalTime,
+    pmStartSec: Int,
+    eveStart: LocalTime,
+    eveStartSec: Int,
     customTimes: List<SectionTime>
 ): List<SectionTime> {
     val generatedTimes = mutableListOf<SectionTime>()
-    var currentMinute = 8 * 60
+    val formatter = DateTimeFormatter.ofPattern("HH:mm")
+
     for (i in 1..maxSections) {
-        val startH = currentMinute / 60
-        val startM = currentMinute % 60
-        currentMinute += duration
-        val endH = currentMinute / 60
-        val endM = currentMinute % 60
+        val startTime = when (i) {
+            1 -> amStart
+            pmStartSec -> pmStart
+            eveStartSec -> eveStart
+            else -> {
+                val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
+                val prevSectionIndex = i - 1
+                val isBigBreak = (prevSectionIndex % sectionsPerBigSection == 0)
+                val gap = if (isBigBreak) bigBreakDuration else breakDuration
+                prevEnd.plusMinutes(gap.toLong())
+            }
+        }
+        val endTime = startTime.plusMinutes(duration.toLong())
         generatedTimes.add(
             SectionTime(
-                startTime = String.format("%02d:%02d", startH, startM),
-                endTime = String.format("%02d:%02d", endH, endM)
+                startTime = startTime.format(formatter),
+                endTime = endTime.format(formatter)
             )
         )
-        val isBigBreak = (i % sectionsPerBigSection == 0)
-        val gap = if (isBigBreak) bigBreakDuration else breakDuration
-        currentMinute += gap
     }
+
     if (customTimes.isEmpty()) {
         return generatedTimes
     }
@@ -1279,249 +1438,7 @@ private fun TimeTabButton(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ImportBatchGenerateTimeDialog(
-    maxSections: Int,
-    sectionDuration: Int,
-    breakDuration: Int,
-    onDismissRequest: () -> Unit,
-    onConfirm: (List<SectionTime>) -> Unit
-) {
-    var sectionDurationText by remember { mutableStateOf(sectionDuration.toString()) }
-    var breakDurationText by remember { mutableStateOf(breakDuration.toString()) }
 
-    var morningStartTime by remember { mutableStateOf(LocalTime.of(8, 0)) }
-
-    var afternoonStartSection by remember { mutableStateOf("5") }
-    var afternoonStartTime by remember { mutableStateOf(LocalTime.of(14, 0)) }
-
-    var eveningStartSection by remember { mutableStateOf("9") }
-    var eveningStartTime by remember { mutableStateOf(LocalTime.of(19, 0)) }
-
-    var showTimePickerFor by remember { mutableStateOf<String?>(null) }
-
-    Dialog(onDismissRequest = onDismissRequest) {
-        Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "一键设置时间",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "快速生成全天课程时间表",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    ImportSettingsGroupCard(title = "基础设置", icon = Icons.Outlined.Timer) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ImportCompactNumericInput(
-                                value = sectionDurationText,
-                                onValueChange = { sectionDurationText = it },
-                                label = "每节时长",
-                                suffix = "分",
-                                modifier = Modifier.weight(1f)
-                            )
-                            ImportCompactNumericInput(
-                                value = breakDurationText,
-                                onValueChange = { breakDurationText = it },
-                                label = "课间休息",
-                                suffix = "分",
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
-
-                    ImportSettingsGroupCard(title = "时间节点", icon = Icons.Filled.AccessTime) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ImportTimeNodeRow(
-                                icon = Icons.Filled.WbSunny,
-                                label = "上午 (第1节)",
-                                time = morningStartTime,
-                                onClick = { showTimePickerFor = "morning" }
-                            )
-
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ImportCompactNumericInput(
-                                    value = afternoonStartSection,
-                                    onValueChange = { afternoonStartSection = it },
-                                    label = "下午起始",
-                                    prefix = "第",
-                                    suffix = "节",
-                                    modifier = Modifier.width(90.dp)
-                                )
-                                ImportTimeNodeRow(
-                                    icon = Icons.Filled.WbTwilight,
-                                    label = "开始时间",
-                                    time = afternoonStartTime,
-                                    onClick = { showTimePickerFor = "afternoon" },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ImportCompactNumericInput(
-                                    value = eveningStartSection,
-                                    onValueChange = { eveningStartSection = it },
-                                    label = "晚上起始",
-                                    prefix = "第",
-                                    suffix = "节",
-                                    modifier = Modifier.width(90.dp)
-                                )
-                                ImportTimeNodeRow(
-                                    icon = Icons.Filled.Bedtime,
-                                    label = "开始时间",
-                                    time = eveningStartTime,
-                                    onClick = { showTimePickerFor = "evening" },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(onClick = onDismissRequest) {
-                        Text("取消")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val duration = sectionDurationText.toIntOrNull() ?: sectionDuration
-                            val breakTime = breakDurationText.toIntOrNull() ?: breakDuration
-                            val pmStartSec = afternoonStartSection.toIntOrNull() ?: 5
-                            val eveStartSec = eveningStartSection.toIntOrNull() ?: 9
-
-                            val generated = generateImportTimes(
-                                maxSections = maxSections,
-                                duration = duration,
-                                breakTime = breakTime,
-                                amStart = morningStartTime,
-                                pmStartSec = pmStartSec,
-                                pmStart = afternoonStartTime,
-                                eveStartSec = eveStartSec,
-                                eveStart = eveningStartTime
-                            )
-                            onConfirm(generated)
-                        }
-                    ) {
-                        Text("生成时间表")
-                    }
-                }
-            }
-        }
-    }
-
-    if (showTimePickerFor != null) {
-        val initialTime = when (showTimePickerFor) {
-            "morning" -> morningStartTime
-            "afternoon" -> afternoonStartTime
-            "evening" -> eveningStartTime
-            else -> LocalTime.now()
-        }
-        val pickerState = rememberTimePickerState(
-            initialHour = initialTime.hour,
-            initialMinute = initialTime.minute,
-            is24Hour = true
-        )
-
-        DatePickerDialog(
-            onDismissRequest = { showTimePickerFor = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    val newTime = LocalTime.of(pickerState.hour, pickerState.minute)
-                    when (showTimePickerFor) {
-                        "morning" -> morningStartTime = newTime
-                        "afternoon" -> afternoonStartTime = newTime
-                        "evening" -> eveningStartTime = newTime
-                    }
-                    showTimePickerFor = null
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePickerFor = null }) { Text("取消") }
-            }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                TimePicker(state = pickerState)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImportSettingsGroupCard(
-    title: String,
-    icon: ImageVector,
-    content: @Composable () -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
-        border = null,
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            content()
-        }
-    }
-}
 
 @Composable
 private fun ImportCompactNumericInput(
@@ -1535,7 +1452,7 @@ private fun ImportCompactNumericInput(
     OutlinedTextField(
         value = value,
         onValueChange = { if (it.all { c -> c.isDigit() }) onValueChange(it) },
-        label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+        label = { Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         modifier = modifier,
         textStyle = MaterialTheme.typography.bodyMedium,
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
@@ -1565,10 +1482,10 @@ private fun ImportTimeNodeRow(
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Row(
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -1581,9 +1498,13 @@ private fun ImportTimeNodeRow(
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
+
+        Spacer(modifier = Modifier.width(8.dp))
 
         Text(
             text = time.format(DateTimeFormatter.ofPattern("HH:mm")),
@@ -1596,40 +1517,4 @@ private fun ImportTimeNodeRow(
     }
 }
 
-private fun generateImportTimes(
-    maxSections: Int,
-    duration: Int,
-    breakTime: Int,
-    amStart: LocalTime,
-    pmStartSec: Int,
-    pmStart: LocalTime,
-    eveStartSec: Int,
-    eveStart: LocalTime
-): List<SectionTime> {
-    val result = mutableListOf<SectionTime>()
-    var currentTime = amStart
 
-    val formatter = DateTimeFormatter.ofPattern("HH:mm")
-
-    for (i in 1..maxSections) {
-        val startTime = when (i) {
-            1 -> amStart
-            pmStartSec -> pmStart
-            eveStartSec -> eveStart
-            else -> currentTime.plusMinutes(breakTime.toLong())
-        }
-
-        val actualStart = if (i == 1 || i == pmStartSec || i == eveStartSec) {
-            startTime
-        } else {
-            currentTime.plusMinutes(breakTime.toLong())
-        }
-
-        val endTime = actualStart.plusMinutes(duration.toLong())
-
-        result.add(SectionTime(actualStart.format(formatter), endTime.format(formatter)))
-
-        currentTime = endTime
-    }
-    return result
-}

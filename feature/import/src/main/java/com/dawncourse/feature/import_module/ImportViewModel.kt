@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 import javax.inject.Inject
 
@@ -53,6 +55,14 @@ data class ImportUiState(
     val breakDuration: Int = 10,
     val bigBreakDuration: Int = 20, // 大节间隔时长
     val sectionsPerBigSection: Int = 2, // 每个大节包含的小节数
+    
+    // Time Node Settings
+    val amStartTime: LocalTime = LocalTime.of(8, 0),
+    val pmStartTime: LocalTime = LocalTime.of(14, 0),
+    val pmStartSection: Int = 5,
+    val eveStartTime: LocalTime = LocalTime.of(19, 0),
+    val eveStartSection: Int = 9,
+
     val sectionTimes: List<SectionTime> = emptyList(),
 
     val resultText: String = "",
@@ -123,6 +133,24 @@ class ImportViewModel @Inject constructor(
                 bigBreakDuration = bigBreakDuration,
                 sectionsPerBigSection = sectionsPerBigSection
             ) 
+        }
+    }
+
+    fun updateTimeNodeSettings(
+        amStart: LocalTime,
+        pmStart: LocalTime,
+        pmStartSec: Int,
+        eveStart: LocalTime,
+        eveStartSec: Int
+    ) {
+        _uiState.update {
+            it.copy(
+                amStartTime = amStart,
+                pmStartTime = pmStart,
+                pmStartSection = pmStartSec,
+                eveStartTime = eveStart,
+                eveStartSection = eveStartSec
+            )
         }
     }
 
@@ -271,23 +299,30 @@ class ImportViewModel @Inject constructor(
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
                 
                 val generatedTimes = mutableListOf<SectionTime>()
-                var currentMinute = 8 * 60
+                val formatter = DateTimeFormatter.ofPattern("HH:mm")
+                
                 for (i in 1..state.detectedMaxSection) {
-                    val startH = currentMinute / 60
-                    val startM = currentMinute % 60
-                    currentMinute += state.courseDuration
-                    val endH = currentMinute / 60
-                    val endM = currentMinute % 60
+                    val startTime = when (i) {
+                        1 -> state.amStartTime
+                        state.pmStartSection -> state.pmStartTime
+                        state.eveStartSection -> state.eveStartTime
+                        else -> {
+                            val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
+                            val prevSectionIndex = i - 1
+                            val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
+                            val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
+                            prevEnd.plusMinutes(gap.toLong())
+                        }
+                    }
+                    val endTime = startTime.plusMinutes(state.courseDuration.toLong())
                     generatedTimes.add(
                         SectionTime(
-                            startTime = String.format("%02d:%02d", startH, startM),
-                            endTime = String.format("%02d:%02d", endH, endM)
+                            startTime = startTime.format(formatter),
+                            endTime = endTime.format(formatter)
                         )
                     )
-                    val isBigBreak = (i % state.sectionsPerBigSection == 0)
-                    val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
-                    currentMinute += gap
                 }
+
                 val finalTimes = if (state.sectionTimes.isNotEmpty()) {
                     (1..state.detectedMaxSection).map { index ->
                         state.sectionTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
