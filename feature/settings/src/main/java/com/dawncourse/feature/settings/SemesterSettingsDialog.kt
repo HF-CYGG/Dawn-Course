@@ -9,10 +9,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,50 +32,14 @@ fun SemesterSettingsDialog(
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = if (startDate > 0) startDate else System.currentTimeMillis()
         )
-        DatePickerDialog(
+        DawnDatePickerDialog(
+            state = datePickerState,
             onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { startDate = it }
-                        showDatePicker = false
-                    }
-                ) {
-                    Text("确定")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) {
-                    Text("取消")
-                }
+            onConfirm = {
+                datePickerState.selectedDateMillis?.let { startDate = it }
+                showDatePicker = false
             }
-        ) {
-            DatePicker(
-                state = datePickerState,
-                title = {
-                    Text(
-                        text = "选择日期",
-                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
-                    )
-                },
-                headline = {
-                    val selectedDate = datePickerState.selectedDateMillis
-                    val dateText = if (selectedDate != null) {
-                        val date = Instant.ofEpochMilli(selectedDate)
-                            .atZone(ZoneId.of("UTC"))
-                            .toLocalDate()
-                        "${date.year}年${date.monthValue}月${date.dayOfMonth}日"
-                    } else {
-                        "请选择日期"
-                    }
-                    Text(
-                        text = dateText,
-                        modifier = Modifier.padding(start = 24.dp, end = 12.dp, bottom = 12.dp),
-                        style = MaterialTheme.typography.headlineLarge
-                    )
-                }
-            )
-        }
+        )
     }
 
     AlertDialog(
@@ -143,10 +107,6 @@ fun SemesterSettingsDialog(
                         disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 )
-                // Overlay for click since enabled=false blocks interaction
-                // Or better: use a Box with the TextField inside and a clickable surface on top?
-                // Actually, enabled=false + modifier.clickable doesn't work well.
-                // Better approach: enabled=true, readOnly=true.
             }
         },
         confirmButton = {

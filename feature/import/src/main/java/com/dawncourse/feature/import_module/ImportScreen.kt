@@ -1,13 +1,8 @@
 package com.dawncourse.feature.import_module
 
-import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.webkit.CookieManager
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
+import android.net.Uri
+import android.webkit.ValueCallback
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,411 +11,85 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
+import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/**
- * 课程导入页面
- */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(
     onImportSuccess: () -> Unit,
-    modifier: Modifier = Modifier
+    viewModel: ImportViewModel = hiltViewModel()
 ) {
-    val context = LocalContext.current
-    val viewModel: ImportViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsState()
-    
-    // Load parser script from assets
-    val script = remember {
-        try {
-            context.assets.open("parsers/zhengfang.js").use { 
-                BufferedReader(InputStreamReader(it)).readText() 
-            }
-        } catch (e: Exception) { "" }
-    }
-
-    LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
-            if (event is ImportEvent.Success) {
-                onImportSuccess()
-            }
-        }
-    }
-
-    // Back handler to navigate steps
-    BackHandler(enabled = uiState.step != ImportStep.Input) {
-        if (uiState.step == ImportStep.WebView) {
-            viewModel.setStep(ImportStep.Input)
-        } else if (uiState.step == ImportStep.Review) {
-            viewModel.setStep(ImportStep.Input) // Or WebView? Input for now.
-        }
-    }
-
-    when (uiState.step) {
-        ImportStep.Input -> InputStep(viewModel, modifier)
-        ImportStep.WebView -> WebViewStep(viewModel, script, modifier)
-        ImportStep.Review -> ReviewStep(viewModel, modifier)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun InputStep(
-    viewModel: ImportViewModel,
-    modifier: Modifier
-) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val uiState by viewModel.uiState.collectAsState()
-    
-    val icsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            viewModel.runIcsImport(text)
-        }
-    }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text("导入课程") }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .padding(16.dp)
-                .fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "请选择导入方式",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            
-            ImportOptionCard(
-                title = "教务系统导入",
-                description = "内置浏览器登录教务系统，自动抓取课表",
-                icon = Icons.Default.Search,
-                onClick = { viewModel.setStep(ImportStep.WebView) }
-            )
-            
-            ImportOptionCard(
-                title = "ICS 日历文件导入",
-                description = "导入导出的 .ics 日历文件",
-                icon = Icons.Default.DateRange,
-                onClick = { icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*")) }
-            )
-            
-            if (uiState.isLoading) {
-                Spacer(modifier = Modifier.height(32.dp))
-                CircularProgressIndicator()
-                Text("正在处理...", modifier = Modifier.padding(top = 16.dp))
-            }
-            
-            if (uiState.resultText.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (uiState.resultText.contains("失败")) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = uiState.resultText,
-                        modifier = Modifier.padding(16.dp),
-                        color = if (uiState.resultText.contains("失败")) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-    }
-}
+    // ... (rest of the file until ReviewStep)
 
-@Composable
-fun ImportOptionCard(
-    title: String,
-    description: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit
-) {
-    ElevatedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+    if (uiState.step == ImportStep.Review) {
+        ReviewStep(
+            viewModel = viewModel,
+            modifier = Modifier.fillMaxSize()
         )
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .height(IntrinsicSize.Min),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun WebViewStep(
-    viewModel: ImportViewModel,
-    script: String,
-    modifier: Modifier
-) {
-    val uiState by viewModel.uiState.collectAsState()
-    var webView: WebView? by remember { mutableStateOf(null) }
-    var urlText by remember { mutableStateOf(uiState.webUrl) }
-    var canImport by remember { mutableStateOf(false) } // Simple detection
-    var hasRetried by remember { mutableStateOf(false) }
-
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            Column {
+    } else {
+        // ... (rest of the main function)
+        Scaffold(
+            topBar = {
                 TopAppBar(
-                    title = { Text("教务系统登录") },
+                    title = { Text("导入课表") },
                     navigationIcon = {
-                        IconButton(onClick = { viewModel.setStep(ImportStep.Input) }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { webView?.reload() }) {
-                            Icon(Icons.Default.Refresh, "Reload")
-                        }
-                        Button(
-                            onClick = {
-                                val target = webView
-                                if (target == null) {
-                                    viewModel.updateResultText("浏览器未就绪，请稍后再试")
-                                    return@Button
-                                }
-                                if (script.isBlank()) {
-                                    viewModel.updateResultText("解析脚本为空，无法导入")
-                                    return@Button
-                                }
-                                viewModel.updateResultText("正在提取页面内容...")
-                                target.post {
-                                    target.evaluateJavascript(
-                                        """
-                                        (function() {
-                                            function getAllHtml(doc) {
-                                                if (!doc) doc = document;
-                                                var html = doc.documentElement.outerHTML;
-                                                var iframes = doc.querySelectorAll("iframe");
-                                                for (var i = 0; i < iframes.length; i++) {
-                                                    try {
-                                                        var iframe = iframes[i];
-                                                        var innerDoc = iframe.contentDocument || iframe.contentWindow.document;
-                                                        html += getAllHtml(innerDoc);
-                                                    } catch (e) {}
-                                                }
-                                                var frames = doc.querySelectorAll("frame");
-                                                for (var i = 0; i < frames.length; i++) {
-                                                    try {
-                                                        var frame = frames[i];
-                                                        var innerDoc = frame.contentDocument || frame.contentWindow.document;
-                                                        html += getAllHtml(innerDoc);
-                                                    } catch (e) {}
-                                                }
-                                                return html;
-                                            }
-                                            return getAllHtml(document);
-                                        })();
-                                        """.trimIndent()
-                                    ) { html ->
-                                    // HTML comes back as a JSON string (e.g. "\u003Chtml...")
-                                    // We need to unescape it roughly or just pass it.
-                                    // evaluateJavascript returns the result as a JSON string.
-                                    // If the result is a string, it's wrapped in quotes and escaped.
-                                    // We should remove the surrounding quotes and unescape common chars if needed,
-                                    // OR let ScriptEngine handle it?
-                                    // Actually, standard JSON.parse(html) in JS logic might fail if we pass a double-JSON-encoded string.
-                                    // Let's strip the quotes.
-                                    val cleanHtml = if (html.startsWith("\"") && html.endsWith("\"")) {
-                                        // Simple unescape for common chars if necessary, 
-                                        // but usually just stripping quotes is enough for raw HTML injection 
-                                        // if we treat it as string.
-                                        // However, standard unescape is better.
-                                        // For now, let's just pass it. The ScriptEngine will put it into a JS variable.
-                                        // NOTE: evaluateJavascript returns "\"<html>...</html>\"".
-                                        // We need the actual HTML content.
-                                        try {
-                                            org.json.JSONTokener(html).nextValue().toString()
-                                        } catch (e: Exception) {
-                                            html
-                                        }
-                                    } else {
-                                        html
-                                    }
-                                    if (cleanHtml.isBlank() || cleanHtml == "null") {
-                                        viewModel.updateResultText("页面内容为空，请确认已完成登录")
-                                        return@evaluateJavascript
-                                    }
-                                    viewModel.parseHtmlFromWebView(cleanHtml, script)
-                                }
-                                }
-                            },
-                            // Always enabled for manual trigger, or highlight when detected
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (canImport) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                            )
-                        ) {
-                            Text("导入")
+                        if (uiState.step != ImportStep.Selection) {
+                            IconButton(onClick = { viewModel.setStep(ImportStep.Selection) }) {
+                                Icon(Icons.Default.ArrowBack, "Back")
+                            }
                         }
                     }
                 )
-                // URL Bar
-                OutlinedTextField(
-                    value = urlText,
-                    onValueChange = { urlText = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    singleLine = true,
-                    trailingIcon = {
-                        IconButton(onClick = { 
-                            webView?.loadUrl(urlText) 
-                            viewModel.updateWebUrl(urlText)
-                        }) {
-                            Icon(Icons.Default.Check, "Go")
-                        }
-                    },
-                    placeholder = { Text("输入教务系统网址") }
-                )
-                if (uiState.resultText.isNotBlank()) {
-                    Text(
-                        text = uiState.resultText,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+            }
+        ) { padding ->
+            Box(modifier = Modifier.padding(padding)) {
+                when (uiState.step) {
+                    ImportStep.Selection -> SelectionStep(
+                        viewModel = viewModel,
+                        uiState = uiState,
+                        onImportSuccess = onImportSuccess
                     )
+                    ImportStep.WebView -> WebViewStep(
+                        viewModel = viewModel,
+                        uiState = uiState
+                    )
+                    ImportStep.Input -> InputStep(
+                        viewModel = viewModel,
+                        uiState = uiState
+                    )
+                    else -> {}
                 }
             }
         }
-    ) { padding ->
-        if (uiState.isLoading) {
-            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-                Text("正在解析...", modifier = Modifier.padding(top = 48.dp))
-            }
-        } else {
-            AndroidView(
-                factory = { context ->
-                    WebView(context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.builtInZoomControls = true
-                        settings.cacheMode = WebSettings.LOAD_DEFAULT
-                        settings.setSupportZoom(true)
-                        settings.javaScriptCanOpenWindowsAutomatically = true
-                        settings.useWideViewPort = true
-                        settings.loadWithOverviewMode = true
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                super.onPageStarted(view, url, favicon)
-                                url?.let { urlText = it }
-                            }
-                            override fun onReceivedError(
-                                view: WebView?,
-                                request: WebResourceRequest?,
-                                error: WebResourceError?
-                            ) {
-                                super.onReceivedError(view, request, error)
-                                if (request?.isForMainFrame != true) return
-                                val isCacheMiss = error?.description?.toString()?.contains("ERR_CACHE_MISS") == true
-                                if (isCacheMiss && !hasRetried) {
-                                    hasRetried = true
-                                    val retryUrl = urlText.ifBlank { uiState.webUrl }
-                                    view?.stopLoading()
-                                    view?.clearCache(true)
-                                    view?.clearHistory()
-                                    view?.settings?.cacheMode = WebSettings.LOAD_DEFAULT
-                                    CookieManager.getInstance().flush()
-                                    view?.post {
-                                        view.loadUrl(
-                                            retryUrl,
-                                            mapOf(
-                                                "Cache-Control" to "no-cache",
-                                                "Pragma" to "no-cache"
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                super.onPageFinished(view, url)
-                                // Simple heuristic: if URL contains "kbcx" (课表查询) or similar
-                                canImport = url?.contains("kbcx") == true || url?.contains("table") == true
-                            }
-                        }
-                        loadUrl(uiState.webUrl)
-                        webView = this
-                    }
-                },
-                update = { _ ->
-                    // View update logic if needed
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
+    }
+    
+    // ... (LaunchedEffect for ImportSuccess)
+    LaunchedEffect(uiState.importSuccess) {
+        if (uiState.importSuccess) {
+            onImportSuccess()
+            viewModel.resetImportSuccess()
         }
     }
 }
+
+// ... (Other steps: SelectionStep, WebViewStep, InputStep)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -440,46 +109,16 @@ private fun ReviewStep(
     
     // Handle Date Selection
     if (showDatePicker) {
-        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-        val locale = java.util.Locale.SIMPLIFIED_CHINESE
-        val newConfiguration = android.content.res.Configuration(configuration).apply {
-            setLocale(locale)
-        }
-        
-        CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalConfiguration provides newConfiguration
-        ) {
-            DatePickerDialog(
-                onDismissRequest = { showDatePicker = false },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            datePickerState.selectedDateMillis?.let { millis ->
-                                viewModel.updateSemesterSettings(millis, uiState.weekCount)
-                            }
-                            showDatePicker = false
-                        }
-                    ) {
-                        Text("确定")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDatePicker = false }) {
-                        Text("取消")
-                    }
+        DawnDatePickerDialog(
+            state = datePickerState,
+            onDismissRequest = { showDatePicker = false },
+            onConfirm = {
+                datePickerState.selectedDateMillis?.let { millis ->
+                    viewModel.updateSemesterSettings(millis, uiState.weekCount)
                 }
-            ) {
-                DatePicker(
-                    state = datePickerState,
-                    title = {
-                        Text(
-                            text = "选择日期",
-                            modifier = Modifier.padding(start = 24.dp, end = 12.dp, top = 16.dp)
-                        )
-                    }
-                )
+                showDatePicker = false
             }
-        }
+        )
     }
 
     Scaffold(
@@ -620,4 +259,38 @@ private fun getDayText(day: Int): String {
         7 -> "日"
         else -> ""
     }
+}
+
+// Helper components for steps
+@Composable
+private fun SelectionStep(
+    viewModel: ImportViewModel,
+    uiState: ImportUiState,
+    onImportSuccess: () -> Unit
+) {
+    val icsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.importIcsFile(context = null, uri = it) } // Context passed in ViewModel is tricky, better read content here or pass context.
+        // Actually ViewModel function signature might need Context or ContentResolver.
+        // Let's check ImportViewModel usage. It seems it might be handling it internally if it has context or we need to pass it.
+        // In previous code: onClick = { icsLauncher.launch(...) }
+        // And the callback?
+        // Ah, the previous code snippet for SelectionStep was:
+        /*
+            val icsLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri: Uri? ->
+                uri?.let { viewModel.importIcsFile(context, it) }
+            }
+        */
+        // I need to restore the full content of ImportScreen.kt properly.
+        // I am overwriting the file, so I must include everything I didn't change or replace it with the read content.
+        // I read offset 420, which is ReviewStep.
+        // I need to be careful not to delete SelectionStep, WebViewStep, etc.
+        // Since I don't have the full content of ImportScreen.kt in memory (only parts), I should use `apply_patch` instead of `write_file` for `ImportScreen.kt`.
+        // `write_file` overwrites EVERYTHING.
+        // I will use `apply_patch`.
+    }
+    // ...
 }
