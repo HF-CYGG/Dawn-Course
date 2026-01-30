@@ -198,7 +198,7 @@ fun TimetableGrid(
     // 1. Prepare display list
     // Filter and process courses
     val courseGroups = courses.groupBy { "${it.dayOfWeek}-${it.startSection}" }
-    val displayList = remember(courses, currentWeek) {
+    val displayList = remember(courses, currentWeek, settings.hideNonThisWeek) {
         val list = mutableListOf<Pair<Course, Boolean>>() // Course, isCurrentWeek
         courseGroups.forEach { (_, group) ->
             // Conflict resolution logic
@@ -222,8 +222,16 @@ fun TimetableGrid(
             }
             
             val isCurrent = currentWeekCourses.contains(targetCourse)
+            
+            // Filter out non-current week courses if setting is enabled
+            if (settings.hideNonThisWeek && !isCurrent) {
+                return@forEach
+            }
+            
             list.add(targetCourse to isCurrent)
         }
+        // Sort: Non-current first (bottom), Current last (top)
+        list.sortBy { it.second }
         list
     }
 
@@ -334,7 +342,7 @@ fun CourseCard(
         ) {
             // 1. 课程名
             Text(
-                text = course.name,
+                text = if (isCurrentWeek) course.name else "[非本周] ${course.name}",
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
