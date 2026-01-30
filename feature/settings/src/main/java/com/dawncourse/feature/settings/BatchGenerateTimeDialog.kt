@@ -1,12 +1,23 @@
 package com.dawncourse.feature.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.filled.WbTwilight
+import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -34,112 +45,152 @@ fun BatchGenerateTimeDialog(
     
     var showTimePickerFor by remember { mutableStateOf<String?>(null) } // "morning", "afternoon", "evening"
 
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = { Text("一键设置时间") },
-        text = {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                // 1. 时长设置
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    OutlinedTextField(
-                        value = sectionDuration,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) sectionDuration = it },
-                        label = { Text("每节时长(分)") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
+                // Header
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "一键设置时间",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                    OutlinedTextField(
-                        value = breakDuration,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) breakDuration = it },
-                        label = { Text("课间休息(分)") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                }
-                
-                HorizontalDivider()
-                
-                // 2. 上午设置
-                TimeSettingRow(
-                    label = "上午 (第1节)",
-                    time = morningStartTime,
-                    onClick = { showTimePickerFor = "morning" }
-                )
-                
-                // 3. 下午设置
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = afternoonStartSection,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) afternoonStartSection = it },
-                        label = { Text("下午起始节次") },
-                        modifier = Modifier.width(100.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    TimeSettingRow(
-                        label = "开始时间",
-                        time = afternoonStartTime,
-                        onClick = { showTimePickerFor = "afternoon" },
-                        modifier = Modifier.weight(1f)
+                    Text(
+                        text = "快速生成全天课程时间表",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                // 4. 晚上设置
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = eveningStartSection,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) eveningStartSection = it },
-                        label = { Text("晚上起始节次") },
-                        modifier = Modifier.width(100.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    TimeSettingRow(
-                        label = "开始时间",
-                        time = eveningStartTime,
-                        onClick = { showTimePickerFor = "evening" },
-                        modifier = Modifier.weight(1f)
-                    )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // 1. 基础设置 (Card Style)
+                    SettingsGroupCard(title = "基础设置", icon = Icons.Outlined.Timer) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            CompactNumericInput(
+                                value = sectionDuration,
+                                onValueChange = { sectionDuration = it },
+                                label = "每节时长",
+                                suffix = "分",
+                                modifier = Modifier.weight(1f)
+                            )
+                            CompactNumericInput(
+                                value = breakDuration,
+                                onValueChange = { breakDuration = it },
+                                label = "课间休息",
+                                suffix = "分",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    // 2. 时间节点 (Card Style)
+                    SettingsGroupCard(title = "时间节点", icon = Icons.Filled.AccessTime) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            // Morning
+                            TimeNodeRow(
+                                icon = Icons.Filled.WbSunny,
+                                label = "上午 (第1节)",
+                                time = morningStartTime,
+                                onClick = { showTimePickerFor = "morning" }
+                            )
+                            
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                            // Afternoon
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CompactNumericInput(
+                                    value = afternoonStartSection,
+                                    onValueChange = { afternoonStartSection = it },
+                                    label = "下午起始",
+                                    prefix = "第",
+                                    suffix = "节",
+                                    modifier = Modifier.width(90.dp)
+                                )
+                                TimeNodeRow(
+                                    icon = Icons.Filled.WbTwilight,
+                                    label = "开始时间",
+                                    time = afternoonStartTime,
+                                    onClick = { showTimePickerFor = "afternoon" },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                            // Evening
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CompactNumericInput(
+                                    value = eveningStartSection,
+                                    onValueChange = { eveningStartSection = it },
+                                    label = "晚上起始",
+                                    prefix = "第",
+                                    suffix = "节",
+                                    modifier = Modifier.width(90.dp)
+                                )
+                                TimeNodeRow(
+                                    icon = Icons.Filled.Bedtime,
+                                    label = "开始时间",
+                                    time = eveningStartTime,
+                                    onClick = { showTimePickerFor = "evening" },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val duration = sectionDuration.toIntOrNull() ?: 45
-                    val breakTime = breakDuration.toIntOrNull() ?: 10
-                    val pmStartSec = afternoonStartSection.toIntOrNull() ?: 5
-                    val eveStartSec = eveningStartSection.toIntOrNull() ?: 9
-                    
-                    val generated = generateTimes(
-                        maxSections = maxDailySections,
-                        duration = duration,
-                        breakTime = breakTime,
-                        amStart = morningStartTime,
-                        pmStartSec = pmStartSec,
-                        pmStart = afternoonStartTime,
-                        eveStartSec = eveStartSec,
-                        eveStart = eveningStartTime
-                    )
-                    onConfirm(generated)
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("取消")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val duration = sectionDuration.toIntOrNull() ?: 45
+                            val breakTime = breakDuration.toIntOrNull() ?: 10
+                            val pmStartSec = afternoonStartSection.toIntOrNull() ?: 5
+                            val eveStartSec = eveningStartSection.toIntOrNull() ?: 9
+                            
+                            val generated = generateTimes(
+                                maxSections = maxDailySections,
+                                duration = duration,
+                                breakTime = breakTime,
+                                amStart = morningStartTime,
+                                pmStartSec = pmStartSec,
+                                pmStart = afternoonStartTime,
+                                eveStartSec = eveStartSec,
+                                eveStart = eveningStartTime
+                            )
+                            onConfirm(generated)
+                        }
+                    ) {
+                        Text("生成时间表")
+                    }
                 }
-            ) {
-                Text("生成")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text("取消")
             }
         }
-    )
+    }
     
     // Time Picker Dialog
     if (showTimePickerFor != null) {
@@ -155,7 +206,7 @@ fun BatchGenerateTimeDialog(
             is24Hour = true
         )
         
-        AlertDialog(
+        DatePickerDialog(
             onDismissRequest = { showTimePickerFor = null },
             confirmButton = {
                 TextButton(onClick = {
@@ -170,32 +221,129 @@ fun BatchGenerateTimeDialog(
             },
             dismissButton = {
                 TextButton(onClick = { showTimePickerFor = null }) { Text("取消") }
-            },
-            text = { TimePicker(state = pickerState) }
-        )
+            }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                TimePicker(state = pickerState)
+            }
+        }
     }
 }
 
 @Composable
-fun TimeSettingRow(
+private fun SettingsGroupCard(
+    title: String,
+    icon: ImageVector,
+    content: @Composable () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        border = null, // Cleaner look
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun CompactNumericInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    prefix: String = "",
+    suffix: String = "",
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { if (it.all { c -> c.isDigit() }) onValueChange(it) },
+        label = { Text(label, style = MaterialTheme.typography.bodySmall) },
+        modifier = modifier,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+        shape = RoundedCornerShape(12.dp),
+        prefix = if (prefix.isNotEmpty()) { { Text(prefix) } } else null,
+        suffix = if (suffix.isNotEmpty()) { { Text(suffix) } } else null,
+        colors = OutlinedTextFieldDefaults.colors(
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        )
+    )
+}
+
+@Composable
+private fun TimeNodeRow(
+    icon: ImageVector,
     label: String,
     time: LocalTime,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    OutlinedTextField(
-        value = time.format(DateTimeFormatter.ofPattern("HH:mm")),
-        onValueChange = {},
-        label = { Text(label) },
-        readOnly = true,
-        enabled = false, // We handle click manually
-        modifier = modifier.clickable { onClick() },
-        colors = OutlinedTextFieldDefaults.colors(
-            disabledTextColor = MaterialTheme.colorScheme.onSurface,
-            disabledBorderColor = MaterialTheme.colorScheme.outline,
-            disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        
+        Text(
+            text = time.format(DateTimeFormatter.ofPattern("HH:mm")),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold
         )
-    )
+    }
 }
 
 private fun generateTimes(
@@ -222,23 +370,9 @@ private fun generateTimes(
             else -> currentTime.plusMinutes(breakTime.toLong())
         }
         
-        // Ensure time continuity (if manual setting jumps back, we respect manual setting)
-        // But for normal flow (i.e. section 2), we use previous end + break.
-        // The logic above: if it's a "start section", force the time. Else add break to *previous end*.
-        
-        // Re-eval:
-        // For i=1: amStart.
-        // For i=pmStartSec: pmStart.
-        // For i=eveStartSec: eveStart.
-        // For others: prevEnd + break.
-        
         val actualStart = if (i == 1 || i == pmStartSec || i == eveStartSec) {
             startTime
         } else {
-            // We need the end time of previous section.
-            // But we don't have it in the loop variable directly easily unless we track it.
-            // Let's track 'lastEndTime'
-            // Wait, currentTime variable in my logic was supposed to be 'lastEndTime'.
             currentTime.plusMinutes(breakTime.toLong())
         }
         
