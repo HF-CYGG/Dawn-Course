@@ -93,7 +93,11 @@ class DawnWidget : GlanceAppWidget() {
         val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
 
         val courses = withContext(Dispatchers.IO) {
-            repository.getAllCourses().first()
+            if (semester != null) {
+                repository.getCoursesBySemester(semester.id).first()
+            } else {
+                emptyList()
+            }
         }.filter { course ->
             // 1. 匹配星期
             if (course.dayOfWeek != currentDayOfWeek) return@filter false
