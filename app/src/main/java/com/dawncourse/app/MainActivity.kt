@@ -1,10 +1,13 @@
 package com.dawncourse.app
 
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -18,6 +21,8 @@ import coil.compose.AsyncImage
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
+import com.dawncourse.feature.timetable.notification.PersistentNotificationService
+import com.dawncourse.feature.timetable.notification.ReminderScheduler
 import dagger.hilt.android.AndroidEntryPoint
 
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,6 +32,7 @@ import androidx.navigation.navArgument
 import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.import_module.ImportScreen
+import com.dawncourse.feature.timetable.notification.ReminderScheduler
 
 /**
  * 应用程序主 Activity
@@ -46,6 +52,29 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: MainViewModel = hiltViewModel()
             val settings by viewModel.settings.collectAsState()
+
+            // 监听设置变化，调度提醒任务
+            LaunchedEffect(settings.enableClassReminder) {
+                if (settings.enableClassReminder) {
+                    ReminderScheduler.scheduleDailyWork(applicationContext)
+                } else {
+                    ReminderScheduler.cancelWork(applicationContext)
+                }
+            }
+
+            // 监听设置变化，启动/停止常驻通知服务
+            LaunchedEffect(settings.enablePersistentNotification) {
+                val intent = Intent(applicationContext, PersistentNotificationService::class.java)
+                if (settings.enablePersistentNotification) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        applicationContext.startForegroundService(intent)
+                    } else {
+                        applicationContext.startService(intent)
+                    }
+                } else {
+                    applicationContext.stopService(intent)
+                }
+            }
 
             // 应用全局主题
             DawnTheme(appSettings = settings) {

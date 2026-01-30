@@ -46,4 +46,5 @@ dependencies {
 
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.coil.compose)
+    implementation(libs.work.runtime.ktx)
 }
