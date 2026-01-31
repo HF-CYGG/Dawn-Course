@@ -208,7 +208,8 @@ internal fun TimetableScreen(
                 // 3. 可滚动的课表区域
                 HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    beyondViewportPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
                 ) { page ->
                     val week = page + 1
                     

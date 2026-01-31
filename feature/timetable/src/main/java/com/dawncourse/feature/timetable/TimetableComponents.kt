@@ -326,11 +326,13 @@ fun TimetableGrid(
             Layout(
                 content = {
                     displayList.forEach { (course, isCurrentWeek) ->
-                        CourseCard(
-                            course = course,
-                            isCurrentWeek = isCurrentWeek,
-                            onClick = { onCourseClick(course) }
-                        )
+                        androidx.compose.runtime.key(course.id) {
+                            CourseCard(
+                                course = course,
+                                isCurrentWeek = isCurrentWeek,
+                                onClick = { onCourseClick(course) }
+                            )
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -404,25 +406,22 @@ fun CourseCard(
     // 2. 动态计算内容透明度
     val contentAlpha = if (isCurrentWeek) 1f else 0.6f
 
-    // 扁平化，无阴影
-    Card(
-        onClick = onClick,
+    // 性能优化：使用 Box 替代 Card，移除阴影和不必要的 Surface 嵌套
+    // 仅使用 clip + background + clickable 实现相同视觉效果，大幅减少渲染开销
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(2.dp), // 卡片之间的空隙
-        shape = RoundedCornerShape(12.dp), // 大圆角
-        colors = CardDefaults.cardColors(
-            containerColor = baseColor
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            .padding(2.dp) // 卡片之间的空隙
+            .clip(RoundedCornerShape(12.dp)) // 大圆角
+            .background(baseColor)
+            .clickable(onClick = onClick)
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
-                verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
-            ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
+            verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
+        ) {
             // 1. 课程名
             Text(
                 text = course.name,
@@ -463,26 +462,25 @@ fun CourseCard(
                     }
                 }
             }
-            }
+        }
 
-            // 调课标记 (左上角)
-            if (course.isModified) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .clip(RoundedCornerShape(bottomEnd = 8.dp))
-                        .background(MaterialTheme.colorScheme.errorContainer)
-                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                ) {
-                    Text(
-                        text = "调",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
+        // 调课标记 (左上角)
+        if (course.isModified) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .clip(RoundedCornerShape(bottomEnd = 8.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = "调",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onErrorContainer
                     )
-                }
+                )
             }
         }
     }
@@ -605,24 +603,24 @@ fun CourseDetailSheet(
             
             Spacer(modifier = Modifier.height(32.dp))
             
-            // 3. Actions
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // 调课/撤销调课 按钮
-                androidx.compose.material3.Button(
-                    onClick = if (course.isModified) onUndoRescheduleClick else onRescheduleClick,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (course.isModified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
-                        contentColor = if (course.isModified) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondary
-                    ),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
-                ) {
-                    Icon(
-                        imageVector = if (course.isModified) Icons.Default.Restore else Icons.Default.EditCalendar,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                // 3. Actions
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // 调课/撤销调课 按钮
+                    androidx.compose.material3.Button(
+                        onClick = if (course.isModified) onUndoRescheduleClick else onRescheduleClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (course.isModified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
+                            contentColor = if (course.isModified) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (course.isModified) Icons.Default.Restore else Icons.Default.EditCalendar,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                     Text(if (course.isModified) "撤销调课 (还原)" else "调课 (部分周次变动)")
                 }
 
