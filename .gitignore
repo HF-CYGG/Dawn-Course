@@ -1,15 +1,57 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+.gradle/
+.gradle_home/
+
+# Gradle files
+local.properties
+
+# Android Studio Navigation editor temp files
+.navigation/
+
+# Android Studio captures folder
+captures/
+
+# IntelliJ / Android Studio
+.idea/
 *.iml
+*.ipr
+*.iws
 .DS_Store
-*.log
-**/.gradle/
-**/.idea/
-**/build/
-**/captures/
-**/.externalNativeBuild/
-**/.cxx/
-**/local.properties
-/.trae/
+.vscode/
+
+# NDK
+.externalNativeBuild/
+.cxx/
+obj/
+
+# Keystore files (Security)
+*.jks
+*.keystore
+keystore/
+
+# Google Services (Security)
+google-services.json
+
+# Trae/AI related
+.trae/
+logs/
+
+# Specific project ignores
 /docs/
 /xiaoai-schedule-parser-main/
-.gitignore
-logs/
