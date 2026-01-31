@@ -16,6 +16,16 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
+/**
+ * 颜色选择对话框
+ *
+ * 提供基于 HSV (色相、饱和度、亮度) 的颜色选择器。
+ * 包含实时预览和三个滑动条。
+ *
+ * @param initialColor 初始颜色
+ * @param onDismiss 取消回调
+ * @param onConfirm 确认回调，返回选中的颜色
+ */
 @Composable
 fun ColorPickerDialog(
     initialColor: Color,

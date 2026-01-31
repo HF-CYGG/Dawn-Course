@@ -8,6 +8,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+/**
+ * 平滑滑动条设置项
+ *
+ * 解决 DataStore 更新延迟导致的滑动卡顿问题。
+ * 在滑动过程中只更新本地 UI 状态，仅在手指抬起 (onValueChangeFinished) 时提交数据到 DataStore。
+ *
+ * @param title 标题
+ * @param value 外部数据源的当前值
+ * @param onValueChangeFinished 滑动结束时的回调 (用于提交数据)
+ * @param valueRange 值范围
+ * @param valueText 值显示的格式化函数
+ * @param description 描述
+ * @param showDivider 是否显示分割线
+ */
 @Composable
 fun SmoothSliderSetting(
     title: String,

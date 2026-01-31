@@ -20,6 +20,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+/**
+ * 设置页面分组标题与卡片容器
+ *
+ * @param title 分组标题
+ * @param modifier 修饰符
+ * @param content 卡片内容
+ */
 @Composable
 fun PreferenceCategory(
     title: String,
@@ -49,6 +56,17 @@ fun PreferenceCategory(
     }
 }
 
+/**
+ * 通用设置项行
+ *
+ * @param title 标题
+ * @param description 描述文本 (可选)
+ * @param icon 左侧图标 (可选)
+ * @param action 右侧操作组件 (可选)
+ * @param onClick 点击事件 (可选)
+ * @param showDivider 是否显示底部分割线
+ * @param content 额外的自定义内容 (显示在标题下方)
+ */
 @Composable
 fun SettingRow(
     title: String,
@@ -109,6 +127,16 @@ fun SettingRow(
     }
 }
 
+/**
+ * 开关设置项
+ *
+ * @param title 标题
+ * @param description 描述
+ * @param icon 图标
+ * @param checked 开关状态
+ * @param onCheckedChange 状态变更回调
+ * @param showDivider 是否显示分割线
+ */
 @Composable
 fun SwitchSetting(
     title: String,
@@ -130,6 +158,19 @@ fun SwitchSetting(
     )
 }
 
+/**
+ * 滑动条设置项
+ *
+ * @param title 标题
+ * @param value 当前值
+ * @param onValueChange 值变更回调
+ * @param valueRange 值范围
+ * @param steps 分段数
+ * @param valueText 当前值的文本显示 (显示在标题右侧)
+ * @param description 描述
+ * @param icon 图标
+ * @param showDivider 是否显示分割线
+ */
 @Composable
 fun SliderSetting(
     title: String,

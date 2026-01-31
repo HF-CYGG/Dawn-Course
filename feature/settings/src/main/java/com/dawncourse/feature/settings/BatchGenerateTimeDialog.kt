@@ -25,6 +25,16 @@ import com.dawncourse.core.domain.model.SectionTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
+/**
+ * 批量生成时间表对话框
+ *
+ * 允许用户通过设置每节课时长、课间休息时间以及早中晚的起始时间，
+ * 快速生成全天的时间表数据。
+ *
+ * @param maxDailySections 每天最大节数
+ * @param onDismissRequest 取消回调
+ * @param onConfirm 确认回调，返回生成的 [SectionTime] 列表
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BatchGenerateTimeDialog(

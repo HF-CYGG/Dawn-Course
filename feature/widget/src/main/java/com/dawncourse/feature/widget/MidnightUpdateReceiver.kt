@@ -9,6 +9,12 @@ import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.runBlocking
 import java.util.Calendar
 
+/**
+ * 午夜更新广播接收器
+ *
+ * 负责在每天午夜 (00:01) 强制刷新 Widget，
+ * 以便及时切换到第二天的课程显示。
+ */
 // 1. 定义一个用于午夜刷新的广播接收器
 class MidnightUpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {

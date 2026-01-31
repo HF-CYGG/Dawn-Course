@@ -29,6 +29,18 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.domain.model.WallpaperMode
 
+/**
+ * 设置主页面
+ *
+ * 包含应用的所有配置项入口，如：
+ * - 课表核心管理 (学期、时间表)
+ * - 视觉定制 (主题、壁纸、卡片样式)
+ * - 功能选项 (自动静音、导入导出等)
+ *
+ * @param onBackClick 返回回调
+ * @param onNavigateToTimetableSettings 跳转到课表详细设置的回调
+ * @param viewModel [SettingsViewModel] 实例
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(

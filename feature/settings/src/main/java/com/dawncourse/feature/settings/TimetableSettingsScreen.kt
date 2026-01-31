@@ -23,6 +23,17 @@ import com.dawncourse.core.domain.model.SectionTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
+/**
+ * 课表详细设置页面
+ *
+ * 专注于课表显示相关的配置，包括：
+ * - 基础设置 (每天节数、默认时长)
+ * - 卡片样式 (高度、圆角、透明度)
+ * - 节次时间 (具体每一节课的起止时间)
+ *
+ * @param onBackClick 返回回调
+ * @param viewModel [SettingsViewModel] 实例
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimetableSettingsScreen(

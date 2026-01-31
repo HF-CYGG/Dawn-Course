@@ -32,6 +32,18 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
 
+/**
+ * 调课底部弹窗
+ *
+ * 引导用户完成调课流程的向导式界面。
+ *
+ * 流程：
+ * 1. [WeekSelectionStep]: 选择需要调整的周次（例如：第 8 周老师请假）。
+ * 2. [TimeLocationStep]: 设置新的上课时间、地点，并可调整目标周次（例如：补课到第 9 周）。
+ * 3. [ConfirmStep]: 预览调整结果并确认。
+ *
+ * @param courseId 待调整的课程 ID
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
 fun CourseRescheduleSheet(

@@ -73,6 +73,17 @@ import java.io.InputStreamReader
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
+/**
+ * 导入功能主屏幕
+ *
+ * 管理导入流程的三个步骤：
+ * 1. [ImportStep.Input]: 选择导入方式（网页抓取或 ICS 文件）
+ * 2. [ImportStep.WebView]: 内置浏览器登录教务系统并抓取 HTML
+ * 3. [ImportStep.Review]: 预览解析结果，配置学期和时间，确认导入
+ *
+ * @param onImportSuccess 导入成功后的回调
+ * @param viewModel [ImportViewModel] 实例
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportScreen(

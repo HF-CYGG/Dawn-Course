@@ -15,6 +15,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * 调课功能 ViewModel
+ *
+ * 负责处理调课逻辑，包括：
+ * 1. 加载课程信息
+ * 2. 管理选择的调整周次
+ * 3. 冲突检测
+ * 4. 执行调课（课程分裂与新记录插入）
+ */
 @HiltViewModel
 class CourseRescheduleViewModel @Inject constructor(
     private val repository: CourseRepository
@@ -55,24 +64,32 @@ class CourseRescheduleViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 重新计算冲突
+     *
+     * 检查当前选择的目标周次和时间，是否与现有的其他课程冲突。
+     */
     private fun recalculateConflicts() {
         val state = _uiState.value
         val original = state.originalCourse ?: return
         
-        // Use targetWeeks if set (Step 2), otherwise use selectedWeeks (Step 1 assumption)
+        // 如果已设置目标周次 (Step 2)，则检查目标周次；否则检查选中的原周次 (Step 1)
         val weeksToCheck = if (state.targetWeeks.isNotEmpty()) state.targetWeeks else state.selectedWeeks
         val duration = original.duration
         
         val conflicts = weeksToCheck.filter { week ->
             allCourses.any { course ->
+                // 排除自己
                 if (course.id == original.id) return@any false
                 
+                // 检查时间是否重叠
                 val timeOverlap = course.dayOfWeek == state.newDay &&
                         course.startSection < (state.newStartNode + duration) &&
                         (course.startSection + course.duration) > state.newStartNode
                 
                 if (!timeOverlap) return@any false
                 
+                // 检查周次是否重叠
                 val weekMatch = when (course.weekType) {
                     Course.WEEK_TYPE_ALL -> true
                     Course.WEEK_TYPE_ODD -> week % 2 != 0
@@ -176,6 +193,17 @@ class CourseRescheduleViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 确认调课操作
+     *
+     * 核心逻辑：课程分裂 (Course Splitting)
+     * 1. 将原课程的周次中，被选中的周次扣除，剩余的周次重新组合成若干条 [Course] 记录。
+     * 2. 将被选中的周次映射到新的时间/地点，生成新的 [Course] 记录。
+     * 3. 所有的记录（包括保留的旧周次和新生成的调课记录）都共享同一个 [originId]。
+     *    - [originId] 用于后续的“撤销”操作，能将它们重新合并。
+     *
+     * @param onComplete 完成回调
+     */
     fun confirmReschedule(onComplete: () -> Unit) {
         val state = _uiState.value
         val original = state.originalCourse ?: return
@@ -183,42 +211,43 @@ class CourseRescheduleViewModel @Inject constructor(
         val target = state.targetWeeks
         
         if (selected.isEmpty() || target.isEmpty()) return
-
+        
         viewModelScope.launch {
-            // 1. Calculate remaining weeks for the original course
+            // 1. 计算原课程剩余的周次 (Total - Selected)
             val remainingWeeks = state.availableWeeks - selected
             
-            // 2. Split remaining weeks into continuous segments
+            // 2. 将剩余周次转换为连续的 Course 片段
             val remainingSegments = convertToSegments(remainingWeeks)
             
-            // 3. Create new reschedule segment
-            // Use original.originId if available, otherwise use original.id (first split)
+            // 3. 确定原始 ID (Origin ID)
+            // 如果原课程已经是分裂过的 (originId != 0)，沿用之；否则使用其自身 ID 作为家族 ID。
             val originId = if (original.originId == 0L) original.id else original.originId
             
+            // 4. 生成调课后的新记录
             val newSegments = convertToSegments(target).map { (start, end, type) ->
                  original.copy(
-                    id = 0, // New ID
+                    id = 0, // 插入新记录
                     location = state.newLocation,
                     dayOfWeek = state.newDay,
                     startSection = state.newStartNode,
                     startWeek = start,
                     endWeek = end,
                     weekType = type,
-                    isModified = true,
+                    isModified = true, // 标记为已调课
                     note = state.note,
-                    originId = originId
+                    originId = originId // 关联到大家族
                 )
             }
 
-            // 4. Update DB
-            // Delete original
+            // 5. 执行数据库更新事务
+            // 删除旧记录
             repository.deleteCourse(original)
             
-            // Insert remaining segments (Original logic)
+            // 插入剩余的旧周次片段
             remainingSegments.forEach { (start, end, type) ->
                 repository.insertCourse(
                     original.copy(
-                        id = 0, // New ID
+                        id = 0,
                         startWeek = start,
                         endWeek = end,
                         weekType = type,
@@ -227,7 +256,7 @@ class CourseRescheduleViewModel @Inject constructor(
                 )
             }
             
-            // Insert new segments (Rescheduled logic)
+            // 插入新的调课记录
             newSegments.forEach {
                 repository.insertCourse(it)
             }
@@ -236,7 +265,16 @@ class CourseRescheduleViewModel @Inject constructor(
         }
     }
     
-    // Helper to convert a set of weeks into minimal list of (start, end, type)
+    /**
+     * 将周次集合转换为最小的连续片段列表
+     *
+     * 算法目标：
+     * 将离散的周次（如 {1, 2, 3, 5, 7}）合并为更紧凑的 [Course] 记录表示。
+     * 优先合并为“全周”，其次尝试合并为“单周”或“双周”。
+     *
+     * @param weeks 周次集合
+     * @return 包含 (开始周, 结束周, 周类型) 的三元组列表
+     */
     private fun convertToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {
         if (weeks.isEmpty()) return emptyList()
         val sorted = weeks.sorted()
@@ -246,14 +284,14 @@ class CourseRescheduleViewModel @Inject constructor(
         while (pending.isNotEmpty()) {
             val first = pending.minOrNull()!!
             
-            // Check All
+            // 尝试合并为全周 (1, 2, 3...)
             var endAll = first
             while (pending.contains(endAll + 1)) {
                 endAll++
             }
             val countAll = endAll - first + 1
             
-            // Check Parity
+            // 尝试合并为单/双周 (1, 3, 5...)
             var endParity = first
             val step = 2
             while (pending.contains(endParity + step)) {
@@ -261,12 +299,14 @@ class CourseRescheduleViewModel @Inject constructor(
             }
             val countParity = (endParity - first) / 2 + 1
             
+            // 贪心策略：谁覆盖的周数更多选谁
+            // 如果全周和单双周覆盖数量相同（例如只有1周），优先选全周
             if (countAll >= countParity) {
-                // Use All
+                // 使用全周
                 segments.add(Triple(first, endAll, Course.WEEK_TYPE_ALL))
                 for (i in first..endAll) pending.remove(i)
             } else {
-                // Use Parity
+                // 使用单/双周
                 val type = if (first % 2 != 0) Course.WEEK_TYPE_ODD else Course.WEEK_TYPE_EVEN
                 segments.add(Triple(first, endParity, type))
                 var k = first

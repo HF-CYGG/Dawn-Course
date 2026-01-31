@@ -20,6 +20,21 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dawncourse.core.domain.model.WallpaperMode
 
+/**
+ * 课表背景组件
+ *
+ * 负责渲染课表的背景，支持：
+ * 1. 纯色背景 (Default)
+ * 2. 图片壁纸 (Crop/Fill)
+ * 3. 背景特效：模糊 (Blur)、亮度 (Brightness)、遮罩透明度 (Transparency)
+ *
+ * @param wallpaperUri 壁纸 URI，若为 null 则使用默认背景色
+ * @param wallpaperMode 壁纸缩放模式 [WallpaperMode]
+ * @param backgroundBlur 背景模糊半径 (dp)
+ * @param backgroundBrightness 背景亮度 (0.0-1.0)
+ * @param transparency 遮罩层透明度 (0.0-1.0)
+ * @param isDarkTheme 是否为深色模式 (影响遮罩层颜色)
+ */
 @Composable
 fun TimetableBackground(
     wallpaperUri: String?,

@@ -96,6 +96,11 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(semesterStartDate = timestamp) }
     }
 
+    /**
+     * 设置当前导入步骤
+     *
+     * 切换步骤时会重置部分临时状态，如解析结果和错误信息。
+     */
     fun setStep(step: ImportStep) {
         _uiState.update { 
             it.copy(
@@ -120,6 +125,12 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(resultText = value) }
     }
     
+    /**
+     * 更新学期设置
+     *
+     * @param startDate 学期开始时间戳
+     * @param weeks 学期总周数
+     */
     fun updateSemesterSettings(startDate: Long, weeks: Int) {
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
     }
@@ -288,6 +299,14 @@ class ImportViewModel @Inject constructor(
 
     /**
      * 确认导入
+     */
+    /**
+     * 确认导入
+     *
+     * 将解析后的课程数据、学期设置和时间表设置保存到数据库。
+     * 1. 更新全局时间设置 (MaxDailySections)
+     * 2. 创建并保存新学期
+     * 3. 保存所有课程数据
      */
     fun confirmImport() {
         viewModelScope.launch {

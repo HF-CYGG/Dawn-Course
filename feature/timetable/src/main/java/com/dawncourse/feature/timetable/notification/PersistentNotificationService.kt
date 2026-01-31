@@ -19,6 +19,16 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 
+/**
+ * 常驻通知服务 (Foreground Service)
+ *
+ * 在通知栏常驻显示当前或下一节课程信息。
+ *
+ * 核心逻辑：
+ * 1. 启动为前台服务，避免被系统杀后台。
+ * 2. 启动一个协程，每分钟更新一次通知内容。
+ * 3. 根据当前时间和课表数据，判断显示“正在上课”、“下节课”或“今日结束”。
+ */
 @AndroidEntryPoint
 class PersistentNotificationService : Service() {
 
@@ -31,20 +41,21 @@ class PersistentNotificationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Start with a loading notification
+        // 立即启动前台服务，显示“加载中”，防止服务启动后未及时调用 startForeground 导致崩溃
         startForeground(NotificationHelper.NOTIFICATION_ID_BASE + 999, createNotification("正在加载课程信息...", ""))
         
         job?.cancel()
         job = serviceScope.launch {
             while (isActive) {
                 updateNotification()
-                // Align to the next minute start for better precision
+                // 对齐到下一分钟的 00 秒执行，保证时间显示的准确性
                 val now = LocalTime.now()
                 val secondsUntilNextMinute = 60 - now.second
                 delay(secondsUntilNextMinute * 1000L)
             }
         }
         
+        // START_STICKY: 如果服务被系统意外杀死，系统会尝试重建服务
         return START_STICKY
     }
 

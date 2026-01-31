@@ -14,6 +14,18 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+/**
+ * 学期设置对话框
+ *
+ * 用于设置当前学期的名称、总周数以及开学日期。
+ * 开学日期决定了当前是第几周的计算逻辑。
+ *
+ * @param initialName 初始学期名称
+ * @param initialWeeks 初始总周数
+ * @param initialStartDate 初始开学日期时间戳 (毫秒)
+ * @param onDismissRequest 取消回调
+ * @param onConfirm 确认回调，返回 (名称, 周数, 开学日期)
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SemesterSettingsDialog(

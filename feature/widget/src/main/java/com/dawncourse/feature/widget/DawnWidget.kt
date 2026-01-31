@@ -94,6 +94,17 @@ private object WidgetColors {
     val IconTint = TextSecondary // Icons follow secondary text color usually
 }
 
+/**
+ * 桌面小组件 (Widget) 主入口
+ *
+ * 使用 Jetpack Glance 构建。
+ * 负责展示当天的课程信息，支持多尺寸响应式布局。
+ *
+ * 主要功能：
+ * 1. 获取当前学期、设置和今日课程数据
+ * 2. 根据 Widget 尺寸自动切换布局 (NextClassView, HorizontalDailyListView, DailyListView)
+ * 3. 过滤非当前周次或非当日的课程
+ */
 class DawnWidget : GlanceAppWidget() {
 
     companion object {
@@ -180,6 +191,10 @@ class DawnWidget : GlanceAppWidget() {
         }
     }
 
+    /**
+     * Hilt EntryPoint 用于在 GlanceAppWidget 中注入依赖
+     * 因为 GlanceAppWidget 不是 Android 组件，无法直接使用 @AndroidEntryPoint
+     */
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface WidgetEntryPoint {

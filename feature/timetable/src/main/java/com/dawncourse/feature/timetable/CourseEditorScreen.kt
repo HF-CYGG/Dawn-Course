@@ -108,6 +108,7 @@ fun CourseEditorScreen(
     val defaultDuration = settings.defaultCourseDuration
     val totalWeeks = settings.totalWeeks.coerceAtLeast(20)
 
+    // 初始状态：如果是在编辑现有课程，则加载其时间段；如果是新建，则创建默认时间段
     val initialSlot = remember(course, defaultDuration, totalWeeks) {
         val startWeek = course?.startWeek ?: 1
         val endWeek = course?.endWeek ?: totalWeeks
@@ -119,6 +120,7 @@ fun CourseEditorScreen(
             selectedWeeks = buildWeeksFromRange(startWeek, endWeek, weekType)
         )
     }
+    // 使用列表支持多时间段编辑 (目前 UI 仅支持添加，逻辑层已预留)
     var timeSlots by remember(course, defaultDuration, totalWeeks) { mutableStateOf(listOf(initialSlot)) }
 
     val initialColor = remember(course) {
@@ -782,6 +784,12 @@ private fun convertWeeksToSegments(weeks: Set<Int>): List<WeekSegment> {
     return segments.sortedBy { it.startWeek }
 }
 
+/**
+ * 格式化周次摘要
+ *
+ * 将离散的周次集合格式化为易读的字符串。
+ * 例如：{1, 2, 3, 5, 7} -> "1-3周(全)、5周(单)、7周(单)"
+ */
 private fun formatWeekSummary(weeks: Set<Int>): String {
     if (weeks.isEmpty()) return "未选择周次"
     return convertWeeksToSegments(weeks).joinToString("、") { segment ->

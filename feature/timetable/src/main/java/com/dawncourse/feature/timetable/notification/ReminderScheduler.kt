@@ -23,6 +23,9 @@ object ReminderScheduler {
         )
     }
 
+    /**
+     * 取消调度任务
+     */
     fun cancelWork(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
     }
