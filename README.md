@@ -6,7 +6,7 @@ Dawn Course 是一款基于现代 Android 技术栈（Kotlin + Compose）构建�
 
 ## 核心原则
 
-本项目严格遵循以下原则（详见 `.trae/rules/00-project-overview.md`）：
+本项目严格遵循以下原则：
 
 1.  **永久免费 & 开源**：遵循 GPL-3.0 协议，代码完全透明。
 2.  **零干扰**：无广告、无会员、无推送（除必要的课程提醒外）。
