@@ -11,6 +11,12 @@ import androidx.work.WorkerParameters
 import com.dawncourse.feature.widget.DawnWidget
 import java.util.concurrent.TimeUnit
 
+/**
+ * Widget 更新工作器
+ *
+ * 使用 WorkManager 执行后台更新任务，确保 Widget 内容的及时刷新。
+ * 主要应对系统杀后台后 Widget 长期不刷新的情况。
+ */
 class WidgetUpdateWorker(
     private val context: Context,
     workerParams: WorkerParameters

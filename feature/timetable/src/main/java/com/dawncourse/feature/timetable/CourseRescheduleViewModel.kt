@@ -320,6 +320,19 @@ class CourseRescheduleViewModel @Inject constructor(
     }
 }
 
+/**
+ * 调课界面 UI 状态
+ *
+ * @property originalCourse 原始课程对象（被调整的课程）
+ * @property availableWeeks 该课程所有可用的周次集合
+ * @property selectedWeeks 当前选中的要移除（调走）的周次集合
+ * @property targetWeeks 调课后的目标周次集合（默认等于 selectedWeeks，除非用户单独修改）
+ * @property newDay 新的星期几 (1-7)
+ * @property newStartNode 新的开始节次
+ * @property newLocation 新的上课地点
+ * @property note 备注信息
+ * @property conflictWeeks 与其他课程存在时间冲突的周次集合
+ */
 data class RescheduleUiState(
     val originalCourse: Course? = null,
     val availableWeeks: Set<Int> = emptySet(),

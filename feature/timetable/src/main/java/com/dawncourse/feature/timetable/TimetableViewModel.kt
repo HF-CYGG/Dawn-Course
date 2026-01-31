@@ -26,9 +26,24 @@ import java.time.ZoneId
 import java.time.LocalDate
 import androidx.compose.runtime.Immutable
 
+/**
+ * 课表界面 UI 状态
+ */
 sealed interface TimetableUiState {
+    /**
+     * 加载中状态
+     */
     @Immutable
     data object Loading : TimetableUiState
+
+    /**
+     * 加载成功状态
+     *
+     * @property courses 当前学期的所有课程列表
+     * @property currentWeek 当前周次 (1-20)
+     * @property totalWeeks 学期总周数
+     * @property semesterStartDate 学期开始日期
+     */
     @Immutable
     data class Success(
         val courses: List<Course>,
