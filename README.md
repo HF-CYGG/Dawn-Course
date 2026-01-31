@@ -75,7 +75,7 @@ DawnCourse/
 ### 构建步骤
 1.  克隆仓库：
     ```bash
-    git clone https://github.com/your-username/DawnCourse.git
+    git clone https://github.com/HF-CYGG/DawnCourse.git
     ```
 2.  在 Android Studio 中打开项目根目录。
 3.  等待 Gradle 同步完成。
