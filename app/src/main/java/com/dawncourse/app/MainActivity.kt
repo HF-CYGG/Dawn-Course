@@ -102,7 +102,8 @@ class MainActivity : ComponentActivity() {
                     darkTheme = darkTheme
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        // Navigation Host
+                        // Navigation Host 导航主机
+                        // 管理应用内的页面跳转
                         val navController = rememberNavController()
                         NavHost(
                             navController = navController,
@@ -122,6 +123,7 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("import")
                                     },
                                     onCourseClick = { courseId ->
+                                        // 传递 courseId 进行编辑，若为 0 或 null 则为新建
                                         navController.navigate("course_editor?courseId=$courseId")
                                     }
                                 )
@@ -131,6 +133,7 @@ class MainActivity : ComponentActivity() {
                             composable("import") {
                                 ImportScreen(
                                     onImportSuccess = {
+                                        // 导入成功后返回上一页
                                         navController.popBackStack()
                                     }
                                 )
@@ -158,6 +161,7 @@ class MainActivity : ComponentActivity() {
                             }
                             
                             // 课程编辑页面，支持添加新课程和编辑已有课程
+                            // 使用可选参数 courseId，如果不传则默认为新建模式
                             composable(
                                 route = "course_editor?courseId={courseId}",
                                 arguments = listOf(navArgument("courseId") {
@@ -171,6 +175,7 @@ class MainActivity : ComponentActivity() {
                                 val course by courseEditorViewModel.course.collectAsState()
                                 val currentSemesterId by courseEditorViewModel.currentSemesterId.collectAsState()
                                 
+                                // 如果是编辑模式且课程数据尚未加载完成，显示 Loading
                                 val isEditing = courseId != null && courseId != "0"
                                 if (isEditing && course == null) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

@@ -66,12 +66,15 @@ class TimetableViewModel @Inject constructor(
      *
      * 统一承载对当前学期的订阅，避免重复触发数据库查询。
      * 同时在数据变化时计算当前周次并更新 [_currentWeek]。
+     * 使用 stateIn 转换为热流，SharingStarted.WhileSubscribed(5000) 确保在配置变更时保持活跃。
      */
     private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
         semesterRepository.getCurrentSemester()
             .onEach { semester ->
                 if (semester != null) {
+                    // 根据学期开始日期计算当前周次
                     val week = calculateWeekUseCase(semester.startDate)
+                    // 确保周次在有效范围内 (1 ~ weekCount)
                     val validWeek = week.coerceIn(1, semester.weekCount)
                     _currentWeek.value = validWeek
                 }
@@ -82,14 +85,23 @@ class TimetableViewModel @Inject constructor(
                 initialValue = null
             )
 
+    /**
+     * UI 状态流
+     *
+     * 组合了 [currentSemesterFlow], [coursesFlow], [_currentWeek] 等数据源。
+     * 当任一数据源发生变化时，自动计算并生成最新的 UI 状态。
+     * 这种响应式设计确保 UI 始终展示最新数据，无需手动刷新。
+     */
     val uiState: StateFlow<TimetableUiState> = currentSemesterFlow
         .flatMapLatest { semester ->
+            // 如果学期存在，转换开始日期并获取该学期的课程流
             val startDate = semester?.startDate?.let {
                 Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate()
             }
             val totalWeeks = semester?.weekCount ?: 20
             val coursesFlow = semester?.id?.let { repository.getCoursesBySemester(it) } ?: flowOf(emptyList())
 
+            // 组合课程数据和当前选择的周次
             combine(coursesFlow, _currentWeek) { courses, currentWeek ->
                 TimetableUiState.Success(
                     courses = courses,
