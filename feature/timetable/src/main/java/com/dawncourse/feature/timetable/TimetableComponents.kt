@@ -509,17 +509,20 @@ fun CourseDetailSheet(
     // 获取课程颜色
     val themePrimary = MaterialTheme.colorScheme.primary
     val settings = LocalAppSettings.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
+        sheetState = sheetState,
         dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() },
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         Column(
             modifier = Modifier
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp) // 底部留白增加
+                .padding(bottom = 56.dp) // 底部留白增加，防止误触
         ) {
             // 1. Header with Course Name
             Row(
