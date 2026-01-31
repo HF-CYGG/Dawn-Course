@@ -3,7 +3,6 @@ package com.dawncourse.feature.timetable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -11,11 +10,12 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
@@ -25,8 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -106,7 +104,10 @@ fun CourseRescheduleSheet(
                             onSelectAll = viewModel::selectAllWeeks,
                             onSelectOdd = viewModel::selectOddWeeks,
                             onSelectEven = viewModel::selectEvenWeeks,
-                            onNext = { currentStep = RescheduleStep.SET_TIME_LOCATION }
+                            onNext = { 
+                                viewModel.initTargetWeeks()
+                                currentStep = RescheduleStep.SET_TIME_LOCATION 
+                            }
                         )
                     }
                     RescheduleStep.SET_TIME_LOCATION -> {
@@ -115,6 +116,7 @@ fun CourseRescheduleSheet(
                             onTimeChange = viewModel::updateNewTime,
                             onLocationChange = viewModel::updateNewLocation,
                             onNoteChange = viewModel::updateNote,
+                            onTargetWeekToggle = viewModel::toggleTargetWeek,
                             onNext = { currentStep = RescheduleStep.CONFIRM }
                         )
                     }
@@ -152,65 +154,14 @@ private fun WeekSelectionStep(
         }
 
         // Week Grid
-        val totalWeeks = LocalAppSettings.current.totalWeeks.coerceAtLeast(20)
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        WeekGridSelector(
+            availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+            enabledWeeks = uiState.availableWeeks, // Only original weeks are enabled for selection
+            selectedWeeks = uiState.selectedWeeks,
+            conflictWeeks = uiState.conflictWeeks,
+            onToggleWeek = onToggleWeek,
             modifier = Modifier.heightIn(max = 300.dp)
-        ) {
-            items((1..totalWeeks).toList()) { week ->
-                val isAvailable = uiState.availableWeeks.contains(week)
-                val isSelected = uiState.selectedWeeks.contains(week)
-                
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .aspectRatio(1f)
-                        .clip(CircleShape)
-                        .background(
-                            when {
-                                isSelected -> MaterialTheme.colorScheme.primary
-                                isAvailable -> MaterialTheme.colorScheme.primaryContainer
-                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                            }
-                        )
-                        .clickable(enabled = isAvailable) { onToggleWeek(week) }
-                ) {
-                    Text(
-                        text = week.toString(),
-                        color = when {
-                            isSelected -> MaterialTheme.colorScheme.onPrimary
-                            isAvailable -> MaterialTheme.colorScheme.onPrimaryContainer
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (isSelected || isAvailable) FontWeight.Bold else FontWeight.Normal
-                    )
-                    
-                    // Conflict Indicator (Red Dot)
-                    if (uiState.conflictWeeks.contains(week)) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.error)
-                        )
-                    }
-
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
-                            modifier = Modifier.fillMaxSize().padding(8.dp)
-                        )
-                    }
-                }
-            }
-        }
+        )
 
         Button(
             onClick = onNext,
@@ -219,7 +170,7 @@ private fun WeekSelectionStep(
         ) {
             Text("下一步")
             Spacer(modifier = Modifier.width(8.dp))
-            Icon(Icons.Default.ArrowForward, contentDescription = null)
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
         }
     }
 }
@@ -230,72 +181,133 @@ private fun TimeLocationStep(
     onTimeChange: (Int, Int) -> Unit,
     onLocationChange: (String) -> Unit,
     onNoteChange: (String) -> Unit,
+    onTargetWeekToggle: (Int) -> Unit,
     onNext: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // Time Selector (Reusing TimeGridSelector)
-        Text("选择新时间", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        
-        if (uiState.conflictWeeks.isNotEmpty()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
-                    .padding(12.dp)
-            ) {
-                Icon(
-                    Icons.Default.Info, 
-                    contentDescription = null, 
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "第 ${uiState.conflictWeeks.sorted().joinToString(", ")} 周存在时间冲突",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
+    val scrollState = androidx.compose.foundation.rememberScrollState()
+    
+    Column(
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.verticalScroll(scrollState)
+    ) {
+        // Target Week Selector
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("新周次", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val countDiff = uiState.targetWeeks.size - uiState.selectedWeeks.size
+                    val countText = if (countDiff == 0) {
+                        "已选 ${uiState.targetWeeks.size} 周"
+                    } else {
+                        "需选 ${uiState.selectedWeeks.size} 周 (当前 ${uiState.targetWeeks.size})"
+                    }
+                    Text(
+                        text = countText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (countDiff == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                    )
+                }
+
+                WeekGridSelector(
+                    availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+                    enabledWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(), // All weeks selectable
+                    selectedWeeks = uiState.targetWeeks,
+                    conflictWeeks = uiState.conflictWeeks,
+                    onToggleWeek = onTargetWeekToggle,
+                    modifier = Modifier.heightIn(max = 200.dp)
                 )
             }
         }
-        
-        // Note: Reusing TimeGridSelector from CourseEditorScreen.kt
-        // Assuming it's available in the same package
-        TimeGridSelector(
-            selectedDay = uiState.newDay,
-            startNode = uiState.newStartNode,
-            duration = uiState.originalCourse?.duration ?: 2,
-            onSelectionChange = { day, start, _ -> onTimeChange(day, start) }
-        )
 
-        // Location Input
-        OutlinedTextField(
-            value = uiState.newLocation,
-            onValueChange = onLocationChange,
-            label = { Text("地点") },
-            leadingIcon = { Icon(Icons.Default.LocationOn, null) },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
+        // Time Selector
+        Card(
+             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+             modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("新时间", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                
+                if (uiState.conflictWeeks.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Info, 
+                            contentDescription = null, 
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "第 ${uiState.conflictWeeks.sorted().joinToString(", ")} 周存在冲突",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+                
+                TimeGridSelector(
+                    selectedDay = uiState.newDay,
+                    startNode = uiState.newStartNode,
+                    duration = uiState.originalCourse?.duration ?: 2,
+                    onSelectionChange = { day, start, _ -> onTimeChange(day, start) }
+                )
+            }
+        }
 
-        // Note Input
-        OutlinedTextField(
-            value = uiState.note,
-            onValueChange = onNoteChange,
-            label = { Text("备注 (选填)") },
-            placeholder = { Text("例如：老师出差补课") },
-            leadingIcon = { Icon(Icons.Default.DateRange, null) }, // Use appropriate icon
-            modifier = Modifier.fillMaxWidth(),
-            maxLines = 3
-        )
+        // Location & Note
+        Card(
+             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+             modifier = Modifier.fillMaxWidth()
+        ) {
+             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("其它信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+                OutlinedTextField(
+                    value = uiState.newLocation,
+                    onValueChange = onLocationChange,
+                    label = { Text("地点") },
+                    leadingIcon = { Icon(Icons.Default.LocationOn, null) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    )
+                )
+
+                OutlinedTextField(
+                    value = uiState.note,
+                    onValueChange = onNoteChange,
+                    label = { Text("备注 (选填)") },
+                    placeholder = { Text("例如：老师出差补课") },
+                    leadingIcon = { Icon(Icons.Default.DateRange, null) },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                    )
+                )
+             }
+        }
 
         Button(
             onClick = onNext,
+            enabled = uiState.targetWeeks.size == uiState.selectedWeeks.size,
             modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
         ) {
             Text("下一步")
             Spacer(modifier = Modifier.width(8.dp))
-            Icon(Icons.Default.ArrowForward, contentDescription = null)
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
         }
     }
 }
@@ -321,7 +333,7 @@ private fun ConfirmStep(
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 
-                Divider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
                 
                 // Weeks
                 Row(verticalAlignment = Alignment.Top) {
@@ -330,7 +342,7 @@ private fun ConfirmStep(
                     Column {
                         Text("调整周次", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f))
                         Text(
-                            text = uiState.selectedWeeks.sorted().joinToString(", ") { "${it}周" },
+                            text = "${uiState.selectedWeeks.sorted().joinToString(", ")} 周 \n→ ${uiState.targetWeeks.sorted().joinToString(", ")} 周",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
@@ -393,6 +405,76 @@ private fun ConfirmStep(
             Icon(Icons.Default.Check, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("确认调整")
+        }
+    }
+}
+
+@Composable
+private fun WeekGridSelector(
+    availableWeeks: Set<Int>,
+    enabledWeeks: Set<Int>,
+    selectedWeeks: Set<Int>,
+    conflictWeeks: Set<Int>,
+    onToggleWeek: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+    ) {
+        items(availableWeeks.toList()) { week ->
+            val isEnabled = enabledWeeks.contains(week)
+            val isSelected = selectedWeeks.contains(week)
+            val isConflict = conflictWeeks.contains(week)
+            
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .aspectRatio(1f)
+                    .clip(CircleShape)
+                    .background(
+                        when {
+                            isSelected -> MaterialTheme.colorScheme.primary
+                            isEnabled -> MaterialTheme.colorScheme.primaryContainer
+                            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        }
+                    )
+                    .clickable(enabled = isEnabled) { onToggleWeek(week) }
+            ) {
+                Text(
+                    text = week.toString(),
+                    color = when {
+                        isSelected -> MaterialTheme.colorScheme.onPrimary
+                        isEnabled -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isSelected || isEnabled) FontWeight.Bold else FontWeight.Normal
+                )
+                
+                // Conflict Indicator (Red Dot)
+                if (isConflict) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error)
+                    )
+                }
+
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
+                        modifier = Modifier.fillMaxSize().padding(8.dp)
+                    )
+                }
+            }
         }
     }
 }

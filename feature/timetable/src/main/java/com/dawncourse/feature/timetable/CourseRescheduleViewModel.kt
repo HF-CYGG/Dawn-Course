@@ -58,10 +58,12 @@ class CourseRescheduleViewModel @Inject constructor(
     private fun recalculateConflicts() {
         val state = _uiState.value
         val original = state.originalCourse ?: return
-        val selected = state.selectedWeeks
+        
+        // Use targetWeeks if set (Step 2), otherwise use selectedWeeks (Step 1 assumption)
+        val weeksToCheck = if (state.targetWeeks.isNotEmpty()) state.targetWeeks else state.selectedWeeks
         val duration = original.duration
         
-        val conflicts = selected.filter { week ->
+        val conflicts = weeksToCheck.filter { week ->
             allCourses.any { course ->
                 if (course.id == original.id) return@any false
                 
@@ -116,6 +118,24 @@ class CourseRescheduleViewModel @Inject constructor(
         recalculateConflicts()
     }
 
+    fun initTargetWeeks() {
+        _uiState.update { it.copy(targetWeeks = it.selectedWeeks) }
+        recalculateConflicts() // Check conflicts for new target weeks
+    }
+
+    fun toggleTargetWeek(week: Int) {
+        _uiState.update { state ->
+            val newTarget = state.targetWeeks.toMutableSet()
+            if (newTarget.contains(week)) {
+                newTarget.remove(week)
+            } else {
+                newTarget.add(week)
+            }
+            state.copy(targetWeeks = newTarget)
+        }
+        recalculateConflicts()
+    }
+
     fun selectAllWeeks() {
         _uiState.update { it.copy(selectedWeeks = it.availableWeeks) }
         recalculateConflicts()
@@ -160,8 +180,9 @@ class CourseRescheduleViewModel @Inject constructor(
         val state = _uiState.value
         val original = state.originalCourse ?: return
         val selected = state.selectedWeeks
+        val target = state.targetWeeks
         
-        if (selected.isEmpty()) return
+        if (selected.isEmpty() || target.isEmpty()) return
 
         viewModelScope.launch {
             // 1. Calculate remaining weeks for the original course
@@ -174,7 +195,7 @@ class CourseRescheduleViewModel @Inject constructor(
             // Use original.originId if available, otherwise use original.id (first split)
             val originId = if (original.originId == 0L) original.id else original.originId
             
-            val newSegments = convertToSegments(selected).map { (start, end, type) ->
+            val newSegments = convertToSegments(target).map { (start, end, type) ->
                  original.copy(
                     id = 0, // New ID
                     location = state.newLocation,
@@ -263,6 +284,7 @@ data class RescheduleUiState(
     val originalCourse: Course? = null,
     val availableWeeks: Set<Int> = emptySet(),
     val selectedWeeks: Set<Int> = emptySet(),
+    val targetWeeks: Set<Int> = emptySet(),
     val newDay: Int = 1,
     val newStartNode: Int = 1,
     val newLocation: String = "",
