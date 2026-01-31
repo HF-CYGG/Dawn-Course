@@ -13,8 +13,12 @@ package com.dawncourse.core.domain.model
  */
 data class Semester(
     val id: Long = 0,
-    val name: String, // e.g., "2023秋"
-    val startDate: Long, // Timestamp of the first Monday 00:00
+    /** 学期名称（如 "2023秋"） */
+    val name: String,
+    /** 学期开始日期的时间戳（毫秒），通常为第一周周一的 00:00 */
+    val startDate: Long,
+    /** 学期总周数，默认为 20 周 */
     val weekCount: Int = 20,
+    /** 是否为当前激活的学期 */
     val isCurrent: Boolean = false
 )

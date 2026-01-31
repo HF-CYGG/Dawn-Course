@@ -350,16 +350,29 @@ class SettingsRepositoryImpl @Inject constructor(
         setBlurredWallpaperUri(blurredUri)
     }
 
+    /**
+     * 生成模糊壁纸的内部实现
+     *
+     * 1. 解析 URI
+     * 2. 采样解码图片 (避免 OOM)
+     * 3. 应用快速模糊算法
+     * 4. 保存到私有文件目录
+     * 5. 返回文件 URI
+     */
     private suspend fun generateBlurredWallpaperInternal(uriString: String): String? {
         return withContext(Dispatchers.IO) {
             try {
                 val uri = Uri.parse(uriString)
+                // 解码图片，自动处理采样率以防内存溢出
                 val bitmap = decodeSampledBitmap(uri) ?: return@withContext null
+                // 应用模糊算法，半径 20
                 val blurredBitmap = fastBlur(bitmap, 20)
+                // 保存到 files/blurred_wallpaper.jpg
                 val file = File(context.filesDir, "blurred_wallpaper.jpg")
                 FileOutputStream(file).use { out ->
                     blurredBitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
                 }
+                // 回收原图
                 if (bitmap != blurredBitmap) bitmap.recycle()
                 blurredBitmap.recycle()
                 Uri.fromFile(file).toString()
@@ -369,6 +382,12 @@ class SettingsRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * 采样解码图片
+     *
+     * 计算合适的采样率 (inSampleSize) 并解码图片，确保图片尺寸不超过 targetMaxSize (320px)，
+     * 以减少内存占用并加快模糊处理速度。
+     */
     private fun decodeSampledBitmap(uri: Uri): Bitmap? {
         val targetMaxSize = 320
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -393,6 +412,11 @@ class SettingsRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * 计算采样率
+     *
+     * 根据目标宽高计算 power-of-2 的采样率。
+     */
     private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
         val height = options.outHeight
         val width = options.outWidth
@@ -407,6 +431,16 @@ class SettingsRepositoryImpl @Inject constructor(
         return inSampleSize
     }
 
+    /**
+     * 快速模糊算法 (Stack Blur)
+     *
+     * 一种高性能的模糊算法，近似于高斯模糊但速度更快。
+     * 来源：StackBlur by Mario Klingemann
+     *
+     * @param sentBitmap 原始位图
+     * @param radius 模糊半径
+     * @return 模糊后的新位图
+     */
     private fun fastBlur(sentBitmap: Bitmap, radius: Int): Bitmap {
         val bitmap = sentBitmap.copy(sentBitmap.config, true)
 

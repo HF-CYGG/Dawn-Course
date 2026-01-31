@@ -20,27 +20,41 @@ package com.dawncourse.core.domain.model
  */
 data class Course(
     val id: Long = 0,
-    val semesterId: Long = 1, // Default to 1 for now
+    /** 所属学期 ID，默认为 1 */
+    val semesterId: Long = 1,
+    /** 课程名称 */
     val name: String,
+    /** 授课教师姓名 */
     val teacher: String = "",
+    /** 上课地点（教室） */
     val location: String = "",
     
-    // 时间信息 (Time info)
-    val dayOfWeek: Int, // 1 = Monday, 7 = Sunday
-    val startSection: Int, // e.g., 1
-    val duration: Int, // e.g., 2 (sections)
+    // 时间信息
+    /** 星期几（1 = 周一, 7 = 周日） */
+    val dayOfWeek: Int,
+    /** 开始节次（如第 1 节） */
+    val startSection: Int,
+    /** 持续节数（如 2 节课） */
+    val duration: Int,
     
-    // 周次信息 (Week info)
+    // 周次信息
+    /** 开始周次（如第 1 周） */
     val startWeek: Int,
+    /** 结束周次（如第 16 周） */
     val endWeek: Int,
-    val weekType: Int = WEEK_TYPE_ALL, // 0=All, 1=Odd, 2=Even
+    /** 周次类型（0=全周, 1=单周, 2=双周），默认全周 */
+    val weekType: Int = WEEK_TYPE_ALL,
     
-    val color: String = "", // Hex color code
+    /** 课程卡片颜色（Hex 颜色代码），用于 UI 展示 */
+    val color: String = "",
     
-    // 调课信息 (Reschedule info)
-    val isModified: Boolean = false, // 是否为调课生成的记录
-    val note: String = "", // 备注信息
-    val originId: Long = 0 // 原始课程 ID，用于关联分裂后的记录
+    // 调课信息
+    /** 是否为调课生成的记录 */
+    val isModified: Boolean = false,
+    /** 备注信息 */
+    val note: String = "",
+    /** 原始课程 ID，用于关联分裂后的记录 */
+    val originId: Long = 0
 ) {
     companion object {
         /** 周次类型：每周都上 */

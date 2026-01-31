@@ -37,6 +37,11 @@ class CourseRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * 根据原始 ID 获取课程列表
+     *
+     * 通常用于查找由同一门课程调课分裂出的所有记录。
+     */
     override suspend fun getCoursesByOriginId(originId: Long): List<Course> {
         return courseDao.getCoursesByOriginId(originId).map { it.toDomain() }
     }
@@ -82,6 +87,11 @@ class CourseRepositoryImpl @Inject constructor(
         courseDao.deleteCourseById(id)
     }
 
+    /**
+     * 批量更新所有课程的时长
+     *
+     * 调用 DAO 层进行事务处理，确保原子性。
+     */
     override suspend fun updateAllCoursesDuration(duration: Int) {
         courseDao.updateAllCoursesDuration(duration)
     }

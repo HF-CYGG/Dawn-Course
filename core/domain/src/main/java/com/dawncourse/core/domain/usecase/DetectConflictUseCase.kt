@@ -33,6 +33,16 @@ class DetectConflictUseCase @Inject constructor() {
         }
     }
 
+    /**
+     * 判断周次是否有重叠
+     *
+     * 逻辑：
+     * 1. 首先检查周次范围是否有交集 (max(start) <= min(end))
+     * 2. 如果范围有交集，再根据单双周类型判断：
+     *    - 如果任一方是全周 (WEEK_TYPE_ALL)，则一定冲突
+     *    - 如果双方周类型相同 (同为单周或同为双周)，则一定冲突
+     *    - 如果一方单周一方双周，则不冲突
+     */
     private fun isWeekOverlap(c1: Course, c2: Course): Boolean {
         // 简单周次范围检查
         val startMax = maxOf(c1.startWeek, c2.startWeek)
@@ -51,6 +61,13 @@ class DetectConflictUseCase @Inject constructor() {
         return false
     }
 
+    /**
+     * 判断节次是否有重叠
+     *
+     * 逻辑：
+     * 计算两个时间段 [start, end] 是否有交集。
+     * 交集条件：max(start1, start2) <= min(end1, end2)
+     */
     private fun isSectionOverlap(c1: Course, c2: Course): Boolean {
         val s1Start = c1.startSection
         val s1End = c1.startSection + c1.duration - 1
