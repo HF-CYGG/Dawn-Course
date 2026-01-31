@@ -12,3 +12,4 @@
 /docs/
 /xiaoai-schedule-parser-main/
 .gitignore
+logs/
