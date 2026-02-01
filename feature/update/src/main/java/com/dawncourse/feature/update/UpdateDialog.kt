@@ -39,6 +39,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdateDialog(
@@ -48,6 +59,8 @@ fun UpdateDialog(
     onIgnore: () -> Unit, // 新增：跳过此版本
     isUpdate: Boolean = true // 新增：是否为更新弹窗（false 为版本详情）
 ) {
+    var expanded by remember { mutableStateOf(false) }
+
     // 使用 BasicAlertDialog 获取完全的自定义控制权
     BasicAlertDialog(
         onDismissRequest = { if (!info.isForce) onDismiss() }, // 强制更新不可点击外部关闭
@@ -145,13 +158,45 @@ fun UpdateDialog(
                 ) {
                     if (isUpdate) {
                         if (!info.isForce) {
-                            // 稍后/跳过按钮
-                            OutlinedButton(
-                                onClick = onIgnore, // 改为调用 onIgnore，实现“跳过此版本”
+                            // Split Button: 左侧稍后(Dismiss)，右侧下拉忽略(Ignore)
+                            Row(
                                 modifier = Modifier.weight(1f),
-                                shape = CircleShape
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("跳过")
+                                // 左侧：稍后 (Dismiss)
+                                OutlinedButton(
+                                    onClick = onDismiss,
+                                    modifier = Modifier.weight(1f).zIndex(1f),
+                                    shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp, topEnd = 0.dp, bottomEnd = 0.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("稍后")
+                                }
+                                
+                                // 右侧：菜单触发器
+                                Box {
+                                    OutlinedButton(
+                                        onClick = { expanded = true },
+                                        modifier = Modifier.offset(x = (-1).dp), // 边框重叠
+                                        shape = RoundedCornerShape(topStart = 0.dp, bottomStart = 0.dp, topEnd = 24.dp, bottomEnd = 24.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp)
+                                    ) {
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "更多选项")
+                                    }
+                                    
+                                    DropdownMenu(
+                                        expanded = expanded,
+                                        onDismissRequest = { expanded = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("忽略此版本") },
+                                            onClick = {
+                                                expanded = false
+                                                onIgnore()
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                         
