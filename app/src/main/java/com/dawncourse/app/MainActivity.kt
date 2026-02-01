@@ -195,6 +195,28 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+
+                        // 全局更新弹窗
+                        if (showUpdateDialog) {
+                            val info = (updateUiState as? UpdateUiState.Available)?.updateInfo
+                            val currentVersion = (updateUiState as? UpdateUiState.NoUpdate)?.currentVersion
+                            
+                            if (info != null || currentVersion != null) {
+                                UpdateDialog(
+                                    updateInfo = info,
+                                    currentVersion = currentVersion,
+                                    onDismiss = { updateViewModel.dismissDialog() },
+                                    onUpdate = { url ->
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            startActivity(intent)
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             } else {

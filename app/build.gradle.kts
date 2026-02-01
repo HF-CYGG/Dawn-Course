@@ -86,6 +86,7 @@ dependencies {
     implementation(project(":feature:import"))
     implementation(project(":feature:widget"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:update"))
 
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)

@@ -55,3 +55,4 @@ logs/
 # Specific project ignores
 /docs/
 /xiaoai-schedule-parser-main/
+/server/

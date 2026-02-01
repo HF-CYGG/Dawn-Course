@@ -22,3 +22,5 @@ include(":feature:timetable")
 include(":feature:import")
 include(":feature:widget") // Phase 3
 include(":feature:settings") // Phase 4
+include(":feature:update")
+

@@ -293,10 +293,23 @@ fun SettingsScreen(
                     valueRange = 0f..1f,
                     valueText = { "${(it * 100).toInt()}%" },
                     description = "调节背景图的亮度",
-                    showDivider = true
+                    showDivider = false
                 )
             }
         }
+
+        SettingsSection(title = "关于") {
+            SettingRow(
+                title = "检查更新",
+                description = "查看是否有新版本",
+                icon = { Icon(Icons.Default.Update, null) },
+                onClick = onCheckUpdate
+            )
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+    }
+}
 
             Spacer(modifier = Modifier.height(24.dp))
 
