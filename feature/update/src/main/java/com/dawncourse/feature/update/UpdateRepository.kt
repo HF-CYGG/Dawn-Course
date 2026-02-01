@@ -24,7 +24,7 @@ class UpdateRepository @Inject constructor() {
 
     private val api: UpdateApi by lazy {
         Retrofit.Builder()
-            .baseUrl("https://yyh163.xyz/")
+            .baseUrl("http://yyh163.xyz:10000/")
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
