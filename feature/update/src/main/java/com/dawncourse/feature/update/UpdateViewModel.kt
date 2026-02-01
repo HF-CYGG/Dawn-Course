@@ -56,6 +56,9 @@ class UpdateViewModel @Inject constructor(
                 }
             }.onFailure {
                 _uiState.value = UpdateUiState.Error(it.message ?: "Network error")
+                if (manual) {
+                    _showDialog.value = true
+                }
             }
         }
     }

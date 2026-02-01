@@ -444,6 +444,18 @@ fun SettingsScreen(
                 )
             }
             
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 6. 关于 (About)
+            PreferenceCategory(title = "关于") {
+                SettingRow(
+                    title = "检查更新",
+                    description = "查看是否有新版本",
+                    icon = { Icon(Icons.Default.Update, null) },
+                    onClick = onCheckUpdate
+                )
+            }
+            
             Spacer(modifier = Modifier.height(32.dp))
         }
     }

@@ -38,6 +38,9 @@ import androidx.lifecycle.ViewModelProvider
 import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 
 /**
  * 应用程序主 Activity
@@ -210,23 +213,42 @@ class MainActivity : ComponentActivity() {
 
                         // 全局更新弹窗
                         if (showUpdateDialog) {
-                            val info = (updateUiState as? UpdateUiState.Available)?.updateInfo
-                            val currentVersion = (updateUiState as? UpdateUiState.NoUpdate)?.currentVersion
-                            
-                            if (info != null || currentVersion != null) {
-                                UpdateDialog(
-                                    updateInfo = info,
-                                    currentVersion = currentVersion,
-                                    onDismiss = { updateViewModel.dismissDialog() },
-                                    onUpdate = { url ->
-                                        try {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                            startActivity(intent)
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
+                            when (val state = updateUiState) {
+                                is UpdateUiState.Available -> {
+                                    UpdateDialog(
+                                        updateInfo = state.updateInfo,
+                                        onDismiss = { updateViewModel.dismissDialog() },
+                                        onUpdate = { url ->
+                                            try {
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                startActivity(intent)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
+                                is UpdateUiState.NoUpdate -> {
+                                    UpdateDialog(
+                                        updateInfo = null,
+                                        currentVersion = state.currentVersion,
+                                        onDismiss = { updateViewModel.dismissDialog() },
+                                        onUpdate = {}
+                                    )
+                                }
+                                is UpdateUiState.Error -> {
+                                    AlertDialog(
+                                        onDismissRequest = { updateViewModel.dismissDialog() },
+                                        title = { Text("检查失败") },
+                                        text = { Text(state.message) },
+                                        confirmButton = {
+                                            TextButton(onClick = { updateViewModel.dismissDialog() }) {
+                                                Text("确定")
+                                            }
+                                        }
+                                    )
+                                }
+                                else -> {}
                             }
                         }
                     }
