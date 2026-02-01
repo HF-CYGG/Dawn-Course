@@ -88,34 +88,40 @@ fun UpdateDialog(
                         modifier = Modifier.size(64.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
+                    
+                    // 版本号 Badge (移动到右上角，避免遮挡标题)
+                    Card(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                        )
+                    ) {
+                        val displayText = if (info.versionName.startsWith("v", ignoreCase = true)) {
+                            info.versionName
+                        } else {
+                            "v${info.versionName}"
+                        }
+                        Text(
+                            text = displayText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
                 }
 
                 // 2. 内容区域
                 Column(modifier = Modifier.padding(24.dp)) {
-                    // 标题与版本号
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text(
-                            text = info.title.orEmpty().ifEmpty { "发现新版本" },
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        SuggestionChip(
-                            onClick = {},
-                            label = { 
-                                val displayText = if (info.versionName.startsWith("v", ignoreCase = true)) {
-                                    info.versionName
-                                } else {
-                                    "v${info.versionName}"
-                                }
-                                Text(displayText) 
-                            },
-                            colors = SuggestionChipDefaults.suggestionChipColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer
-                            ),
-                            border = null
-                        )
-                    }
+                    // 标题
+                    Text(
+                        text = info.title.orEmpty().ifEmpty { "发现新版本" },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
                     
