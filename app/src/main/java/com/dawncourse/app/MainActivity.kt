@@ -241,7 +241,17 @@ class MainActivity : ComponentActivity() {
                                             android.widget.Toast.makeText(this@MainActivity, "未找到浏览器，无法下载", android.widget.Toast.LENGTH_SHORT).show()
                                         }
                                     },
-                                    onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) }
+                                    onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) },
+                                    isUpdate = true
+                                )
+                            }
+                            is UpdateUiState.VersionInfo -> {
+                                UpdateDialog(
+                                    info = state.updateInfo,
+                                    onDismiss = { updateViewModel.dismissDialog() },
+                                    onUpdate = {},
+                                    onIgnore = {},
+                                    isUpdate = false
                                 )
                             }
                             else -> {}

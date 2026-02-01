@@ -45,7 +45,8 @@ fun UpdateDialog(
     info: UpdateInfo,
     onUpdate: () -> Unit,
     onDismiss: () -> Unit,
-    onIgnore: () -> Unit // 新增：跳过此版本
+    onIgnore: () -> Unit, // 新增：跳过此版本
+    isUpdate: Boolean = true // 新增：是否为更新弹窗（false 为版本详情）
 ) {
     // 使用 BasicAlertDialog 获取完全的自定义控制权
     BasicAlertDialog(
@@ -142,27 +143,41 @@ fun UpdateDialog(
                         .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (!info.isForce) {
-                        // 稍后/跳过按钮
-                        OutlinedButton(
-                            onClick = onIgnore, // 改为调用 onIgnore，实现“跳过此版本”
-                            modifier = Modifier.weight(1f),
-                            shape = CircleShape
-                        ) {
-                            Text("跳过")
+                    if (isUpdate) {
+                        if (!info.isForce) {
+                            // 稍后/跳过按钮
+                            OutlinedButton(
+                                onClick = onIgnore, // 改为调用 onIgnore，实现“跳过此版本”
+                                modifier = Modifier.weight(1f),
+                                shape = CircleShape
+                            ) {
+                                Text("跳过")
+                            }
                         }
-                    }
-                    
-                    // 立即更新按钮
-                    Button(
-                        onClick = onUpdate,
-                        modifier = Modifier.weight(1f),
-                        shape = CircleShape,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Text("立即更新")
+                        
+                        // 立即更新按钮
+                        Button(
+                            onClick = onUpdate,
+                            modifier = Modifier.weight(1f),
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text("立即更新")
+                        }
+                    } else {
+                        // 显示“我知道了”按钮
+                        Button(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = CircleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Text("我知道了")
+                        }
                     }
                 }
             }

@@ -20,6 +20,7 @@ sealed class UpdateUiState {
     data object Idle : UpdateUiState()
     data object Checking : UpdateUiState()
     data class Available(val updateInfo: UpdateInfo) : UpdateUiState()
+    data class VersionInfo(val updateInfo: UpdateInfo) : UpdateUiState()
     data class NoUpdate(val currentVersion: String) : UpdateUiState()
     data class Error(val message: String) : UpdateUiState()
 }
@@ -63,9 +64,8 @@ class UpdateViewModel @Inject constructor(
                     if (shouldShow) {
                         _uiState.value = UpdateUiState.Available(info)
                     } else if (isManual) {
-                        // 手动检查但没更新，弹出 Toast
-                        _eventFlow.emit(UpdateEvent.ShowToast("当前已是最新版本"))
-                        _uiState.value = UpdateUiState.Idle
+                        // 手动检查但没更新，显示版本详情弹窗
+                        _uiState.value = UpdateUiState.VersionInfo(info)
                     } else {
                         _uiState.value = UpdateUiState.Idle
                     }
