@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
@@ -48,6 +49,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
@@ -598,10 +601,13 @@ fun TimeGridSelector(
     startNode: Int,
     duration: Int,
     conflictSlots: Set<Pair<Int, Int>> = emptySet(),
-    onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit
+    onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit,
+    originalDay: Int = -1,
+    originalStartNode: Int = -1
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
     val rowHeightPx = with(density) { 32.dp.toPx() } // Increased touch target
     var dragAnchorDay by remember { mutableStateOf<Int?>(null) }
     var dragAnchorNode by remember { mutableStateOf<Int?>(null) }
@@ -656,6 +662,7 @@ fun TimeGridSelector(
                 for (day in 1..7) {
                     val isSelected = day == selectedDay && node >= startNode && node < startNode + duration
                     val isConflict = conflictSlots.contains(day to node)
+                    val isOriginalSlot = day == originalDay && node >= originalStartNode && node < originalStartNode + duration
                     
                     val isHead = day == selectedDay && node == startNode
                     val isTail = day == selectedDay && node == startNode + duration - 1
@@ -666,13 +673,14 @@ fun TimeGridSelector(
                         isHead -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 2.dp, bottomEnd = 2.dp)
                         isTail -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp, topStart = 2.dp, topEnd = 2.dp)
                         isSelected -> RoundedCornerShape(2.dp) // Connected middle parts
-                        isConflict -> RoundedCornerShape(4.dp)
+                        isConflict || isOriginalSlot -> RoundedCornerShape(4.dp)
                         else -> CircleShape
                     }
                     
                     val color by animateColorAsState(
                         when {
                             isSelected -> MaterialTheme.colorScheme.primary
+                            isOriginalSlot -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                             isConflict -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
                             else -> Color.Transparent
                         },
@@ -686,8 +694,13 @@ fun TimeGridSelector(
                             .fillMaxSize()
                             .clip(shape)
                             .background(color)
-                            .pointerInput(Unit) {
+                            .pointerInput(isOriginalSlot) {
                                 detectTapGestures {
+                                    if (isOriginalSlot) {
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        Toast.makeText(context, "不能调整为原时间", Toast.LENGTH_SHORT).show()
+                                        return@detectTapGestures
+                                    }
                                     if (day == selectedDay) {
                                         if (node == startNode && duration > 1) {
                                             updateSelection(day, node, 1)
@@ -703,7 +716,8 @@ fun TimeGridSelector(
                                     }
                                 }
                             }
-                            .pointerInput(day, node) {
+                            .pointerInput(day, node, isOriginalSlot) {
+                                if (isOriginalSlot) return@pointerInput
                                 detectDragGestures(
                                     onDragStart = { offset ->
                                         dragAnchorDay = day
@@ -733,7 +747,14 @@ fun TimeGridSelector(
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!isSelected && !isConflict) {
+                        if (isOriginalSlot) {
+                            Icon(
+                                imageVector = Icons.Default.Block,
+                                contentDescription = "Original Time",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        } else if (!isSelected && !isConflict) {
                             Box(
                                 modifier = Modifier
                                     .size(4.dp)

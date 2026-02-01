@@ -331,10 +331,10 @@ private fun TimeLocationStep(
         modifier = Modifier.verticalScroll(scrollState)
     ) {
         // Target Weeks Selection
-        TargetWeekSelectionCard(
-            sourceCount = uiState.selectedWeeks.size,
+        RescheduleInfoCard(
+            sourceWeeks = uiState.selectedWeeks,
             targetWeeks = uiState.targetWeeks,
-            onEditClick = { showWeekPicker = true }
+            onEditTarget = { showWeekPicker = true }
         )
 
         // Time Selector
@@ -375,7 +375,9 @@ private fun TimeLocationStep(
                     startNode = uiState.newStartNode,
                     duration = uiState.originalCourse?.duration ?: 2,
                     conflictSlots = uiState.conflictInfo.conflictSlots,
-                    onSelectionChange = { day, start, _ -> onTimeChange(day, start) }
+                    onSelectionChange = { day, start, _ -> onTimeChange(day, start) },
+                    originalDay = uiState.originalCourse?.dayOfWeek ?: -1,
+                    originalStartNode = uiState.originalCourse?.startSection ?: -1
                 )
             }
         }
@@ -613,71 +615,99 @@ private fun getDayText(day: Int): String {
 }
 
 @Composable
-private fun TargetWeekSelectionCard(
-    sourceCount: Int,
+private fun RescheduleInfoCard(
+    sourceWeeks: Set<Int>,
     targetWeeks: Set<Int>,
-    onEditClick: () -> Unit
+    onEditTarget: () -> Unit
 ) {
     Card(
-        onClick = onEditClick,
-        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            containerColor = MaterialTheme.colorScheme.surfaceContainer
         ),
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left: Title and Hint
-            Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Source (Read-only)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "调整周次",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "需变动的原周次",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Text(
-                    text = "目标周次",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "需选择 $sourceCount 个周",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
+                    text = sourceWeeks.sorted().joinToString(", ") { "$it" } + " 周",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
                 )
             }
 
-            // Right: Result Display
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (targetWeeks.isEmpty()) {
-                    Text("点击设置", fontWeight = FontWeight.Bold)
-                } else {
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+
+            // Target (Interactive)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onEditTarget() },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = targetWeeks.sorted().joinToString(", ") { "$it" },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        text = "目标周次",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = " 周",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(top = 4.dp)
+                        text = "调整到的新周次",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
                 
-                Spacer(modifier = Modifier.width(12.dp))
-                
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(MaterialTheme.colorScheme.surface, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (targetWeeks.isEmpty()) {
+                        Text(
+                            text = "点击设置",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = targetWeeks.sorted().joinToString(", ") { "$it" },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = " 周",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 4.dp, start = 2.dp)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = "修改",
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }

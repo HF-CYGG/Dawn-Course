@@ -114,10 +114,12 @@ class CourseRescheduleViewModel @Inject constructor(
         
         val hasConflict = conflictingCourses.isNotEmpty()
         val message = if (hasConflict) {
-             val names = conflictingCourses.joinToString("、") { 
-                 if (it.location.isNotBlank()) "《${it.name}》(${it.location})" else "《${it.name}》" 
-             }
-             "与 $names 冲突"
+             val names = conflictingCourses
+                 .distinctBy { it.id }
+                 .joinToString("、") { 
+                     if (it.location.isNotBlank()) "《${it.name}》(${it.location})" else "《${it.name}》" 
+                 }
+             "与 $names 等 ${conflictingCourses.map { it.id }.distinct().size} 门课冲突"
         } else ""
 
         _uiState.update { it.copy(
