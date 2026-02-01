@@ -211,6 +211,18 @@ class CourseRescheduleViewModel @Inject constructor(
     }
 
     /**
+     * 批量更新目标周次
+     *
+     * 用于周次选择弹窗确认后，一次性更新所有目标周次。
+     */
+    fun updateTargetWeeks(weeks: Set<Int>) {
+        _uiState.update { 
+            it.copy(targetWeeks = weeks)
+        }
+        recalculateConflicts()
+    }
+
+    /**
      * 切换全选状态
      * 如果已全选，则取消全选；否则全选。
      */

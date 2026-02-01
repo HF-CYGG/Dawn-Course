@@ -129,6 +129,7 @@ fun CourseRescheduleSheet(
                     RescheduleStep.SET_TIME_LOCATION -> {
                         TimeLocationStep(
                             uiState = uiState,
+                            onTargetWeeksChange = viewModel::updateTargetWeeks,
                             onTimeChange = viewModel::updateNewTime,
                             onLocationChange = viewModel::updateNewLocation,
                             onNoteChange = viewModel::updateNote,
@@ -303,33 +304,37 @@ private fun WeekSelectionStep(
 @Composable
 private fun TimeLocationStep(
     uiState: RescheduleUiState,
+    onTargetWeeksChange: (Set<Int>) -> Unit,
     onTimeChange: (Int, Int) -> Unit,
     onLocationChange: (String) -> Unit,
     onNoteChange: (String) -> Unit,
     onNext: () -> Unit
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
+    var showWeekPicker by remember { mutableStateOf(false) }
+
+    if (showWeekPicker) {
+        TargetWeekPickerDialog(
+            requiredCount = uiState.selectedWeeks.size,
+            initialSelection = uiState.targetWeeks,
+            onDismiss = { showWeekPicker = false },
+            onConfirm = { 
+                onTargetWeeksChange(it)
+                showWeekPicker = false 
+            }
+        )
+    }
     
     Column(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.verticalScroll(scrollState)
     ) {
-        // Week Summary (Pure Display)
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("调整对象", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(4.dp))
-                val weeksText = uiState.targetWeeks.sorted().joinToString(", ")
-                Text(
-                    text = "第 $weeksText 周",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+        // Target Weeks Selection
+        TargetWeekSelectionCard(
+            sourceCount = uiState.selectedWeeks.size,
+            targetWeeks = uiState.targetWeeks,
+            onEditClick = { showWeekPicker = true }
+        )
 
         // Time Selector
         Card(
@@ -603,5 +608,114 @@ private fun getDayText(day: Int): String {
         6 -> "六"
         7 -> "日"
         else -> ""
+    }
+}
+
+@Composable
+private fun TargetWeekSelectionCard(
+    sourceCount: Int,
+    targetWeeks: Set<Int>,
+    onEditClick: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth().clickable { onEditClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "新周次 (将平移 ${sourceCount} 周)", 
+                    style = MaterialTheme.typography.labelMedium, 
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                if (targetWeeks.isEmpty()) {
+                    Text("点击选择新周次", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+                } else {
+                    val weeksText = targetWeeks.sorted().joinToString(", ")
+                    Text(
+                        text = "第 $weeksText 周",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TargetWeekPickerDialog(
+    requiredCount: Int,
+    initialSelection: Set<Int>,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Int>) -> Unit
+) {
+    var currentSelection by remember { mutableStateOf(initialSelection) }
+    val isValid = currentSelection.size == requiredCount
+    
+    BasicAlertDialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(
+                    text = "请选择 $requiredCount 个新周次",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                WeekGridSelector(
+                    availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+                    enabledWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+                    selectedWeeks = currentSelection,
+                    onToggleWeek = { week ->
+                        currentSelection = if (currentSelection.contains(week)) {
+                            currentSelection - week
+                        } else {
+                            currentSelection + week
+                        }
+                    },
+                    modifier = Modifier.height(300.dp)
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val diff = currentSelection.size - requiredCount
+                    val hintText = when {
+                        diff < 0 -> "还差 ${-diff} 个"
+                        diff > 0 -> "多了 $diff 个"
+                        else -> "数量符合"
+                    }
+                    val hintColor = if (isValid) androidx.compose.ui.graphics.Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                    
+                    Text(text = hintText, color = hintColor, style = MaterialTheme.typography.bodyMedium)
+                    
+                    Button(
+                        onClick = { onConfirm(currentSelection) },
+                        enabled = isValid
+                    ) {
+                        Text("确定")
+                    }
+                }
+            }
+        }
     }
 }
