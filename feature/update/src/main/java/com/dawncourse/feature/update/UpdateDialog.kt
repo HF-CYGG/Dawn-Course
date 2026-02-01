@@ -34,9 +34,10 @@ import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun UpdateDialog(
-    updateInfo: UpdateInfo,
+    updateInfo: UpdateInfo?,
+    currentVersion: String? = null,
     onDismiss: () -> Unit,
-    onUpdate: (String) -> Unit // URL
+    onUpdate: (String) -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
     
@@ -83,7 +84,7 @@ fun UpdateDialog(
 
                 // Title
                 Text(
-                    text = "版本详情",
+                    text = if (isUpdateAvailable) "发现新版本" else "版本信息",
                     style = MaterialTheme.typography.headlineSmall,
                     color = contentColor,
                     fontWeight = FontWeight.Bold
@@ -91,74 +92,94 @@ fun UpdateDialog(
                 
                 // Version
                 Text(
-                    text = updateInfo.versionName,
+                    text = updateInfo?.versionName ?: currentVersion ?: "",
                     style = MaterialTheme.typography.titleMedium,
                     color = versionColor,
                     modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
                 )
 
-                // Info Row (Badge + Date)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        color = Color(0xFFEBC24F), // Yellowish badge
-                        shape = RoundedCornerShape(16.dp)
+                if (isUpdateAvailable && updateInfo != null) {
+                    // Info Row (Badge + Date)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = Color(0xFFEBC24F), // Yellowish badge
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text(
+                                text = "功能更新",
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.Black
+                            )
+                        }
+                        
+                        Text(
+                            text = updateInfo.date,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = contentColor.copy(alpha = 0.6f)
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Content
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                            .padding(16.dp)
                     ) {
                         Text(
-                            text = "功能更新",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.Black
+                            text = "更新内容",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = contentColor,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
                         )
+                        
+                        Box(modifier = Modifier.height(150.dp)) {
+                             Text(
+                                text = updateInfo.updateContent,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = contentColor.copy(alpha = 0.8f),
+                                modifier = Modifier.verticalScroll(rememberScrollState())
+                            )
+                        }
                     }
-                    
-                    Text(
-                        text = updateInfo.date,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = contentColor.copy(alpha = 0.6f)
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
 
-                // Content
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "更新内容",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = contentColor,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    
-                    Box(modifier = Modifier.height(150.dp)) {
-                         Text(
-                            text = updateInfo.updateContent,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = contentColor.copy(alpha = 0.8f),
-                            modifier = Modifier.verticalScroll(rememberScrollState())
-                        )
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Button
+                    Button(
+                        onClick = { onUpdate(updateInfo.downloadUrl) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(text = "立即更新", color = Color.White)
                     }
-                }
+                } else {
+                    // No update
+                    Text(
+                        text = "当前已是最新版本",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = contentColor
+                    )
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Button
-                Button(
-                    onClick = { onDismiss() }, // For now just dismiss, or onUpdate(updateInfo.downloadUrl)
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(text = "我知道了", color = Color.White)
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(text = "确定", color = Color.White)
+                    }
                 }
             }
         }

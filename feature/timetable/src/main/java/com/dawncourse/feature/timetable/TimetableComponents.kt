@@ -58,6 +58,8 @@ import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.core.ui.util.CourseColorUtils
 import java.time.LocalDate
+import java.time.DayOfWeek
+import java.time.temporal.TemporalAdjusters
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -67,12 +69,8 @@ import androidx.compose.material3.CardDefaults
 
 // 常量定义
 // val NODE_HEIGHT = 56.dp // 单节课高度 (Moved to AppSettings)
-val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
+const val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
-
-import java.time.DayOfWeek
-import java.time.LocalDate
-import java.time.temporal.TemporalAdjusters
 
 /**
  * 周次头部栏组件

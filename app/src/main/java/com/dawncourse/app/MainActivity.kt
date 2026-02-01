@@ -24,6 +24,10 @@ import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
+import android.net.Uri
+import com.dawncourse.feature.update.UpdateDialog
+import com.dawncourse.feature.update.UpdateUiState
+import com.dawncourse.feature.update.UpdateViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +65,11 @@ class MainActivity : ComponentActivity() {
         // 设置 Compose 内容视图
         setContent {
             val uiState by viewModel.uiState.collectAsState()
+            
+            // 全局 UpdateViewModel
+            val updateViewModel: UpdateViewModel = hiltViewModel()
+            val updateUiState by updateViewModel.uiState.collectAsState()
+            val showUpdateDialog by updateViewModel.showDialog.collectAsState()
 
             // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
             if (uiState is MainUiState.Success) {
@@ -147,6 +156,9 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onNavigateToTimetableSettings = {
                                         navController.navigate("timetable_settings")
+                                    },
+                                    onCheckUpdate = {
+                                        updateViewModel.checkUpdate(manual = true)
                                     }
                                 )
                             }

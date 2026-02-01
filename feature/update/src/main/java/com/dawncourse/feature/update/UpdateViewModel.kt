@@ -16,7 +16,7 @@ sealed class UpdateUiState {
     data object Idle : UpdateUiState()
     data object Checking : UpdateUiState()
     data class Available(val updateInfo: UpdateInfo) : UpdateUiState()
-    data object NoUpdate : UpdateUiState()
+    data class NoUpdate(val currentVersion: String) : UpdateUiState()
     data class Error(val message: String) : UpdateUiState()
 }
 

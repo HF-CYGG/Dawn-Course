@@ -46,6 +46,7 @@ import com.dawncourse.core.domain.model.WallpaperMode
 fun SettingsScreen(
     onBackClick: () -> Unit,
     onNavigateToTimetableSettings: () -> Unit,
+    onCheckUpdate: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -298,7 +299,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsSection(title = "关于") {
+        PreferenceCategory(title = "关于") {
             SettingRow(
                 title = "检查更新",
                 description = "查看是否有新版本",
@@ -308,8 +309,6 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(32.dp))
-    }
-}
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -448,7 +447,10 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
+    
+
 }
+
 
 @Composable
 private fun CourseCardPreview(
@@ -538,9 +540,8 @@ private fun CourseCardPreview(
                     }
                     Text(
                         text = "高等数学",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
                         text = "@3-205",
@@ -562,3 +563,4 @@ private fun CourseCardPreview(
         )
     }
 }
+
