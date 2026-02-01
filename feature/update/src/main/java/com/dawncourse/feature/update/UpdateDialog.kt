@@ -88,7 +88,14 @@ fun UpdateDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         SuggestionChip(
                             onClick = {},
-                            label = { Text("v${info.versionName}") },
+                            label = { 
+                                val displayText = if (info.versionName.startsWith("v", ignoreCase = true)) {
+                                    info.versionName
+                                } else {
+                                    "v${info.versionName}"
+                                }
+                                Text(displayText) 
+                            },
                             colors = SuggestionChipDefaults.suggestionChipColors(
                                 containerColor = MaterialTheme.colorScheme.secondaryContainer
                             ),
