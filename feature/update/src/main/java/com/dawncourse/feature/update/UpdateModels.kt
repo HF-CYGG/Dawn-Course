@@ -8,8 +8,10 @@ import com.google.gson.annotations.SerializedName
 data class UpdateInfo(
     @SerializedName("versionCode") val versionCode: Int,
     @SerializedName("versionName") val versionName: String,
-    @SerializedName("updateContent") val updateContent: String,
+    @SerializedName("isForce") val isForce: Boolean = false,
+    @SerializedName("title") val title: String,
+    @SerializedName("content") val content: String,
     @SerializedName("downloadUrl") val downloadUrl: String,
-    @SerializedName("date") val date: String,
-    @SerializedName("forceUpdate") val forceUpdate: Boolean = false
+    @SerializedName("releaseDate") val releaseDate: String,
+    @SerializedName("sha256") val sha256: String? = null
 )

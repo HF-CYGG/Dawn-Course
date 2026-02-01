@@ -1,7 +1,6 @@
 package com.dawncourse.feature.update
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,176 +8,153 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.rounded.RocketLaunch
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdateDialog(
-    updateInfo: UpdateInfo?,
-    currentVersion: String? = null,
+    info: UpdateInfo,
+    onUpdate: () -> Unit,
     onDismiss: () -> Unit,
-    onUpdate: (String) -> Unit
+    onIgnore: () -> Unit // 新增：跳过此版本
 ) {
-    val isDark = isSystemInDarkTheme()
-    
-    // Custom Colors matching screenshot
-    val backgroundColor = if (isDark) Color(0xFF3E2C28) else Color(0xFFFFF0F0)
-    val contentColor = if (isDark) Color(0xFFE6E1E5) else Color(0xFF1C1B1F)
-    val badgeColor = Color(0xFFE8DEF8) // Light purple/yellowish
-    val badgeTextColor = Color(0xFF1D192B)
-    val buttonColor = Color(0xFF006D85) // Blueish
-    val versionColor = Color(0xFF4FD8EB) // Cyan-ish for dark mode
-
-    val isUpdateAvailable = updateInfo != null
-    
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = !(updateInfo?.forceUpdate ?: false),
-            dismissOnClickOutside = !(updateInfo?.forceUpdate ?: false)
-        )
+    // 使用 BasicAlertDialog 获取完全的自定义控制权
+    BasicAlertDialog(
+        onDismissRequest = { if (!info.isForce) onDismiss() }, // 强制更新不可点击外部关闭
+        properties = DialogProperties(dismissOnBackPress = !info.isForce)
     ) {
-        Surface(
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             shape = RoundedCornerShape(28.dp),
-            color = backgroundColor,
-            modifier = Modifier.fillMaxWidth()
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Header Icon
+            Column {
+                // 1. 顶部视觉区域 (Header Art)
                 Box(
                     modifier = Modifier
-                        .padding(bottom = 16.dp)
-                        .background(buttonColor.copy(alpha = 0.1f), shape = RoundedCornerShape(50)),
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Info,
+                        imageVector = Icons.Rounded.RocketLaunch, // 或 CloudDownload
                         contentDescription = null,
-                        tint = buttonColor,
-                        modifier = Modifier.padding(12.dp)
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
 
-                // Title
-                Text(
-                    text = if (isUpdateAvailable) "发现新版本" else "版本信息",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = contentColor,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                // Version
-                Text(
-                    text = updateInfo?.versionName ?: currentVersion ?: "",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = versionColor,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
-                )
-
-                if (isUpdateAvailable && updateInfo != null) {
-                    // Info Row (Badge + Date)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            color = Color(0xFFEBC24F), // Yellowish badge
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Text(
-                                text = "功能更新",
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Color.Black
-                            )
-                        }
-                        
+                // 2. 内容区域
+                Column(modifier = Modifier.padding(24.dp)) {
+                    // 标题与版本号
+                    Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = updateInfo.date,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = contentColor.copy(alpha = 0.6f)
+                            text = info.title.ifEmpty { "发现新版本" },
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        SuggestionChip(
+                            onClick = {},
+                            label = { Text("v${info.versionName}") },
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            ),
+                            border = null
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
                     
+                    // 日期
+                    Text(
+                        text = "发布于 ${info.releaseDate}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Content
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color.Black.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
-                            .padding(16.dp)
-                    ) {
+                    // 更新日志 (支持滚动)
+                    Text(
+                        text = "更新内容",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Box(modifier = Modifier.heightIn(max = 200.dp)) {
+                        val scrollState = rememberScrollState()
                         Text(
-                            text = "更新内容",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = contentColor,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            text = info.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 24.sp,
+                            modifier = Modifier.verticalScroll(scrollState)
                         )
-                        
-                        Box(modifier = Modifier.height(150.dp)) {
-                             Text(
-                                text = updateInfo.updateContent,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = contentColor.copy(alpha = 0.8f),
-                                modifier = Modifier.verticalScroll(rememberScrollState())
-                            )
+                    }
+                }
+
+                // 3. 底部按钮区域
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (!info.isForce) {
+                        // 稍后/跳过按钮
+                        OutlinedButton(
+                            onClick = onIgnore, // 改为调用 onIgnore，实现“跳过此版本”
+                            modifier = Modifier.weight(1f),
+                            shape = CircleShape
+                        ) {
+                            Text("跳过")
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Button
-                    Button(
-                        onClick = { onUpdate(updateInfo.downloadUrl) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(text = "立即更新", color = Color.White)
-                    }
-                } else {
-                    // No update
-                    Text(
-                        text = "当前已是最新版本",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = contentColor
-                    )
                     
-                    Spacer(modifier = Modifier.height(24.dp))
-
+                    // 立即更新按钮
                     Button(
-                        onClick = onDismiss,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
-                        shape = RoundedCornerShape(12.dp)
+                        onClick = onUpdate,
+                        modifier = Modifier.weight(1f),
+                        shape = CircleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
                     ) {
-                        Text(text = "确定", color = Color.White)
+                        Text("立即更新")
                     }
                 }
             }

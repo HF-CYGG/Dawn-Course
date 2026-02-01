@@ -97,6 +97,9 @@ data class AppSettings(
     val enablePersistentNotification: Boolean = false,
     val enableAutoMute: Boolean = false,
 
+    // 更新设置
+    val ignoredUpdateVersion: Int = 0,
+
     // 性能缓存
     val blurredWallpaperUri: String? = null,
 

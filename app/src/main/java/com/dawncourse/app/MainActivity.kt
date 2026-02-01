@@ -72,7 +72,17 @@ class MainActivity : ComponentActivity() {
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
             val updateUiState by updateViewModel.uiState.collectAsState()
-            val showUpdateDialog by updateViewModel.showDialog.collectAsState()
+
+            // 监听更新事件 (Toast)
+            LaunchedEffect(Unit) {
+                updateViewModel.eventFlow.collect { event ->
+                    when (event) {
+                        is com.dawncourse.feature.update.UpdateEvent.ShowToast -> {
+                            android.widget.Toast.makeText(this@MainActivity, event.message, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            }
 
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {
@@ -217,44 +227,25 @@ class MainActivity : ComponentActivity() {
                         }
 
                         // 全局更新弹窗
-                        if (showUpdateDialog) {
-                            when (val state = updateUiState) {
-                                is UpdateUiState.Available -> {
-                                    UpdateDialog(
-                                        updateInfo = state.updateInfo,
-                                        onDismiss = { updateViewModel.dismissDialog() },
-                                        onUpdate = { url ->
-                                            try {
-                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                startActivity(intent)
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                            }
+                        when (val state = updateUiState) {
+                            is UpdateUiState.Available -> {
+                                UpdateDialog(
+                                    info = state.updateInfo,
+                                    onDismiss = { updateViewModel.dismissDialog() },
+                                    onUpdate = {
+                                        val url = state.updateInfo.downloadUrl
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            startActivity(intent)
+                                        } catch (e: Exception) {
+                                            android.widget.Toast.makeText(this@MainActivity, "未找到浏览器，无法下载", android.widget.Toast.LENGTH_SHORT).show()
                                         }
-                                    )
-                                }
-                                is UpdateUiState.NoUpdate -> {
-                                    UpdateDialog(
-                                        updateInfo = null,
-                                        currentVersion = state.currentVersion,
-                                        onDismiss = { updateViewModel.dismissDialog() },
-                                        onUpdate = {}
-                                    )
-                                }
-                                is UpdateUiState.Error -> {
-                                    AlertDialog(
-                                        onDismissRequest = { updateViewModel.dismissDialog() },
-                                        title = { Text("检查失败") },
-                                        text = { Text(state.message) },
-                                        confirmButton = {
-                                            TextButton(onClick = { updateViewModel.dismissDialog() }) {
-                                                Text("确定")
-                                            }
-                                        }
-                                    )
-                                }
-                                else -> {}
+                                    },
+                                    onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) }
+                                )
                             }
+                            else -> {}
                         }
                     }
                 }

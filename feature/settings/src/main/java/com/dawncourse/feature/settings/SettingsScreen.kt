@@ -437,11 +437,14 @@ fun SettingsScreen(
 
             // 6. 关于 (About)
             PreferenceCategory(title = "关于") {
-                SettingRow(
-                    title = "检查更新",
-                    description = "查看是否有新版本",
-                    icon = { Icon(Icons.Default.Update, null) },
-                    onClick = onCheckUpdate
+                val currentVersion = try {
+                    LocalContext.current.packageManager.getPackageInfo(LocalContext.current.packageName, 0).versionName
+                } catch (e: Exception) {
+                    "Unknown"
+                }
+                UpdateSettingItem(
+                    currentVersion = currentVersion,
+                    onCheckUpdate = onCheckUpdate
                 )
             }
             

@@ -74,6 +74,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val REMINDER_MINUTES = intPreferencesKey("reminder_minutes")
         val ENABLE_PERSISTENT_NOTIFICATION = booleanPreferencesKey("enable_persistent_notification")
         val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
+        val IGNORED_UPDATE_VERSION = intPreferencesKey("ignored_update_version")
         val BLURRED_WALLPAPER_URI = stringPreferencesKey("blurred_wallpaper_uri")
         val BACKGROUND_BLUR = floatPreferencesKey("background_blur")
         val BACKGROUND_BRIGHTNESS = floatPreferencesKey("background_brightness")
@@ -137,6 +138,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val reminderMinutes = preferences[PreferencesKeys.REMINDER_MINUTES] ?: 10
         val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
         val enableAutoMute = preferences[PreferencesKeys.ENABLE_AUTO_MUTE] ?: false
+        val ignoredUpdateVersion = preferences[PreferencesKeys.IGNORED_UPDATE_VERSION] ?: 0
         val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
         val backgroundBlur = preferences[PreferencesKeys.BACKGROUND_BLUR] ?: 0f
         val backgroundBrightness = preferences[PreferencesKeys.BACKGROUND_BRIGHTNESS] ?: 1.0f
@@ -171,6 +173,7 @@ class SettingsRepositoryImpl @Inject constructor(
             reminderMinutes = reminderMinutes,
             enablePersistentNotification = enablePersistentNotification,
             enableAutoMute = enableAutoMute,
+            ignoredUpdateVersion = ignoredUpdateVersion,
             blurredWallpaperUri = blurredWallpaperUri,
             backgroundBlur = backgroundBlur,
             backgroundBrightness = backgroundBrightness
@@ -321,6 +324,10 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setEnableAutoMute(enable: Boolean) {
         dataStore.edit { it[PreferencesKeys.ENABLE_AUTO_MUTE] = enable }
+    }
+
+    override suspend fun setIgnoredUpdateVersion(versionCode: Int) {
+        dataStore.edit { it[PreferencesKeys.IGNORED_UPDATE_VERSION] = versionCode }
     }
 
     override suspend fun setBlurredWallpaperUri(uri: String?) {

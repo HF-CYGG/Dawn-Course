@@ -240,6 +240,13 @@ interface SettingsRepository {
      * @param enable 是否启用
      */
     suspend fun setEnableAutoMute(enable: Boolean)
+
+    /**
+     * 设置忽略的更新版本号
+     *
+     * @param versionCode 版本号
+     */
+    suspend fun setIgnoredUpdateVersion(versionCode: Int)
     
     /**
      * 设置模糊处理后的壁纸 URI
