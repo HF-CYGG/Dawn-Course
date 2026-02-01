@@ -41,16 +41,16 @@ object DatabaseModule {
     @Singleton
     fun provideAppDatabase(@ApplicationContext context: Context): AppDatabase {
         val MIGRATION_4_5 = object : Migration(4, 5) {
-            override fun migrate(database: SupportSQLiteDatabase) {
+            override fun migrate(db: SupportSQLiteDatabase) {
                 // Add originId column
-                database.execSQL("ALTER TABLE courses ADD COLUMN originId INTEGER NOT NULL DEFAULT 0")
-                database.execSQL("UPDATE courses SET originId = id")
+                db.execSQL("ALTER TABLE courses ADD COLUMN originId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE courses SET originId = id")
                 
                 // Add isModified column
-                database.execSQL("ALTER TABLE courses ADD COLUMN isModified INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE courses ADD COLUMN isModified INTEGER NOT NULL DEFAULT 0")
                 
                 // Add note column
-                database.execSQL("ALTER TABLE courses ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE courses ADD COLUMN note TEXT NOT NULL DEFAULT ''")
             }
         }
 

@@ -23,6 +23,8 @@ import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.model.SectionTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 
 /**
  * 课表详细设置页面
@@ -264,13 +266,37 @@ fun TimetableSettingsScreen(
                 )
 
                 // 颜色选择器
+                var showColorPicker by remember { mutableStateOf(false) }
+                val currentColor = try {
+                    Color(android.graphics.Color.parseColor(settings.dividerColor))
+                } catch (e: Exception) {
+                    MaterialTheme.colorScheme.outlineVariant
+                }
+
                 SettingRow(
                     title = "网格线颜色",
-                    showDivider = false
-                ) {
-                    ColorPicker(
-                        selectedColor = settings.dividerColor,
-                        onColorSelected = { viewModel.setDividerColor(it) }
+                    showDivider = false,
+                    action = {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(currentColor)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                        )
+                    },
+                    onClick = { showColorPicker = true }
+                )
+
+                if (showColorPicker) {
+                    ColorPickerDialog(
+                        initialColor = currentColor,
+                        onDismiss = { showColorPicker = false },
+                        onConfirm = { color ->
+                            val hexColor = String.format("#%08X", color.toArgb())
+                            viewModel.setDividerColor(hexColor)
+                            showColorPicker = false
+                        }
                     )
                 }
             }

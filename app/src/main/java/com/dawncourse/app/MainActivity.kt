@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
 
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {
-                updateViewModel.checkUpdate(manual = false)
+                updateViewModel.checkUpdate(isManual = false)
             }
 
             // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
@@ -138,7 +138,6 @@ class MainActivity : ComponentActivity() {
                         ) {
                             // 课程表主页面
                             composable("timetable") {
-                                val context = androidx.compose.ui.platform.LocalContext.current
                                 TimetableRoute(
                                     onSettingsClick = {
                                         navController.navigate("settings")
@@ -176,7 +175,7 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("timetable_settings")
                                     },
                                     onCheckUpdate = {
-                                        updateViewModel.checkUpdate(manual = true)
+                                        updateViewModel.checkUpdate(isManual = true)
                                     }
                                 )
                             }
