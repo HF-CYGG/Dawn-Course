@@ -80,7 +80,7 @@ fun UpdateDialog(
                     // 标题与版本号
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            text = info.title.ifEmpty { "发现新版本" },
+                            text = info.title.orEmpty().ifEmpty { "发现新版本" },
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -99,7 +99,7 @@ fun UpdateDialog(
                     
                     // 日期
                     Text(
-                        text = "发布于 ${info.releaseDate}",
+                        text = "发布于 ${info.releaseDate ?: "未知时间"}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.outline
                     )
@@ -118,7 +118,7 @@ fun UpdateDialog(
                     Box(modifier = Modifier.heightIn(max = 200.dp)) {
                         val scrollState = rememberScrollState()
                         Text(
-                            text = info.content,
+                            text = info.content ?: "无更新说明",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 24.sp,
