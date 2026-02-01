@@ -105,6 +105,12 @@ class CourseRescheduleViewModel @Inject constructor(
         _uiState.update { it.copy(conflictWeeks = conflicts) }
     }
 
+    /**
+     * 计算课程覆盖的所有周次
+     *
+     * @param course 课程对象
+     * @return 包含该课程所有上课周次的 Set 集合
+     */
     private fun calculateWeeks(course: Course): Set<Int> {
         val weeks = mutableSetOf<Int>()
         for (i in course.startWeek..course.endWeek) {
@@ -118,6 +124,13 @@ class CourseRescheduleViewModel @Inject constructor(
         return weeks
     }
 
+    /**
+     * 切换周次选择状态 (Step 1)
+     *
+     * 用户点击周次选择器时调用，用于选中或取消选中要调整的周次。
+     *
+     * @param week 点击的周次
+     */
     fun toggleWeekSelection(week: Int) {
         _uiState.update { state ->
             if (state.availableWeeks.contains(week)) {
@@ -135,11 +148,22 @@ class CourseRescheduleViewModel @Inject constructor(
         recalculateConflicts()
     }
 
+    /**
+     * 初始化目标周次 (Step 2)
+     *
+     * 当进入第二步（选择时间地点）时调用。
+     * 默认情况下，目标周次等于第一步选中的周次（即平移调课）。
+     */
     fun initTargetWeeks() {
         _uiState.update { it.copy(targetWeeks = it.selectedWeeks) }
         recalculateConflicts() // Check conflicts for new target weeks
     }
 
+    /**
+     * 切换目标周次选择状态
+     *
+     * 允许用户在第二步微调目标周次（例如：把第1周的课调到第2周）。
+     */
     fun toggleTargetWeek(week: Int) {
         _uiState.update { state ->
             val newTarget = state.targetWeeks.toMutableSet()
@@ -153,11 +177,17 @@ class CourseRescheduleViewModel @Inject constructor(
         recalculateConflicts()
     }
 
+    /**
+     * 全选周次
+     */
     fun selectAllWeeks() {
         _uiState.update { it.copy(selectedWeeks = it.availableWeeks) }
         recalculateConflicts()
     }
     
+    /**
+     * 选中所有单周
+     */
     fun selectOddWeeks() {
          _uiState.update { state ->
              val odd = state.availableWeeks.filter { it % 2 != 0 }.toSet()
@@ -166,6 +196,9 @@ class CourseRescheduleViewModel @Inject constructor(
          recalculateConflicts()
     }
 
+    /**
+     * 选中所有双周
+     */
     fun selectEvenWeeks() {
         _uiState.update { state ->
             val even = state.availableWeeks.filter { it % 2 == 0 }.toSet()
@@ -174,6 +207,12 @@ class CourseRescheduleViewModel @Inject constructor(
         recalculateConflicts()
     }
 
+    /**
+     * 更新新的上课时间
+     *
+     * @param day 星期几 (1-7)
+     * @param startNode 开始节次
+     */
     fun updateNewTime(day: Int, startNode: Int) {
         _uiState.update {
             it.copy(newDay = day, newStartNode = startNode)
@@ -181,12 +220,18 @@ class CourseRescheduleViewModel @Inject constructor(
         recalculateConflicts()
     }
 
+    /**
+     * 更新新的上课地点
+     */
     fun updateNewLocation(location: String) {
         _uiState.update {
             it.copy(newLocation = location)
         }
     }
 
+    /**
+     * 更新调课备注
+     */
     fun updateNote(note: String) {
         _uiState.update {
             it.copy(note = note)

@@ -70,10 +70,15 @@ import androidx.compose.material3.CardDefaults
 val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
 
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
+
 /**
  * 周次头部栏组件
  *
  * 显示周一到周日，并高亮当前日期。
+ * 如果设置中开启了日期显示，会根据学期开始日期计算并显示具体的月.日。
  *
  * @param modifier 修饰符
  * @param isCurrentWeek 是否为本周 (只有本周才高亮今天)
@@ -94,7 +99,7 @@ fun WeekHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = TIME_COLUMN_WIDTH) // Time column offset
+            .padding(start = TIME_COLUMN_WIDTH) // 左侧时间轴偏移
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -106,12 +111,12 @@ fun WeekHeader(
                 modifier = Modifier.weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                // Capsule Background for Today
+                // 今天的高亮胶囊背景
                 if (isToday) {
                     Box(
                         modifier = Modifier
                             .width(36.dp)
-                            .height(42.dp) // Height increased to accommodate date
+                            .height(42.dp) // 增加高度以容纳日期
                             .clip(RoundedCornerShape(12.dp))
                             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)) // 变淡
                     )
@@ -130,9 +135,12 @@ fun WeekHeader(
                         color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f) // 选中色
                     )
 
-                    // Date display (e.g., 09.01)
+                    // 日期显示 (例如 09.01)
                     if (settings.showDateInHeader && semesterStartDate != null) {
-                        val date = semesterStartDate.plusWeeks((displayedWeek - 1).toLong())
+                        // 修复：确保基准日期是该学期第一周的周一
+                        // 即使学期开始日期设置的是周三，第一周的周一也应该是该周的周一，而不是周三
+                        val firstMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                        val date = firstMonday.plusWeeks((displayedWeek - 1).toLong())
                             .plusDays(index.toLong())
                         val dateText = "${date.monthValue}.${date.dayOfMonth}"
                         
@@ -244,43 +252,34 @@ fun TimetableGrid(
         }
     }
 
-    // 1. Prepare display list
-    // Filter and process courses
+    // 1. 准备显示列表
+    // 筛选并处理课程
     val displayList = remember(courses, currentWeek, settings.hideNonThisWeek) {
         val courseGroups = courses.groupBy { it.dayOfWeek to it.startSection }
-        val list = mutableListOf<Pair<Course, Boolean>>() // Course, isCurrentWeek
+        val list = mutableListOf<Pair<Course, Boolean>>() // 课程, 是否为本周
         courseGroups.forEach { (_, group) ->
-            // Conflict resolution logic
-            val currentWeekCourses = group.filter { course ->
-                val isWeekActive = course.startWeek <= currentWeek && course.endWeek >= currentWeek
-                val isWeekParityMatch = when (course.weekType) {
-                    Course.WEEK_TYPE_ALL -> true
+            // 冲突解决逻辑：
+            // 1. 优先显示本周课程
+            // 2. 如果没有本周课程，且未开启"隐藏非本周"，则显示非本周课程
+            // 3. 如果有多个非本周课程，显示 ID 最大的（通常是最新添加的）
+            val currentWeekCourse = group.find { course ->
+                // 判断逻辑：当前周在课程的起始周和结束周之间，且符合单双周规则
+                currentWeek in course.startWeek..course.endWeek && when (course.weekType) {
                     Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
                     Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
                     else -> true
                 }
-                isWeekActive && isWeekParityMatch
             }
-            
-            // Priority: Current Week > Non-Current Week (First one)
-            // Fixes overlap by ensuring only ONE course is displayed per slot
-            val targetCourse = if (currentWeekCourses.isNotEmpty()) {
-                currentWeekCourses.first() // If multiple current (conflict), pick first
-            } else {
-                group.first() // If no current, pick first available (non-current)
+
+            if (currentWeekCourse != null) {
+                list.add(currentWeekCourse to true)
+            } else if (!settings.hideNonThisWeek) {
+                // 显示非本周课程（取 ID 最大的一个作为代表）
+                group.maxByOrNull { it.id }?.let {
+                    list.add(it to false)
+                }
             }
-            
-            val isCurrent = currentWeekCourses.contains(targetCourse)
-            
-            // Filter out non-current week courses if setting is enabled
-            if (settings.hideNonThisWeek && !isCurrent) {
-                return@forEach
-            }
-            
-            list.add(targetCourse to isCurrent)
         }
-        // Sort: Non-current first (bottom), Current last (top)
-        list.sortBy { it.second }
         list
     }
 
@@ -525,7 +524,7 @@ fun CourseDetailSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 56.dp) // 底部留白增加，防止误触
         ) {
-            // 1. Header with Course Name
+            // 1. 头部区域：显示课程颜色条和课程名称
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(bottom = 24.dp)
@@ -546,11 +545,12 @@ fun CourseDetailSheet(
                 )
             }
             
-            // 2. Info Grid
+            // 2. 信息网格：显示时间、地点、教师等详细信息
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                // 时间
+                // 时间信息
                 val startSectionIndex = course.startSection - 1
                 val endSectionIndex = course.startSection + course.duration - 2
+                // 如果配置了具体的作息时间，则显示具体的时间段 (e.g. 08:00-09:40)
                 val timeRangeText = if (startSectionIndex >= 0 && endSectionIndex < settings.sectionTimes.size && startSectionIndex <= endSectionIndex) {
                      val start = settings.sectionTimes[startSectionIndex].startTime
                      val end = settings.sectionTimes[endSectionIndex].endTime
@@ -566,7 +566,7 @@ fun CourseDetailSheet(
                     iconTint = themePrimary
                 )
                 
-                // 地点
+                // 地点信息
                 if (course.location.isNotEmpty()) {
                     CourseDetailItem(
                         icon = Icons.Default.Place,
@@ -576,7 +576,7 @@ fun CourseDetailSheet(
                     )
                 }
                 
-                // 教师
+                // 教师信息
                 if (course.teacher.isNotEmpty()) {
                     CourseDetailItem(
                         icon = Icons.Default.Person,
@@ -586,7 +586,7 @@ fun CourseDetailSheet(
                     )
                 }
                 
-                // 周次
+                // 周次信息
                 CourseDetailItem(
                     icon = Icons.Default.DateRange,
                     label = "周次",
@@ -594,7 +594,7 @@ fun CourseDetailSheet(
                     iconTint = themePrimary
                 )
                 
-                // 备注
+                // 备注信息
                 if (course.note.isNotEmpty()) {
                     CourseDetailItem(
                         icon = Icons.Default.Info,
@@ -607,7 +607,7 @@ fun CourseDetailSheet(
             
             Spacer(modifier = Modifier.height(32.dp))
             
-                // 3. Actions
+                // 3. 操作区域：调课、删除、编辑
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // 调课/撤销调课 按钮
                     androidx.compose.material3.Button(
