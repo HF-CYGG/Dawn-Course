@@ -74,6 +74,11 @@ class MainActivity : ComponentActivity() {
             val updateUiState by updateViewModel.uiState.collectAsState()
             val showUpdateDialog by updateViewModel.showDialog.collectAsState()
 
+            // Auto check for update on launch (silent)
+            LaunchedEffect(Unit) {
+                updateViewModel.checkUpdate(manual = false)
+            }
+
             // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
             if (uiState is MainUiState.Success) {
                 val settings = (uiState as MainUiState.Success).settings
