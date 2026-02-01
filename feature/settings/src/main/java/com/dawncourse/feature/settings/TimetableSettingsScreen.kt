@@ -1,6 +1,7 @@
 package com.dawncourse.feature.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -106,23 +107,23 @@ fun TimetableSettingsScreen(
 
             // 2. 卡片样式 (Card Style)
             PreferenceCategory(title = "卡片样式") {
+                // 卡片高度
                 SliderSetting(
                     title = "卡片高度",
                     value = settings.courseItemHeightDp.toFloat(),
                     onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
                     valueRange = 20f..80f,
                     valueText = "${settings.courseItemHeightDp} dp",
-                    icon = { Icon(Icons.Default.UnfoldMore, null) },
                     showDivider = true
                 )
 
+                // 卡片圆角
                 SliderSetting(
                     title = "卡片圆角",
                     value = settings.cardCornerRadius.toFloat(),
                     onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
                     valueRange = 0f..32f,
                     valueText = "${settings.cardCornerRadius} dp",
-                    icon = { Icon(Icons.Default.RoundedCorner, null) },
                     showDivider = true
                 )
 

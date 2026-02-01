@@ -437,10 +437,14 @@ fun SettingsScreen(
 
             // 6. 关于 (About)
             PreferenceCategory(title = "关于") {
-                val currentVersion = try {
-                    LocalContext.current.packageManager.getPackageInfo(LocalContext.current.packageName, 0).versionName
-                } catch (e: Exception) {
-                    "Unknown"
+                val packageManager = LocalContext.current.packageManager
+                val packageName = LocalContext.current.packageName
+                val currentVersion = remember {
+                    try {
+                        packageManager.getPackageInfo(packageName, 0).versionName
+                    } catch (e: Exception) {
+                        "Unknown"
+                    }
                 }
                 UpdateSettingItem(
                     currentVersion = currentVersion,

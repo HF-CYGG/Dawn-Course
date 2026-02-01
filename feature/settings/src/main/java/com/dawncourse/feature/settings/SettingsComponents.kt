@@ -44,7 +44,8 @@ fun SettingRow(
     icon: @Composable (() -> Unit)? = null,
     action: @Composable (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
-    showDivider: Boolean = false
+    showDivider: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit = {}
 ) {
     Surface(
         onClick = { onClick?.invoke() },
@@ -82,6 +83,7 @@ fun SettingRow(
                     action()
                 }
             }
+            content()
             if (showDivider) {
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             }
