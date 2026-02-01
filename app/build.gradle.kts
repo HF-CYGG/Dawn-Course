@@ -16,8 +16,8 @@ android {
         applicationId = "com.dawncourse.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 100
-        versionName = "1.0.0.00"
+        versionCode = 101
+        versionName = "1.0.1.00"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -74,6 +74,15 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    applicationVariants.all {
+        outputs.all {
+            val output = this as? com.android.build.gradle.api.ApkVariantOutput
+            if (buildType.name == "release") {
+                output?.outputFileName = "Dawn Course.apk"
+            }
         }
     }
 }

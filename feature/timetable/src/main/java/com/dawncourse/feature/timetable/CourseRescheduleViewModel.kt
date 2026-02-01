@@ -81,16 +81,16 @@ class CourseRescheduleViewModel @Inject constructor(
         val conflictSlots = mutableSetOf<Pair<Int, Int>>() // Day, Node
         
         weeksToCheck.forEach { week ->
-            allCourses.forEach { course ->
+            allCourses.forEach inner@{ course ->
                 // 排除自己
-                if (course.id == original.id) return@forEach
+                if (course.id == original.id) return@inner
                 
                 // 检查时间是否重叠
                 val timeOverlap = course.dayOfWeek == state.newDay &&
                         course.startSection < (state.newStartNode + duration) &&
                         (course.startSection + course.duration) > state.newStartNode
                 
-                if (!timeOverlap) return@forEach
+                if (!timeOverlap) return@inner
                 
                 // 检查周次是否重叠
                 val weekMatch = when (course.weekType) {
