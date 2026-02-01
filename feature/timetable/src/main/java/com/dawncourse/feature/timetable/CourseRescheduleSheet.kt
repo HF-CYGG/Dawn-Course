@@ -17,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
@@ -147,6 +149,127 @@ fun CourseRescheduleSheet(
                             }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimeSelectionEntryCard(
+    day: Int,
+    startNode: Int,
+    endNode: Int,
+    conflictInfo: ConflictInfo,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(
+            containerColor = if (conflictInfo.hasConflict) 
+                MaterialTheme.colorScheme.errorContainer 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Schedule, 
+                contentDescription = null,
+                tint = if (conflictInfo.hasConflict) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "新时间",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (conflictInfo.hasConflict) MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "周${getDayText(day)} 第${startNode}-${endNode}节",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (conflictInfo.hasConflict) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+                )
+                if (conflictInfo.hasConflict) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "⚠️ ${conflictInfo.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = null,
+                tint = if (conflictInfo.hasConflict) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimeSelectionDialog(
+    uiState: RescheduleUiState,
+    onTimeChange: (Int, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "选择新时间",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                // Show conflict message inside dialog too if needed, or just rely on grid visuals
+                // The user wants "UI match", so maybe a small hint if conflict
+                if (uiState.conflictInfo.hasConflict) {
+                     Text(
+                        text = uiState.conflictInfo.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Box(modifier = Modifier.weight(1f, fill = false)) {
+                     TimeGridSelector(
+                        selectedDay = uiState.newDay,
+                        startNode = uiState.newStartNode,
+                        duration = uiState.originalCourse?.duration ?: 2,
+                        conflictSlots = uiState.conflictInfo.conflictSlots,
+                        onSelectionChange = { day, start, _ -> onTimeChange(day, start) },
+                        originalDay = uiState.originalCourse?.dayOfWeek ?: -1,
+                        originalStartNode = uiState.originalCourse?.startSection ?: -1
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("确定")
                 }
             }
         }
@@ -313,6 +436,7 @@ private fun TimeLocationStep(
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
     var showWeekPicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     if (showWeekPicker) {
         TargetWeekPickerDialog(
@@ -323,6 +447,14 @@ private fun TimeLocationStep(
                 onTargetWeeksChange(it)
                 showWeekPicker = false 
             }
+        )
+    }
+
+    if (showTimePicker) {
+        TimeSelectionDialog(
+            uiState = uiState,
+            onTimeChange = onTimeChange,
+            onDismiss = { showTimePicker = false }
         )
     }
     
@@ -338,49 +470,13 @@ private fun TimeLocationStep(
         )
 
         // Time Selector
-        Card(
-             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-             modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("新时间", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                
-                // Smart Conflict Message
-                if (uiState.conflictInfo.hasConflict) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
-                            .padding(12.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Info, 
-                            contentDescription = null, 
-                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = uiState.conflictInfo.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-                
-                TimeGridSelector(
-                    selectedDay = uiState.newDay,
-                    startNode = uiState.newStartNode,
-                    duration = uiState.originalCourse?.duration ?: 2,
-                    conflictSlots = uiState.conflictInfo.conflictSlots,
-                    onSelectionChange = { day, start, _ -> onTimeChange(day, start) },
-                    originalDay = uiState.originalCourse?.dayOfWeek ?: -1,
-                    originalStartNode = uiState.originalCourse?.startSection ?: -1
-                )
-            }
-        }
+        TimeSelectionEntryCard(
+            day = uiState.newDay,
+            startNode = uiState.newStartNode,
+            endNode = uiState.newStartNode + (uiState.originalCourse?.duration ?: 0) - 1,
+            conflictInfo = uiState.conflictInfo,
+            onClick = { showTimePicker = true }
+        )
 
         // Location & Note
         Card(
