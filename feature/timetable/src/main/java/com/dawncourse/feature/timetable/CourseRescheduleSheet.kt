@@ -106,6 +106,10 @@ fun CourseRescheduleSheet(
                      Spacer(modifier = Modifier.size(48.dp)) // Balance the back button
                 }
             }
+            
+            // Stepper
+            RescheduleStepper(currentStep = currentStep)
+            Spacer(modifier = Modifier.height(24.dp))
 
             AnimatedContent(targetState = currentStep, label = "step_transition") { step ->
                 when (step) {
@@ -113,9 +117,9 @@ fun CourseRescheduleSheet(
                         WeekSelectionStep(
                             uiState = uiState,
                             onToggleWeek = viewModel::toggleWeekSelection,
-                            onSelectAll = viewModel::selectAllWeeks,
-                            onSelectOdd = viewModel::selectOddWeeks,
-                            onSelectEven = viewModel::selectEvenWeeks,
+                            onToggleSelectAll = viewModel::toggleSelectAllWeeks,
+                            onToggleSelectOdd = viewModel::toggleSelectOddWeeks,
+                            onToggleSelectEven = viewModel::toggleSelectEvenWeeks,
                             onNext = { 
                                 viewModel.initTargetWeeks()
                                 currentStep = RescheduleStep.SET_TIME_LOCATION 
@@ -128,7 +132,6 @@ fun CourseRescheduleSheet(
                             onTimeChange = viewModel::updateNewTime,
                             onLocationChange = viewModel::updateNewLocation,
                             onNoteChange = viewModel::updateNote,
-                            onTargetWeekToggle = viewModel::toggleTargetWeek,
                             onNext = { currentStep = RescheduleStep.CONFIRM }
                         )
                     }
@@ -149,20 +152,131 @@ fun CourseRescheduleSheet(
 }
 
 @Composable
+private fun RescheduleStepper(currentStep: RescheduleStep) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StepItem(
+            step = RescheduleStep.SELECT_WEEKS,
+            currentStep = currentStep,
+            label = "选择周次",
+            modifier = Modifier.weight(1f)
+        )
+        StepDivider(active = currentStep.ordinal >= 1)
+        StepItem(
+            step = RescheduleStep.SET_TIME_LOCATION,
+            currentStep = currentStep,
+            label = "新时间",
+            modifier = Modifier.weight(1f)
+        )
+        StepDivider(active = currentStep.ordinal >= 2)
+        StepItem(
+            step = RescheduleStep.CONFIRM,
+            currentStep = currentStep,
+            label = "确认",
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun StepItem(
+    step: RescheduleStep,
+    currentStep: RescheduleStep,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    val isActive = step.ordinal <= currentStep.ordinal
+    val isCurrent = step == currentStep
+    
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(
+                    if (isActive) MaterialTheme.colorScheme.primary 
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (step.ordinal < currentStep.ordinal) {
+                Icon(
+                    Icons.Default.Check, 
+                    contentDescription = null, 
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+            } else {
+                Text(
+                    text = "${step.ordinal + 1}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+private fun StepDivider(active: Boolean) {
+    HorizontalDivider(
+        modifier = Modifier.width(32.dp),
+        thickness = 2.dp,
+        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    )
+}
+
+@Composable
 private fun WeekSelectionStep(
     uiState: RescheduleUiState,
     onToggleWeek: (Int) -> Unit,
-    onSelectAll: () -> Unit,
-    onSelectOdd: () -> Unit,
-    onSelectEven: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onToggleSelectOdd: () -> Unit,
+    onToggleSelectEven: () -> Unit,
     onNext: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // Quick Actions
+        val available = uiState.availableWeeks
+        val selected = uiState.selectedWeeks
+        
+        val isAllSelected = available.isNotEmpty() && selected.containsAll(available)
+        val oddWeeks = available.filter { it % 2 != 0 }.toSet()
+        val isOddSelected = oddWeeks.isNotEmpty() && selected == oddWeeks
+        val evenWeeks = available.filter { it % 2 == 0 }.toSet()
+        val isEvenSelected = evenWeeks.isNotEmpty() && selected == evenWeeks
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = false, onClick = onSelectAll, label = { Text("全选") })
-            FilterChip(selected = false, onClick = onSelectOdd, label = { Text("单周") })
-            FilterChip(selected = false, onClick = onSelectEven, label = { Text("双周") })
+            FilterChip(
+                selected = isAllSelected,
+                onClick = onToggleSelectAll,
+                label = { Text("全选") },
+                leadingIcon = if (isAllSelected) { { Icon(Icons.Default.Check, null) } } else null
+            )
+            FilterChip(
+                selected = isOddSelected,
+                onClick = onToggleSelectOdd,
+                label = { Text("单周") },
+                leadingIcon = if (isOddSelected) { { Icon(Icons.Default.Check, null) } } else null
+            )
+            FilterChip(
+                selected = isEvenSelected,
+                onClick = onToggleSelectEven,
+                label = { Text("双周") },
+                leadingIcon = if (isEvenSelected) { { Icon(Icons.Default.Check, null) } } else null
+            )
         }
 
         // Week Grid
@@ -170,7 +284,6 @@ private fun WeekSelectionStep(
             availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
             enabledWeeks = uiState.availableWeeks, // Only original weeks are enabled for selection
             selectedWeeks = uiState.selectedWeeks,
-            conflictWeeks = uiState.conflictWeeks,
             onToggleWeek = onToggleWeek,
             modifier = Modifier.heightIn(max = 300.dp)
         )
@@ -193,7 +306,6 @@ private fun TimeLocationStep(
     onTimeChange: (Int, Int) -> Unit,
     onLocationChange: (String) -> Unit,
     onNoteChange: (String) -> Unit,
-    onTargetWeekToggle: (Int) -> Unit,
     onNext: () -> Unit
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
@@ -202,35 +314,19 @@ private fun TimeLocationStep(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.verticalScroll(scrollState)
     ) {
-        // Target Week Selector
+        // Week Summary (Pure Display)
         Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("新周次", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val countDiff = uiState.targetWeeks.size - uiState.selectedWeeks.size
-                    val countText = if (countDiff == 0) {
-                        "已选 ${uiState.targetWeeks.size} 周"
-                    } else {
-                        "需选 ${uiState.selectedWeeks.size} 周 (当前 ${uiState.targetWeeks.size})"
-                    }
-                    Text(
-                        text = countText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (countDiff == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                }
-
-                WeekGridSelector(
-                    availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
-                    enabledWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(), // All weeks selectable
-                    selectedWeeks = uiState.targetWeeks,
-                    conflictWeeks = uiState.conflictWeeks,
-                    onToggleWeek = onTargetWeekToggle,
-                    modifier = Modifier.heightIn(max = 200.dp)
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("调整对象", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(4.dp))
+                val weeksText = uiState.targetWeeks.sorted().joinToString(", ")
+                Text(
+                    text = "第 $weeksText 周",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
@@ -243,7 +339,8 @@ private fun TimeLocationStep(
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("新时间", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 
-                if (uiState.conflictWeeks.isNotEmpty()) {
+                // Smart Conflict Message
+                if (uiState.conflictInfo.hasConflict) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -259,9 +356,10 @@ private fun TimeLocationStep(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "第 ${uiState.conflictWeeks.sorted().joinToString(", ")} 周存在冲突",
+                            text = uiState.conflictInfo.message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -270,6 +368,7 @@ private fun TimeLocationStep(
                     selectedDay = uiState.newDay,
                     startNode = uiState.newStartNode,
                     duration = uiState.originalCourse?.duration ?: 2,
+                    conflictSlots = uiState.conflictInfo.conflictSlots,
                     onSelectionChange = { day, start, _ -> onTimeChange(day, start) }
                 )
             }
@@ -314,7 +413,7 @@ private fun TimeLocationStep(
 
         Button(
             onClick = onNext,
-            enabled = uiState.targetWeeks.size == uiState.selectedWeeks.size,
+            enabled = uiState.targetWeeks.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
         ) {
             Text("下一步")
@@ -372,6 +471,14 @@ private fun ConfirmStep(
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
+                        if (uiState.conflictInfo.hasConflict) {
+                            Text(
+                                text = "⚠️ ${uiState.conflictInfo.message}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
                 
@@ -409,14 +516,17 @@ private fun ConfirmStep(
             }
         }
 
+        val hasConflict = uiState.conflictInfo.hasConflict
         Button(
             onClick = onConfirm,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (hasConflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
         ) {
-            Icon(Icons.Default.Check, contentDescription = null)
+            Icon(if (hasConflict) Icons.Default.Info else Icons.Default.Check, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("确认调整")
+            Text(if (hasConflict) "仍要调整 (冲突)" else "确认调整")
         }
     }
 }
@@ -426,7 +536,6 @@ private fun WeekGridSelector(
     availableWeeks: Set<Int>,
     enabledWeeks: Set<Int>,
     selectedWeeks: Set<Int>,
-    conflictWeeks: Set<Int>,
     onToggleWeek: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -439,7 +548,6 @@ private fun WeekGridSelector(
         items(availableWeeks.toList()) { week ->
             val isEnabled = enabledWeeks.contains(week)
             val isSelected = selectedWeeks.contains(week)
-            val isConflict = conflictWeeks.contains(week)
             
             Box(
                 contentAlignment = Alignment.Center,
@@ -465,18 +573,6 @@ private fun WeekGridSelector(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = if (isSelected || isEnabled) FontWeight.Bold else FontWeight.Normal
                 )
-                
-                // Conflict Indicator (Red Dot)
-                if (isConflict) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.error)
-                    )
-                }
 
                 if (isSelected) {
                     Icon(

@@ -77,17 +77,20 @@ class CourseRescheduleViewModel @Inject constructor(
         val weeksToCheck = if (state.targetWeeks.isNotEmpty()) state.targetWeeks else state.selectedWeeks
         val duration = original.duration
         
-        val conflicts = weeksToCheck.filter { week ->
-            allCourses.any { course ->
+        val conflictingCourses = mutableSetOf<Course>()
+        val conflictSlots = mutableSetOf<Pair<Int, Int>>() // Day, Node
+        
+        weeksToCheck.forEach { week ->
+            allCourses.forEach { course ->
                 // 排除自己
-                if (course.id == original.id) return@any false
+                if (course.id == original.id) return@forEach
                 
                 // 检查时间是否重叠
                 val timeOverlap = course.dayOfWeek == state.newDay &&
                         course.startSection < (state.newStartNode + duration) &&
                         (course.startSection + course.duration) > state.newStartNode
                 
-                if (!timeOverlap) return@any false
+                if (!timeOverlap) return@forEach
                 
                 // 检查周次是否重叠
                 val weekMatch = when (course.weekType) {
@@ -98,11 +101,33 @@ class CourseRescheduleViewModel @Inject constructor(
                 }
                 
                 val weekOverlap = week >= course.startWeek && week <= course.endWeek && weekMatch
-                weekOverlap
+                
+                if (weekOverlap) {
+                    conflictingCourses.add(course)
+                    // 记录冲突课程的所有时间槽位，用于网格高亮
+                    for (i in 0 until course.duration) {
+                         conflictSlots.add(course.dayOfWeek to (course.startSection + i))
+                    }
+                }
             }
-        }.toSet()
+        }
         
-        _uiState.update { it.copy(conflictWeeks = conflicts) }
+        val hasConflict = conflictingCourses.isNotEmpty()
+        val message = if (hasConflict) {
+             val names = conflictingCourses.joinToString("、") { 
+                 if (it.location.isNotBlank()) "《${it.name}》(${it.location})" else "《${it.name}》" 
+             }
+             "与 $names 冲突"
+        } else ""
+
+        _uiState.update { it.copy(
+            conflictInfo = ConflictInfo(
+                hasConflict = hasConflict,
+                message = message,
+                conflictCourses = conflictingCourses.toList(),
+                conflictSlots = conflictSlots
+            )
+        ) }
     }
 
     /**
@@ -153,9 +178,17 @@ class CourseRescheduleViewModel @Inject constructor(
      *
      * 当进入第二步（选择时间地点）时调用。
      * 默认情况下，目标周次等于第一步选中的周次（即平移调课）。
+     * 同时也初始化新时间为原课程时间。
      */
     fun initTargetWeeks() {
-        _uiState.update { it.copy(targetWeeks = it.selectedWeeks) }
+        val original = _uiState.value.originalCourse
+        _uiState.update { 
+            it.copy(
+                targetWeeks = it.selectedWeeks,
+                newDay = original?.dayOfWeek ?: 1,
+                newStartNode = original?.startSection ?: 1
+            ) 
+        }
         recalculateConflicts() // Check conflicts for new target weeks
     }
 
@@ -178,31 +211,48 @@ class CourseRescheduleViewModel @Inject constructor(
     }
 
     /**
-     * 全选周次
+     * 切换全选状态
+     * 如果已全选，则取消全选；否则全选。
      */
-    fun selectAllWeeks() {
-        _uiState.update { it.copy(selectedWeeks = it.availableWeeks) }
+    fun toggleSelectAllWeeks() {
+        _uiState.update { state ->
+            if (state.selectedWeeks.containsAll(state.availableWeeks)) {
+                state.copy(selectedWeeks = emptySet())
+            } else {
+                state.copy(selectedWeeks = state.availableWeeks)
+            }
+        }
         recalculateConflicts()
     }
     
     /**
-     * 选中所有单周
+     * 切换单周选择状态
+     * 如果已选中所有单周且无其他周次，则取消选择；否则选中所有单周。
      */
-    fun selectOddWeeks() {
+    fun toggleSelectOddWeeks() {
          _uiState.update { state ->
              val odd = state.availableWeeks.filter { it % 2 != 0 }.toSet()
-             state.copy(selectedWeeks = odd)
+             if (state.selectedWeeks == odd) {
+                 state.copy(selectedWeeks = emptySet())
+             } else {
+                 state.copy(selectedWeeks = odd)
+             }
          }
          recalculateConflicts()
     }
 
     /**
-     * 选中所有双周
+     * 切换双周选择状态
+     * 如果已选中所有双周且无其他周次，则取消选择；否则选中所有双周。
      */
-    fun selectEvenWeeks() {
+    fun toggleSelectEvenWeeks() {
         _uiState.update { state ->
             val even = state.availableWeeks.filter { it % 2 == 0 }.toSet()
-            state.copy(selectedWeeks = even)
+            if (state.selectedWeeks == even) {
+                state.copy(selectedWeeks = emptySet())
+            } else {
+                state.copy(selectedWeeks = even)
+            }
         }
         recalculateConflicts()
     }
@@ -387,5 +437,12 @@ data class RescheduleUiState(
     val newStartNode: Int = 1,
     val newLocation: String = "",
     val note: String = "",
-    val conflictWeeks: Set<Int> = emptySet()
+    val conflictInfo: ConflictInfo = ConflictInfo()
+)
+
+data class ConflictInfo(
+    val hasConflict: Boolean = false,
+    val message: String = "",
+    val conflictCourses: List<Course> = emptyList(),
+    val conflictSlots: Set<Pair<Int, Int>> = emptySet() // (Day, Node)
 )

@@ -76,6 +76,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.core.ui.util.CourseColorUtils
@@ -595,19 +597,29 @@ fun TimeGridSelector(
     selectedDay: Int,
     startNode: Int,
     duration: Int,
+    conflictSlots: Set<Pair<Int, Int>> = emptySet(),
     onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit
 ) {
     val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
     val rowHeightPx = with(density) { 32.dp.toPx() } // Increased touch target
     var dragAnchorDay by remember { mutableStateOf<Int?>(null) }
     var dragAnchorNode by remember { mutableStateOf<Int?>(null) }
     var dragAnchorOffsetY by remember { mutableStateOf(0f) }
 
+    // Helper to perform haptic and update
+    val updateSelection = { day: Int, start: Int, dur: Int ->
+        if (day != selectedDay || start != startNode || dur != duration) {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onSelectionChange(day, start, dur)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f))
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f))
             .padding(8.dp)
     ) {
         // Header
@@ -639,24 +651,31 @@ fun TimeGridSelector(
                     modifier = Modifier.width(32.dp),
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
                 for (day in 1..7) {
                     val isSelected = day == selectedDay && node >= startNode && node < startNode + duration
+                    val isConflict = conflictSlots.contains(day to node)
+                    
                     val isHead = day == selectedDay && node == startNode
                     val isTail = day == selectedDay && node == startNode + duration - 1
                     
                     // Shape logic for connected cells
                     val shape = when {
-                        isHead && isTail -> RoundedCornerShape(6.dp)
-                        isHead -> RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
-                        isTail -> RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp)
-                        isSelected -> RoundedCornerShape(0.dp)
-                        else -> RoundedCornerShape(4.dp)
+                        isHead && isTail -> RoundedCornerShape(8.dp)
+                        isHead -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 2.dp, bottomEnd = 2.dp)
+                        isTail -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp, topStart = 2.dp, topEnd = 2.dp)
+                        isSelected -> RoundedCornerShape(2.dp) // Connected middle parts
+                        isConflict -> RoundedCornerShape(4.dp)
+                        else -> CircleShape
                     }
                     
                     val color by animateColorAsState(
-                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        when {
+                            isSelected -> MaterialTheme.colorScheme.primary
+                            isConflict -> MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                            else -> Color.Transparent
+                        },
                         label = "CellColor"
                     )
 
@@ -671,16 +690,16 @@ fun TimeGridSelector(
                                 detectTapGestures {
                                     if (day == selectedDay) {
                                         if (node == startNode && duration > 1) {
-                                            onSelectionChange(day, node, 1)
+                                            updateSelection(day, node, 1)
                                         } else if (node >= startNode && node < startNode + duration) {
-                                            onSelectionChange(day, node, 1)
+                                            updateSelection(day, node, 1)
                                         } else if (node > startNode + duration - 1) {
-                                            onSelectionChange(day, startNode, node - startNode + 1)
+                                            updateSelection(day, startNode, node - startNode + 1)
                                         } else if (node < startNode) {
-                                            onSelectionChange(day, node, 1)
+                                            updateSelection(day, node, 1)
                                         }
                                     } else {
-                                        onSelectionChange(day, node, 1)
+                                        updateSelection(day, node, 1)
                                     }
                                 }
                             }
@@ -690,7 +709,7 @@ fun TimeGridSelector(
                                         dragAnchorDay = day
                                         dragAnchorNode = node
                                         dragAnchorOffsetY = offset.y
-                                        onSelectionChange(day, node, 1)
+                                        updateSelection(day, node, 1)
                                     },
                                     onDrag = { change, _ ->
                                         val anchorDay = dragAnchorDay ?: day
@@ -699,7 +718,7 @@ fun TimeGridSelector(
                                         val currentNode = (anchorNode + deltaRows).coerceIn(1, 12)
                                         val start = min(anchorNode, currentNode)
                                         val end = max(anchorNode, currentNode)
-                                        onSelectionChange(anchorDay, start, end - start + 1)
+                                        updateSelection(anchorDay, start, end - start + 1)
                                         change.consume()
                                     },
                                     onDragEnd = {
@@ -711,8 +730,18 @@ fun TimeGridSelector(
                                         dragAnchorNode = null
                                     }
                                 )
-                            }
-                    )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!isSelected && !isConflict) {
+                            Box(
+                                modifier = Modifier
+                                    .size(4.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
+                            )
+                        }
+                    }
                 }
             }
         }
