@@ -383,10 +383,8 @@ fun TimetableGrid(
                 list.add(currentWeekCourse to true)
             } else if (!settings.hideNonThisWeek) {
                 // 显示非本周课程（取 ID 最大的一个作为代表）
-                // 修复：仅显示在当前周次范围内的非本周课程（例如单双周错开的）
-                // 避免在课程结束周之后仍然显示该课程
-                group.filter { currentWeek in it.startWeek..it.endWeek }
-                    .maxByOrNull { it.id }?.let {
+                // 移除周次范围限制，确保只要未开启"隐藏非本周"，所有时段的课程（包括已结课/未开始）都能显示
+                group.maxByOrNull { it.id }?.let {
                         list.add(it to false)
                     }
             }
