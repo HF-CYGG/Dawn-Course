@@ -6,6 +6,7 @@ import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +15,7 @@ import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
@@ -102,7 +104,7 @@ class TimetableViewModel @Inject constructor(
         combine(
             semesterRepository.getCurrentSemester(),
             timeTicker
-        ) { semester, _ ->
+        ) { semester: com.dawncourse.core.domain.model.Semester?, _: Unit ->
             semester
         }
             .onEach { semester ->
