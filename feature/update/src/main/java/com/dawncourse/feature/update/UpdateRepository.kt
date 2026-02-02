@@ -11,10 +11,11 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import okhttp3.ConnectionSpec
 import java.util.Collections
+import retrofit2.Response
 
 interface UpdateApi {
     @GET("version.json")
-    suspend fun getUpdateInfo(): UpdateInfo
+    suspend fun getUpdateInfo(): Response<UpdateInfo>
 }
 
 @Singleton
@@ -46,8 +47,13 @@ class UpdateRepository @Inject constructor() {
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名
         try {
-            val info = primaryApi.getUpdateInfo()
-            return@withContext Result.success(info)
+            val response = primaryApi.getUpdateInfo()
+            if (response.isSuccessful && response.body() != null) {
+                return@withContext Result.success(response.body()!!)
+            } else {
+                // 如果主域名响应失败（如 404），抛出异常以便尝试 fallback
+                throw Exception("Primary API failed: ${response.code()}")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             // 失败则继续尝试兜底 IP
@@ -55,8 +61,12 @@ class UpdateRepository @Inject constructor() {
 
         // 2. 尝试兜底 IP
         try {
-            val info = fallbackApi.getUpdateInfo()
-            return@withContext Result.success(info)
+            val response = fallbackApi.getUpdateInfo()
+            if (response.isSuccessful && response.body() != null) {
+                return@withContext Result.success(response.body()!!)
+            } else {
+                return@withContext Result.failure(Exception("Fallback API failed: ${response.code()}"))
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             return@withContext Result.failure(e)
