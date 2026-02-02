@@ -12,10 +12,11 @@ import java.util.concurrent.TimeUnit
 import okhttp3.ConnectionSpec
 import java.util.Collections
 import retrofit2.Response
+import retrofit2.Call
 
 interface UpdateApi {
     @GET("version.json")
-    suspend fun getUpdateInfo(): Response<UpdateInfo>
+    fun getUpdateInfo(): Call<UpdateInfo>
 }
 
 @Singleton
@@ -47,7 +48,7 @@ class UpdateRepository @Inject constructor() {
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名
         try {
-            val response = primaryApi.getUpdateInfo()
+            val response = primaryApi.getUpdateInfo().execute()
             if (response.isSuccessful && response.body() != null) {
                 return@withContext Result.success(response.body()!!)
             } else {
@@ -61,7 +62,7 @@ class UpdateRepository @Inject constructor() {
 
         // 2. 尝试兜底 IP
         try {
-            val response = fallbackApi.getUpdateInfo()
+            val response = fallbackApi.getUpdateInfo().execute()
             if (response.isSuccessful && response.body() != null) {
                 return@withContext Result.success(response.body()!!)
             } else {
