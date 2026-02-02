@@ -147,13 +147,15 @@ class DawnWidget : GlanceAppWidget() {
         
         val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
 
-        val courses = withContext(Dispatchers.IO) {
+        val allCourses = withContext(Dispatchers.IO) {
             if (semester != null) {
                 repository.getCoursesBySemester(semester.id).first()
             } else {
                 emptyList()
             }
-        }.filter { course ->
+        }
+
+        val courses = allCourses.filter { course ->
             // 1. 匹配星期
             if (course.dayOfWeek != currentDayOfWeek) return@filter false
             
@@ -174,9 +176,35 @@ class DawnWidget : GlanceAppWidget() {
          }
          .sortedBy { it.startSection }
 
+        // 计算无课提示语
+        val emptyMessage = if (courses.isNotEmpty()) {
+            ""
+        } else {
+            val hasCourseThisWeek = allCourses.any { course ->
+                if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@any false
+                when (course.weekType) {
+                    Course.WEEK_TYPE_ALL -> true
+                    Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
+                    Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
+                    else -> true
+                }
+            }
+
+            if (hasCourseThisWeek) {
+                "今日已无课 ☕"
+            } else {
+                val hasFutureCourses = allCourses.any { it.endWeek > currentWeek }
+                if (hasFutureCourses) {
+                    "本周无课 🌴"
+                } else {
+                    "好好享受假期吧 🎉"
+                }
+            }
+        }
+
         provideContent {
             GlanceTheme {
-                TimetableWidgetContent(courses, today, currentWeek, sectionTimes)
+                TimetableWidgetContent(courses, today, currentWeek, sectionTimes, emptyMessage)
             }
         }
     }
@@ -197,16 +225,17 @@ class DawnWidget : GlanceAppWidget() {
         courses: List<Course>,
         today: LocalDate,
         currentWeek: Int,
-        sectionTimes: List<SectionTime>
+        sectionTimes: List<SectionTime>,
+        emptyMessage: String
     ) {
         val size = LocalSize.current
         val height = size.height
 
         // List Mode Threshold:
         // 1x4 (height ~50-90dp) -> Focus Mode
-        // 2x4 (height ~110-150dp) -> Focus Mode (Requested by user: "Just show current or next")
+        // 2x4 (height ~110-150dp) -> List Mode (User requested multiple courses)
         // 3x4 (height ~200dp+) -> List Mode
-        val isListMode = height >= 160.dp
+        val isListMode = height >= 110.dp
 
         if (isListMode) {
             Column(
@@ -242,7 +271,7 @@ class DawnWidget : GlanceAppWidget() {
                 }
 
                 if (courses.isEmpty()) {
-                    EmptyCourseView()
+                    EmptyCourseView(emptyMessage)
                 } else {
                     // 关键：LazyColumn 必须设置 weight(1f)，否则可能撑不开
                     ScheduleList(courses, sectionTimes, isVeryCompact)
@@ -251,7 +280,7 @@ class DawnWidget : GlanceAppWidget() {
         } else {
              // 1x4 & 2x4 -> Focus Mode (Horizontal)
              // 直接渲染，不包裹在 Column 中，以便 FocusCourseItem 控制背景和圆角
-             FocusCourseItem(courses, sectionTimes, today = today)
+             FocusCourseItem(courses, sectionTimes, today = today, emptyMessage = emptyMessage)
         }
     }
 
@@ -259,7 +288,8 @@ class DawnWidget : GlanceAppWidget() {
     fun FocusCourseItem(
         courses: List<Course>,
         sectionTimes: List<SectionTime>,
-        today: LocalDate
+        today: LocalDate,
+        emptyMessage: String
     ) {
         val now = LocalTime.now()
         val nextCourse = courses.firstOrNull { course ->
@@ -342,55 +372,10 @@ class DawnWidget : GlanceAppWidget() {
                   }
              } else {
                 // 无课状态
+                val displayMessage = if (emptyMessage.isNotEmpty()) emptyMessage else "今日课程已结束 🌙"
                 Column(modifier = GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
-                     Text("今日已无课 ☕", style = TextStyle(fontSize = 16.sp, color = WidgetColors.TextSecondary))
+                     Text(displayMessage, style = TextStyle(fontSize = 16.sp, color = WidgetColors.TextSecondary))
                 }
-            }
-        }
-    }
-
-    @Composable
-    fun CourseListLayout(
-        courses: List<Course>,
-        today: LocalDate,
-        currentWeek: Int,
-        sectionTimes: List<SectionTime>,
-        isCompact: Boolean
-    ) {
-        Column(
-            modifier = GlanceModifier
-                .fillMaxSize()
-                .background(WidgetColors.Background)
-                .appWidgetBackground()
-                .cornerRadius(16.dp)
-                .padding(if (isCompact) 8.dp else 12.dp)
-                .clickable(actionStartActivity(getMainActivityClassName())),
-            horizontalAlignment = Alignment.Start
-        ) {
-            // Header
-            if (isCompact) {
-                 Row(
-                    verticalAlignment = Alignment.Bottom,
-                    modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
-                ) {
-                     Text(
-                        text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                        style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
-                    )
-                    Spacer(GlanceModifier.width(8.dp))
-                    Text(
-                        text = "${today.monthValue}月${today.dayOfMonth}日",
-                        style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary)
-                    )
-                }
-            } else {
-                WidgetHeader("第${currentWeek}周", "${today.monthValue}月${today.dayOfMonth}日")
-            }
-
-            if (courses.isEmpty()) {
-                EmptyCourseView()
-            } else {
-                ScheduleList(courses, sectionTimes, isCompact)
             }
         }
     }
@@ -434,13 +419,13 @@ class DawnWidget : GlanceAppWidget() {
     }
     
     @Composable
-    fun EmptyCourseView() {
+    fun EmptyCourseView(message: String) {
         Box(
             modifier = GlanceModifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "今日无课",
+                text = message,
                 style = TextStyle(color = WidgetColors.TextSecondary, fontSize = 16.sp)
             )
         }
