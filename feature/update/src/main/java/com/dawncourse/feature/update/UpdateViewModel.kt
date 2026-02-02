@@ -84,9 +84,10 @@ class UpdateViewModel @Inject constructor(
                 }
                 
                 if (isManual) {
-                    _eventFlow.emit(UpdateEvent.ShowToast(errorMsg))
+                    _uiState.value = UpdateUiState.Error(errorMsg)
+                } else {
+                    _uiState.value = UpdateUiState.Idle
                 }
-                _uiState.value = UpdateUiState.Error(errorMsg)
             }
         }
     }

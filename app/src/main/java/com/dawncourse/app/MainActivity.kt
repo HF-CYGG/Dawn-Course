@@ -26,6 +26,7 @@ import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
 import android.net.Uri
 import com.dawncourse.feature.update.UpdateDialog
+import com.dawncourse.feature.update.UpdateErrorDialog
 import com.dawncourse.feature.update.UpdateUiState
 import com.dawncourse.feature.update.UpdateViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -252,6 +253,12 @@ class MainActivity : ComponentActivity() {
                                     onUpdate = {},
                                     onIgnore = {},
                                     isUpdate = false
+                                )
+                            }
+                            is UpdateUiState.Error -> {
+                                UpdateErrorDialog(
+                                    message = state.message,
+                                    onDismiss = { updateViewModel.dismissDialog() }
                                 )
                             }
                             else -> {}
