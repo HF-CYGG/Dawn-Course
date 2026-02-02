@@ -77,14 +77,34 @@ class TimetableViewModel @Inject constructor(
     private val _currentWeek = MutableStateFlow(1)
 
     /**
+     * 时间跳动流
+     *
+     * 每分钟发射一次信号，用于驱动周次重新计算。
+     * 解决应用长期后台驻留或跨天时，周次不更新的问题。
+     */
+    private val timeTicker = flow {
+        emit(Unit) // 立即发射一次，确保初次加载
+        while (true) {
+            delay(60_000) // 每分钟检查一次
+            emit(Unit)
+        }
+    }
+
+    /**
      * 当前学期状态流
      *
      * 统一承载对当前学期的订阅，避免重复触发数据库查询。
      * 同时在数据变化时计算当前周次并更新 [_currentWeek]。
+     * 结合 timeTicker，确保自然时间流逝也能触发周次更新。
      * 使用 stateIn 转换为热流，SharingStarted.WhileSubscribed(5000) 确保在配置变更时保持活跃。
      */
     private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
-        semesterRepository.getCurrentSemester()
+        combine(
+            semesterRepository.getCurrentSemester(),
+            timeTicker
+        ) { semester, _ ->
+            semester
+        }
             .onEach { semester ->
                 if (semester != null) {
                     // 根据学期开始日期计算当前周次
