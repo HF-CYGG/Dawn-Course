@@ -55,6 +55,15 @@ sealed interface TimetableUiState {
     ) : TimetableUiState
 }
 
+/**
+ * 课表功能 ViewModel
+ *
+ * 负责管理课表界面的 UI 状态、处理用户交互（如切换周次、删除课程、撤销操作）以及数据流的聚合。
+ *
+ * @property repository 课程数据仓库
+ * @property semesterRepository 学期数据仓库
+ * @property calculateWeekUseCase 计算当前周次的用例
+ */
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimetableViewModel @Inject constructor(
@@ -154,15 +163,21 @@ class TimetableViewModel @Inject constructor(
             initialValue = TimetableUiState.Loading
         )
 
+    /**
+     * 更新当前展示的周次
+     *
+     * @param week 目标周次
+     */
     fun updateCurrentWeek(week: Int) {
         _currentWeek.update { week }
     }
 
     /**
-     * 添加测试课程
+     * 添加/更新课程
      *
-     * 用于演示和测试数据库插入功能。
-     * 在协程中调用 Repository 的 insert 方法。
+     * 如果课程 ID 为 0，则执行插入；否则执行更新。
+     *
+     * @param course 课程对象
      */
     fun saveCourse(course: Course) {
         viewModelScope.launch {
@@ -177,14 +192,20 @@ class TimetableViewModel @Inject constructor(
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage
 
+    // 删除操作的撤销栈，最多保存 5 步
     private val deletedCoursesStack = ArrayDeque<List<Course>>()
 
+    /**
+     * 标记用户消息已显示
+     */
     fun userMessageShown() {
         _userMessage.value = null
     }
 
     /**
      * 删除课程（支持撤销）
+     *
+     * 将待删除的课程存入撤销栈，然后从数据库中删除。
      *
      * @param courses 要删除的课程列表
      */
@@ -211,6 +232,8 @@ class TimetableViewModel @Inject constructor(
 
     /**
      * 撤销上一次删除操作
+     *
+     * 从撤销栈中取出最近一次删除的课程列表，并将其重新插入数据库。
      */
     fun undoDelete() {
         val coursesToRestore = deletedCoursesStack.removeFirstOrNull() ?: return
@@ -219,7 +242,6 @@ class TimetableViewModel @Inject constructor(
             // Room 的 insert 策略是 REPLACE，如果保留原 ID 且 ID 未被占用，可以恢复。
             // 但如果这是自增 ID，删除后可能无法保证 ID 仍可用（虽然通常没问题）。
             // 安全起见，我们将 ID 设为 0 让数据库重新生成，或者尝试插入原对象。
-            // 考虑到这是“撤销”，最好恢复原状。
             // 如果使用 insertCourses，ID 会被重置吗？如果对象有 ID，Room 会尝试使用它。
             // 我们尝试直接插入原对象。
             repository.insertCourses(coursesToRestore)
@@ -248,7 +270,15 @@ class TimetableViewModel @Inject constructor(
 
     /**
      * 撤销调课
-     * 将分裂的课程记录合并回原状态
+     *
+     * 将分裂的课程记录合并回原状态。
+     * 逻辑：
+     * 1. 找到所有具有相同 originId 的课程记录（兄弟节点）。
+     * 2. 收集它们覆盖的所有周次。
+     * 3. 重新计算合并后的连续片段。
+     * 4. 删除旧记录，插入合并后的新记录。
+     *
+     * @param course 触发撤销的课程对象
      */
     fun undoReschedule(course: Course) {
         // 如果是新创建且未分裂的课程，originId 可能为 0。
@@ -261,7 +291,7 @@ class TimetableViewModel @Inject constructor(
             // 如果只有一条记录且未修改，说明无需撤销
             if (siblings.size <= 1 && siblings.none { it.isModified }) return@launch
             
-            // 找到“原始模板”：未修改的记录
+            // 找到“原始模板”：未修改的记录 (作为新纪录的属性基准)
             val template = siblings.firstOrNull { !it.isModified } ?: return@launch
 
             // 收集所有周次
@@ -299,6 +329,16 @@ class TimetableViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 将离散的周次集合转换为连续的片段列表
+     *
+     * 使用贪心算法尝试合并连续的周次。
+     * 优先尝试合并为 [Course.WEEK_TYPE_ALL] (连续周)，
+     * 其次尝试合并为 [Course.WEEK_TYPE_ODD] (单周) 或 [Course.WEEK_TYPE_EVEN] (双周)。
+     *
+     * @param weeks 周次集合
+     * @return 片段列表 [(开始周, 结束周, 类型)]
+     */
     private fun convertToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {
         if (weeks.isEmpty()) return emptyList()
         val sorted = weeks.sorted()
@@ -308,15 +348,18 @@ class TimetableViewModel @Inject constructor(
         while (pending.isNotEmpty()) {
             val first = pending.minOrNull()!!
             
+            // 尝试构建连续周 (1,2,3,4...)
             var endAll = first
             while (pending.contains(endAll + 1)) endAll++
             val countAll = endAll - first + 1
             
+            // 尝试构建同奇偶性周 (1,3,5...)
             var endParity = first
             val step = 2
             while (pending.contains(endParity + step)) endParity += step
             val countParity = (endParity - first) / 2 + 1
             
+            // 贪心策略：谁长选谁
             if (countAll >= countParity) {
                 segments.add(Triple(first, endAll, Course.WEEK_TYPE_ALL))
                 for (i in first..endAll) pending.remove(i)

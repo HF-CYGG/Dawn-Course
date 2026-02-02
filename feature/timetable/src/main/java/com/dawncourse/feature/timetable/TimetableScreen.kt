@@ -5,32 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,28 +24,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
-import java.time.LocalDate
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.layout.ContentScale
-import coil.compose.AsyncImage
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.clickable
 
 import androidx.compose.runtime.saveable.rememberSaveable
 
 /**
  * 课表功能入口路由 (Composable Route)
+ *
+ * 负责连接 ViewModel 和 UI，处理导航事件。
+ *
+ * @param viewModel [TimetableViewModel] 实例
+ * @param onSettingsClick 跳转设置点击回调
+ * @param onAddClick 添加课程点击回调
+ * @param onImportClick 导入课程点击回调
+ * @param onCourseClick 课程点击回调 (用于编辑)
  */
 @Composable
 fun TimetableRoute(
@@ -92,7 +76,23 @@ fun TimetableRoute(
 /**
  * 课表界面 (Screen)
  *
- * 课表功能的主界面，包含顶部栏、周次头部、时间轴和课程网格。
+ * 课表功能的主界面，包含以下核心部分：
+ * 1. [TimetableBackground]: 沉浸式背景
+ * 2. [TimetableTopBar]: 顶部操作栏 (周次切换、功能入口)
+ * 3. [HorizontalPager]: 周次切换容器
+ * 4. [TimetableGrid]: 课程网格展示
+ * 5. [CourseDetailSheet]: 课程详情弹窗
+ *
+ * @param uiState UI 状态
+ * @param userMessage 用户提示消息
+ * @param onUserMessageShown 消息已显示回调
+ * @param onAddClick 添加课程回调
+ * @param onImportClick 导入课程回调
+ * @param onSettingsClick 设置回调
+ * @param onCourseClick 课程点击回调
+ * @param onUndoReschedule 撤销调课回调
+ * @param onConfirmDelete 确认删除回调
+ * @param onUndoDelete 撤销删除回调
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -140,23 +140,25 @@ internal fun TimetableScreen(
         }
     }
     
-    // Determine current week (Real world week)
+    // 计算当前真实周次
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
-    val maxWeeks = settings.totalWeeks // Bind max weeks to settings
+    // 绑定总周数到设置
+    val maxWeeks = settings.totalWeeks
+    // 假期模式判断：当前周 > 总周数
     val isHoliday = realCurrentWeek > maxWeeks
 
-    // Pager State
+    // Pager 状态管理
     val pagerState = rememberPagerState(
         initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
         pageCount = { maxWeeks }
     )
     
-    // Calculate displayed week from pager state
+    // 根据 Pager 计算当前展示的周次
     val displayedWeek by remember { derivedStateOf { pagerState.currentPage + 1 } }
     
     val scope = rememberCoroutineScope()
 
-    // Auto-scroll to current week on first load
+    // 首次加载时自动滚动到当前周
     LaunchedEffect(uiState) {
         if (!hasScrolledToCurrentWeek && uiState is TimetableUiState.Success) {
             // 仅当学期数据已加载（semesterStartDate != null）时才执行自动滚动，
@@ -182,13 +184,13 @@ internal fun TimetableScreen(
             isDarkTheme = isDarkTheme
         )
 
-        // 3. 内容层 (Scaffold)
+        // 2. 内容层 (Scaffold)
         // 关键：Scaffold 背景设为透明，否则会挡住下面的壁纸
         Scaffold(
             containerColor = Color.Transparent, // 透明背景
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-                // 1. 顶部栏 (透明背景)
+                // 顶部栏 (透明背景)
                 TimetableTopBar(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
@@ -214,7 +216,7 @@ internal fun TimetableScreen(
                         .fillMaxSize()
                         .padding(padding)
                 ) {
-                    // 3. 可滚动的课表区域
+                    // 3. 可滚动的课表区域 (Pager)
                     HorizontalPager(
                         state = pagerState,
                         modifier = Modifier.weight(1f),
@@ -223,14 +225,14 @@ internal fun TimetableScreen(
                         val week = page + 1
                         
                         Column(modifier = Modifier.fillMaxSize()) {
-                            // 2. 星期栏头部 (跟随页面滑动)
+                            // 3.1 星期栏头部 (跟随页面滑动)
                             WeekHeader(
                                 isCurrentWeek = week == realCurrentWeek,
                                 displayedWeek = week,
                                 semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
                             )
 
-                            // Use derivedStateOf for scroll-dependent logic if needed (e.g., sticky headers)
+                            // 3.2 垂直滚动区域 (时间轴 + 课程网格)
                             val scrollState = rememberScrollState()
                             Row(
                                 modifier = Modifier
@@ -301,73 +303,17 @@ internal fun TimetableScreen(
     
     // 智能删除确认弹窗
     if (coursesToDelete != null && targetCourseForDelete != null) {
-        val allCourses = coursesToDelete!!
-        val target = targetCourseForDelete!!
-        // 判断是否包含多个不同时间段的课程（忽略完全重复的脏数据）
-        val distinctTimeSlots = allCourses.distinctBy { Triple(it.dayOfWeek, it.startSection, it.duration) }
-        val isMultiple = distinctTimeSlots.size > 1
-        
-        AlertDialog(
-            onDismissRequest = { 
-                coursesToDelete = null 
+        DeleteConfirmationDialog(
+            coursesToDelete = coursesToDelete!!,
+            targetCourse = targetCourseForDelete!!,
+            onConfirmDelete = { courses ->
+                onConfirmDelete(courses)
+                coursesToDelete = null
                 targetCourseForDelete = null
             },
-            title = { Text("删除课程") },
-            text = { 
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (isMultiple) "该课程包含 ${distinctTimeSlots.size} 个时段，你想如何删除？" else "确定要删除《${target.name}》吗？")
-                }
-            },
-            confirmButton = {
-                if (isMultiple) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        horizontalAlignment = androidx.compose.ui.Alignment.End
-                    ) {
-                        TextButton(
-                            onClick = {
-                                onConfirmDelete(allCourses)
-                                coursesToDelete = null
-                                targetCourseForDelete = null
-                            }
-                        ) { 
-                            Text("删除所有时段", color = MaterialTheme.colorScheme.error) 
-                        }
-                        
-                        TextButton(
-                            onClick = {
-                                // 仅删除本时段（包括该时段下的所有重复记录）
-                                val duplicates = allCourses.filter { 
-                                    it.dayOfWeek == target.dayOfWeek && 
-                                    it.startSection == target.startSection && 
-                                    it.duration == target.duration
-                                }
-                                onConfirmDelete(duplicates)
-                                coursesToDelete = null
-                                targetCourseForDelete = null
-                            }
-                        ) { 
-                            Text("仅删除本时段") 
-                        }
-                    }
-                } else {
-                    TextButton(
-                        onClick = {
-                            // 单时段课程（可能包含重复数据），直接全部删除
-                            onConfirmDelete(allCourses)
-                            coursesToDelete = null
-                            targetCourseForDelete = null
-                        }
-                    ) { 
-                        Text("删除", color = MaterialTheme.colorScheme.error) 
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { 
-                    coursesToDelete = null 
-                    targetCourseForDelete = null
-                }) { Text("取消") }
+            onDismiss = {
+                coursesToDelete = null
+                targetCourseForDelete = null
             }
         )
     }
@@ -379,87 +325,4 @@ internal fun TimetableScreen(
             onDismissRequest = { rescheduleCourseId = null }
         )
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TimetableTopBar(
-    currentWeek: Int,
-    isRealCurrentWeek: Boolean,
-    totalWeeks: Int,
-    onWeekSelected: (Int) -> Unit,
-    onSettingsClick: () -> Unit,
-    onAddClick: () -> Unit,
-    onImportClick: () -> Unit
-) {
-    var showWeekMenu by remember { mutableStateOf(false) }
-
-    TopAppBar(
-        title = {
-            Column {
-                Row(
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    modifier = Modifier.clickable { showWeekMenu = true }
-                ) {
-                    Text(
-                        text = "第 $currentWeek 周",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = "切换周次",
-                        modifier = Modifier.padding(start = 4.dp)
-                    )
-                }
-                if (isRealCurrentWeek) {
-                    Text(
-                        text = "本周",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    )
-                }
-                
-                DropdownMenu(
-                    expanded = showWeekMenu,
-                    onDismissRequest = { showWeekMenu = false },
-                    modifier = Modifier.heightIn(max = 400.dp)
-                ) {
-                    for (i in 1..totalWeeks) {
-                        DropdownMenuItem(
-                            text = { 
-                                Text(
-                                    text = "第 $i 周" + if (i == currentWeek) " (当前展示)" else "",
-                                    fontWeight = if (i == currentWeek) FontWeight.Bold else FontWeight.Normal
-                                ) 
-                            },
-                            onClick = {
-                                onWeekSelected(i)
-                                showWeekMenu = false
-                            }
-                        )
-                    }
-                }
-            }
-        },
-        actions = {
-            IconButton(onClick = onImportClick) {
-                Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")
-            }
-            IconButton(onClick = onAddClick) {
-                Icon(Icons.Default.Add, contentDescription = "添加课程")
-            }
-            IconButton(onClick = onSettingsClick) {
-                Icon(Icons.Default.Settings, contentDescription = "设置")
-            }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.Transparent,
-            scrolledContainerColor = Color.Transparent
-        ),
-        modifier = Modifier
-    )
 }

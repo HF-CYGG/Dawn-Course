@@ -39,6 +39,26 @@ enum class ImportStep {
 
 /**
  * 导入页面的 UI 状态
+ *
+ * @property step 当前步骤
+ * @property htmlContent 解析的 HTML 内容
+ * @property webUrl 当前 WebView 的 URL
+ * @property parsedCourses 解析出的课程列表
+ * @property semesterStartDate 学期开始时间戳
+ * @property weekCount 学期总周数
+ * @property detectedMaxSection 检测到的最大节次
+ * @property courseDuration 单节课时长 (分钟)
+ * @property breakDuration 小课间时长 (分钟)
+ * @property bigBreakDuration 大课间时长 (分钟)
+ * @property sectionsPerBigSection 每个大节包含的小节数
+ * @property amStartTime 上午开始时间
+ * @property pmStartTime 下午开始时间
+ * @property pmStartSection 下午开始节次
+ * @property eveStartTime 晚上开始时间
+ * @property eveStartSection 晚上开始节次
+ * @property sectionTimes 具体的作息时间表
+ * @property resultText 解析结果提示文本
+ * @property isLoading 是否正在加载/解析
  */
 data class ImportUiState(
     val step: ImportStep = ImportStep.Input,
@@ -73,6 +93,15 @@ sealed interface ImportEvent {
     data object Success : ImportEvent
 }
 
+/**
+ * 导入功能 ViewModel
+ *
+ * 负责处理课程导入的全流程逻辑：
+ * 1. 网页源码获取与解析 (支持 JSON/HTML/JS 脚本)
+ * 2. 课程数据预览与编辑
+ * 3. 学期与作息时间配置
+ * 4. 最终数据入库
+ */
 @HiltViewModel
 class ImportViewModel @Inject constructor(
     private val application: Application,
@@ -89,7 +118,7 @@ class ImportViewModel @Inject constructor(
     val events = _events.asSharedFlow()
     
     init {
-        // Init start date to this week's Monday
+        // 初始化学期开始日期为本周一
         val today = LocalDate.now()
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val timestamp = monday.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -135,6 +164,15 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(semesterStartDate = startDate, weekCount = weeks) }
     }
     
+    /**
+     * 更新时间设置
+     *
+     * @param maxSection 最大节次
+     * @param duration 单节时长
+     * @param breakDuration 小课间
+     * @param bigBreakDuration 大课间
+     * @param sectionsPerBigSection 大节包含小节数
+     */
     fun updateTimeSettings(maxSection: Int, duration: Int, breakDuration: Int, bigBreakDuration: Int, sectionsPerBigSection: Int) {
         _uiState.update { 
             it.copy(
@@ -147,6 +185,9 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 更新作息时间节点设置
+     */
     fun updateTimeNodeSettings(
         amStart: LocalTime,
         pmStart: LocalTime,
@@ -169,6 +210,9 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(sectionTimes = times) }
     }
 
+    /**
+     * 更新单节作息时间
+     */
     fun updateSectionTime(index: Int, time: SectionTime) {
         _uiState.update { state ->
             if (index < 0) return@update state
@@ -181,6 +225,9 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 更新解析后的课程信息 (预览阶段编辑)
+     */
     fun updateParsedCourse(index: Int, course: ParsedCourse) {
         _uiState.update { state ->
             val newCourses = state.parsedCourses.toMutableList()
@@ -191,6 +238,9 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 删除解析后的课程 (预览阶段删除)
+     */
     fun deleteParsedCourse(index: Int) {
         _uiState.update { state ->
             val newCourses = state.parsedCourses.toMutableList()
@@ -202,31 +252,33 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
-     * 解析 WebView 返回的 JSON 结果
+     * 解析 WebView 返回的 JSON/HTML 结果
+     *
+     * 智能识别策略：
+     * 1. 尝试作为 JSON 直接解析 (适配小爱课程表/内部格式)
+     * 2. 如果失败，尝试作为 HTML 使用默认脚本解析 (适配正方教务)
      */
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
-                    // 1. Try treating as JSON (Xiaoai/Internal format)
+                    // 1. 尝试作为 JSON 解析
                     var courses = parseParsedCoursesFromRaw(raw)
                     if (courses.isEmpty()) {
                         val xiaoai = parseXiaoaiProviderResult(raw)
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
                     
-                    // 2. If not JSON, treat as HTML and run default parser (Zhengfang)
+                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (默认使用正方脚本)
                     if (courses.isEmpty()) {
                         try {
-                            // Try Zhengfang parser by default as it's the most common one
-                            // Ideally we should select parser based on URL or user selection
+                            // 加载默认解析脚本
                             val script = application.assets.open("parsers/zhengfang.js").bufferedReader().use { it.readText() }
                             val jsonResult = scriptEngine.parseHtml(script, raw)
                             val xiaoai = parseXiaoaiProviderResult(jsonResult)
                             courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                         } catch (e: Exception) {
-                            // Ignore script errors, maybe it's not a supported page or parser failed
                             e.printStackTrace()
                         }
                     }
@@ -255,20 +307,20 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
-     * 从 WebView 提取 HTML 并解析
+     * 从 WebView 提取 HTML 并使用指定脚本解析
      */
     fun parseHtmlFromWebView(html: String, script: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
-                    // 1. Run Script
+                    // 1. 运行 JS 脚本提取数据
                     val jsonResult = scriptEngine.parseHtml(script, html)
                     
-                    // 2. Parse JSON to Xiaoai Model
+                    // 2. 解析 JSON 结果
                     val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
                     
-                    // 3. Convert to ParsedCourse
+                    // 3. 转换为领域模型
                     val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
                     if (parsedFromXiaoai.isNotEmpty()) {
                         parsedFromXiaoai
@@ -301,12 +353,9 @@ class ImportViewModel @Inject constructor(
 
     /**
      * 确认导入
-     */
-    /**
-     * 确认导入
      *
      * 将解析后的课程数据、学期设置和时间表设置保存到数据库。
-     * 1. 更新全局时间设置 (MaxDailySections)
+     * 1. 更新全局时间设置 (MaxDailySections, SectionTimes)
      * 2. 创建并保存新学期
      * 3. 保存所有课程数据
      */
@@ -316,9 +365,10 @@ class ImportViewModel @Inject constructor(
             try {
                 val state = _uiState.value
                 
-                // 1. Update Time Settings
+                // 1. 更新时间设置
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
                 
+                // 1.1 生成作息时间表
                 val generatedTimes = mutableListOf<SectionTime>()
                 val formatter = DateTimeFormatter.ofPattern("HH:mm")
                 
@@ -328,8 +378,10 @@ class ImportViewModel @Inject constructor(
                         state.pmStartSection -> state.pmStartTime
                         state.eveStartSection -> state.eveStartTime
                         else -> {
+                            // 计算当前节次的开始时间：上一节结束时间 + 课间休息
                             val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
                             val prevSectionIndex = i - 1
+                            // 判断是否为大课间 (例如第2节后、第4节后)
                             val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
                             val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
                             prevEnd.plusMinutes(gap.toLong())
@@ -344,6 +396,7 @@ class ImportViewModel @Inject constructor(
                     )
                 }
 
+                // 合并用户手动修改的时间和自动生成的时间
                 val finalTimes = if (state.sectionTimes.isNotEmpty()) {
                     (1..state.detectedMaxSection).map { index ->
                         state.sectionTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
@@ -353,6 +406,7 @@ class ImportViewModel @Inject constructor(
                 }
                 settingsRepository.setSectionTimes(finalTimes)
                 
+                // 1.2 设置默认课程时长 (取众数)
                 val mostFrequentDuration = state.parsedCourses
                     .groupingBy { it.duration }
                     .eachCount()
@@ -362,7 +416,7 @@ class ImportViewModel @Inject constructor(
                 val safeDefaultDuration = mostFrequentDuration.coerceIn(1, 4)
                 settingsRepository.setDefaultCourseDuration(safeDefaultDuration)
                 
-                // 2. Create Semester
+                // 2. 创建新学期
                 val newSemester = Semester(
                     name = "导入学期 ${LocalDate.now()}",
                     startDate = state.semesterStartDate,
@@ -371,13 +425,13 @@ class ImportViewModel @Inject constructor(
                 )
                 val semesterId = semesterRepository.insertSemester(newSemester)
                 
-                // 3. Insert Courses
+                // 3. 插入课程数据
                 val domainCourses = state.parsedCourses.map { parsed ->
                     parsed.toDomainCourse().copy(semesterId = semesterId)
                 }
                 courseRepository.insertCourses(domainCourses)
                 
-                // Trigger Widget Update
+                // 4. 触发小组件更新广播
                 val intent = android.content.Intent("com.dawncourse.widget.FORCE_UPDATE")
                 intent.setPackage(application.packageName)
                 application.sendBroadcast(intent)
@@ -395,6 +449,9 @@ class ImportViewModel @Inject constructor(
         parseHtmlFromWebView(_uiState.value.htmlContent, script)
     }
 
+    /**
+     * 运行 ICS 文件导入
+     */
     fun runIcsImport(icsContent: String) {
         viewModelScope.launch {
              _uiState.update { it.copy(isLoading = true, resultText = "") }

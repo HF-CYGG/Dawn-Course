@@ -7,10 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -27,50 +30,152 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.PathEffect
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.core.ui.util.CourseColorUtils
-import java.time.LocalDate
 import java.time.DayOfWeek
+import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-
 // 常量定义
-// val NODE_HEIGHT = 56.dp // 单节课高度 (Moved to AppSettings)
 const val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
+
+/**
+ * 课表顶部操作栏
+ *
+ * 显示当前周次、周次切换下拉菜单以及常用功能入口（导入、添加、设置）。
+ *
+ * @param currentWeek 当前展示的周次
+ * @param isRealCurrentWeek 是否为真实时间的本周
+ * @param totalWeeks 学期总周数
+ * @param onWeekSelected 周次选择回调
+ * @param onSettingsClick 设置按钮点击回调
+ * @param onAddClick 添加按钮点击回调
+ * @param onImportClick 导入按钮点击回调
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TimetableTopBar(
+    currentWeek: Int,
+    isRealCurrentWeek: Boolean,
+    totalWeeks: Int,
+    onWeekSelected: (Int) -> Unit,
+    onSettingsClick: () -> Unit,
+    onAddClick: () -> Unit,
+    onImportClick: () -> Unit
+) {
+    var showWeekMenu by remember { mutableStateOf(false) }
+
+    TopAppBar(
+        title = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { showWeekMenu = true }
+                ) {
+                    Text(
+                        text = "第 $currentWeek 周",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "切换周次",
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+                if (isRealCurrentWeek) {
+                    Text(
+                        text = "本周",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
+                
+                DropdownMenu(
+                    expanded = showWeekMenu,
+                    onDismissRequest = { showWeekMenu = false },
+                    modifier = Modifier.heightIn(max = 400.dp)
+                ) {
+                    for (i in 1..totalWeeks) {
+                        DropdownMenuItem(
+                            text = { 
+                                Text(
+                                    text = "第 $i 周" + if (i == currentWeek) " (当前展示)" else "",
+                                    fontWeight = if (i == currentWeek) FontWeight.Bold else FontWeight.Normal
+                                ) 
+                            },
+                            onClick = {
+                                onWeekSelected(i)
+                                showWeekMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+        },
+        actions = {
+            IconButton(onClick = onImportClick) {
+                Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")
+            }
+            IconButton(onClick = onAddClick) {
+                Icon(Icons.Default.Add, contentDescription = "添加课程")
+            }
+            IconButton(onClick = onSettingsClick) {
+                Icon(Icons.Default.Settings, contentDescription = "设置")
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent
+        ),
+        modifier = Modifier
+    )
+}
 
 /**
  * 周次头部栏组件
@@ -90,7 +195,8 @@ fun WeekHeader(
     displayedWeek: Int = 1,
     semesterStartDate: LocalDate? = null
 ) {
-    val days = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    // 性能优化：将静态列表放入 remember 中，避免每次重组重复创建
+    val days = remember { listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日") }
     val today = LocalDate.now().dayOfWeek.value // 1 (Mon) - 7 (Sun)
     val settings = LocalAppSettings.current
     
@@ -222,6 +328,11 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
  * 课表网格布局
  *
  * 使用自定义 Layout 实现，根据课程的星期和节次进行绝对定位。
+ *
+ * @param courses 课程列表
+ * @param currentWeek 当前周次
+ * @param modifier 修饰符
+ * @param onCourseClick 课程点击回调
  */
 @Composable
 fun TimetableGrid(
@@ -231,7 +342,6 @@ fun TimetableGrid(
     onCourseClick: (Course) -> Unit
 ) {
     val settings = LocalAppSettings.current
-    // 假设每天最多 12 节课
     val maxNodes = settings.maxDailySections
     val nodeHeight = settings.courseItemHeightDp.dp
     val totalHeight = nodeHeight * maxNodes
@@ -495,6 +605,8 @@ fun CourseCard(
  * @param course 课程数据
  * @param onDismissRequest 关闭弹窗回调
  * @param onEditClick 编辑按钮点击回调
+ * @param onRescheduleClick 调课按钮点击回调
+ * @param onUndoRescheduleClick 撤销调课按钮点击回调
  * @param onDeleteClick 删除按钮点击回调
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -608,24 +720,24 @@ fun CourseDetailSheet(
             
             Spacer(modifier = Modifier.height(32.dp))
             
-                // 3. 操作区域：调课、删除、编辑
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // 调课/撤销调课 按钮
-                    androidx.compose.material3.Button(
-                        onClick = if (course.isModified) onUndoRescheduleClick else onRescheduleClick,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (course.isModified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
-                            contentColor = if (course.isModified) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondary
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (course.isModified) Icons.Default.Restore else Icons.Default.EditCalendar,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+            // 3. 操作区域：调课、删除、编辑
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 调课/撤销调课 按钮
+                androidx.compose.material3.Button(
+                    onClick = if (course.isModified) onUndoRescheduleClick else onRescheduleClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (course.isModified) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
+                        contentColor = if (course.isModified) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSecondary
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = if (course.isModified) Icons.Default.Restore else Icons.Default.EditCalendar,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(if (course.isModified) "撤销调课 (还原)" else "调课 (部分周次变动)")
                 }
 
@@ -635,44 +747,120 @@ fun CourseDetailSheet(
                 ) {
                     // 删除按钮 (次要操作)
                     OutlinedButton(
-                    onClick = onDeleteClick,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp, 
-                        MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("删除")
+                        onClick = onDeleteClick,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp, 
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("删除")
+                    }
+                    
+                    // 编辑按钮 (主要操作)
+                    androidx.compose.material3.Button(
+                        onClick = onEditClick,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = themePrimary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("编辑")
+                    }
                 }
-                
-                // 编辑按钮 (主要操作)
-                androidx.compose.material3.Button(
-                    onClick = onEditClick,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = themePrimary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    ),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("编辑")
-                }
-            }
             }
         }
     }
 }
 
+/**
+ * 删除确认对话框
+ *
+ * 处理单课程删除和多时段重复课程的删除逻辑。
+ *
+ * @param coursesToDelete 待删除的课程列表
+ * @param targetCourse 触发删除的目标课程 (用户点击的那个)
+ * @param onConfirmDelete 确认删除回调
+ * @param onDismiss 取消回调
+ */
+@Composable
+fun DeleteConfirmationDialog(
+    coursesToDelete: List<Course>,
+    targetCourse: Course,
+    onConfirmDelete: (List<Course>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // 判断是否包含多个不同时间段的课程（忽略完全重复的脏数据）
+    val distinctTimeSlots = remember(coursesToDelete) {
+        coursesToDelete.distinctBy { Triple(it.dayOfWeek, it.startSection, it.duration) }
+    }
+    val isMultiple = distinctTimeSlots.size > 1
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("删除课程") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (isMultiple) "该课程包含 ${distinctTimeSlots.size} 个时段，你想如何删除？" else "确定要删除《${targetCourse.name}》吗？")
+            }
+        },
+        confirmButton = {
+            if (isMultiple) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.End
+                ) {
+                    TextButton(
+                        onClick = {
+                            onConfirmDelete(coursesToDelete)
+                        }
+                    ) {
+                        Text("删除所有时段", color = MaterialTheme.colorScheme.error)
+                    }
+
+                    TextButton(
+                        onClick = {
+                            // 仅删除本时段（包括该时段下的所有重复记录）
+                            val duplicates = coursesToDelete.filter {
+                                it.dayOfWeek == targetCourse.dayOfWeek &&
+                                        it.startSection == targetCourse.startSection &&
+                                        it.duration == targetCourse.duration
+                            }
+                            onConfirmDelete(duplicates)
+                        }
+                    ) {
+                        Text("仅删除本时段")
+                    }
+                }
+            } else {
+                TextButton(
+                    onClick = {
+                        // 单时段课程（可能包含重复数据），直接全部删除
+                        onConfirmDelete(coursesToDelete)
+                    }
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+}
+
 @Composable
 private fun CourseDetailItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     value: String,
     iconTint: Color
