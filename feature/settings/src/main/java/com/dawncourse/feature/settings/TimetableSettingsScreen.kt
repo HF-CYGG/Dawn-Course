@@ -306,6 +306,18 @@ fun TimetableSettingsScreen(
             // 4. 显示设置
             PreferenceCategory(title = "显示设置") {
                 SettingRow(
+                    title = "显示非本周课程",
+                    description = "显示当前周次未开课，但在其他周次有课的课程",
+                    showDivider = true,
+                    action = {
+                        Switch(
+                            checked = !settings.hideNonThisWeek,
+                            onCheckedChange = { viewModel.setHideNonThisWeek(!it) }
+                        )
+                    }
+                )
+
+                SettingRow(
                     title = "显示日期",
                     description = "在星期下方显示具体日期 (如 9.1)",
                     showDivider = false,
