@@ -35,6 +35,7 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
 import androidx.glance.layout.size
+import androidx.glance.layout.ColumnScope
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
@@ -111,9 +112,7 @@ class DawnWidget : GlanceAppWidget() {
         private val BIG_SQUARE = DpSize(250.dp, 250.dp)         // 3x3, 4x4
     }
 
-    override val sizeMode = SizeMode.Responsive(
-        setOf(SMALL_SQUARE, HORIZONTAL_RECTANGLE, VERTICAL_RECTANGLE, BIG_SQUARE)
-    )
+    override val sizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val appContext = context.applicationContext
@@ -196,23 +195,58 @@ class DawnWidget : GlanceAppWidget() {
         sectionTimes: List<SectionTime>
     ) {
         val size = LocalSize.current
-        val width = size.width
         val height = size.height
 
-        // 逻辑修正：
-        // 1x4 典型高度为 70dp-90dp
-        // 2x4 典型高度为 130dp-150dp
-        // 我们将阈值设为 110dp
-        val isListMode = height >= 110.dp
+        // List Mode Threshold:
+        // 1x4 (height ~50-90dp) -> Focus Mode
+        // 2x4 (height ~110-150dp) -> Focus Mode (Requested by user: "Just show current or next")
+        // 3x4 (height ~200dp+) -> List Mode
+        val isListMode = height >= 160.dp
 
         if (isListMode) {
-             // 2x4, 3x4, 4x4 -> List Layout
-             // 如果高度小于 160dp (典型 2x4)，我们就压缩 Padding
-             val isVeryCompact = height < 160.dp
-             CourseListLayout(courses, today, currentWeek, sectionTimes, isCompact = isVeryCompact)
+            Column(
+                modifier = GlanceModifier
+                    .fillMaxSize()
+                    .background(WidgetColors.Background)
+                    .appWidgetBackground()
+                    .cornerRadius(16.dp)
+                    .padding(if (height < 160.dp) 8.dp else 12.dp)
+                    .clickable(actionStartActivity(getMainActivityClassName())),
+                verticalAlignment = Alignment.Top // 强制置顶！
+            ) {
+                val isVeryCompact = height < 160.dp
+
+                // Header
+                if (isVeryCompact) {
+                     Row(
+                        verticalAlignment = Alignment.Bottom,
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) {
+                         Text(
+                            text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                            style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
+                        )
+                        Spacer(GlanceModifier.width(8.dp))
+                        Text(
+                            text = "${today.monthValue}月${today.dayOfMonth}日",
+                            style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary)
+                        )
+                    }
+                } else {
+                    WidgetHeader("第${currentWeek}周", "${today.monthValue}月${today.dayOfMonth}日")
+                }
+
+                if (courses.isEmpty()) {
+                    EmptyCourseView()
+                } else {
+                    // 关键：LazyColumn 必须设置 weight(1f)，否则可能撑不开
+                    ScheduleList(courses, sectionTimes, isVeryCompact)
+                }
+            }
         } else {
-             // 1x4 -> Focus Mode (Horizontal)
-             FocusCourseItem(courses, sectionTimes, isHorizontal = true)
+             // 1x4 & 2x4 -> Focus Mode (Horizontal)
+             // 直接渲染，不包裹在 Column 中，以便 FocusCourseItem 控制背景和圆角
+             FocusCourseItem(courses, sectionTimes, today = today)
         }
     }
 
@@ -220,156 +254,91 @@ class DawnWidget : GlanceAppWidget() {
     fun FocusCourseItem(
         courses: List<Course>,
         sectionTimes: List<SectionTime>,
-        isHorizontal: Boolean
+        today: LocalDate
     ) {
         val now = LocalTime.now()
         val nextCourse = courses.firstOrNull { course ->
              isCourseCurrentOrFuture(course, sectionTimes, now)
         }
         
-        val modifier = GlanceModifier
-            .fillMaxSize()
-            .background(if (isHorizontal) WidgetColors.Background else WidgetColors.PrimaryContainer)
-            .appWidgetBackground()
-            .cornerRadius(16.dp)
-            .padding(if (isHorizontal) 8.dp else 16.dp)
-            .clickable(actionStartActivity(getMainActivityClassName()))
-
-        Box(
-            modifier = modifier,
-            contentAlignment = if (isHorizontal) Alignment.CenterStart else Alignment.Center
+        // 1x4 极简高级感方案 (Linear Horizontal Flow)
+        // [日期] | [课程] | [图标]
+        
+        Row(
+            modifier = GlanceModifier
+                .fillMaxSize()
+                .background(WidgetColors.Background) // 使用统一背景，视觉上更清爽
+                .appWidgetBackground()
+                .cornerRadius(16.dp)
+                .clickable(actionStartActivity(getMainActivityClassName()))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // 1. 左侧日期/状态指示 (小而美)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = GlanceModifier.width(40.dp) // 稍微加宽一点以容纳更大的字体
+            ) {
+                Text(
+                    text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                    style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = WidgetColors.Primary)
+                )
+                Text(
+                    text = "${today.monthValue}.${today.dayOfMonth}",
+                    style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary)
+                )
+            }
+
+            // 分割线
+            Box(
+                modifier = GlanceModifier
+                    .width(1.dp)
+                    .height(26.dp)
+                    .background(WidgetColors.Divider)
+                    .padding(horizontal = 8.dp)
+            ) {}
+
+            Spacer(GlanceModifier.width(8.dp))
+
+            // 2. 中间核心内容
             if (nextCourse != null) {
                 val isCurrent = isCourseActive(nextCourse, sectionTimes, now)
+                val startTime = getSectionStartTime(nextCourse.startSection, sectionTimes) ?: ""
                 
-                if (isHorizontal) {
-                    // --- Horizontal Layout (4x1) ---
-                    val colorIndex = kotlin.math.abs(nextCourse.name.hashCode()) % WidgetCourseColors.size
-                    val baseColor = WidgetCourseColors[colorIndex]
-                    val bg = if (isCurrent) baseColor else WidgetColors.Surface
-                    
-                    Row(
-                        modifier = GlanceModifier
-                            .fillMaxSize()
-                            .background(bg)
-                            .cornerRadius(12.dp)
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 时间
-                        val startTime = getSectionStartTime(nextCourse.startSection, sectionTimes) ?: ""
-                        Column(verticalAlignment = Alignment.CenterVertically) {
-                             Text(
-                                text = startTime,
-                                style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
-                            )
-                            if (isCurrent) {
-                                Text(
-                                    text = "上课中",
-                                    style = TextStyle(fontSize = 10.sp, color = WidgetColors.Primary, fontWeight = FontWeight.Bold)
-                                )
-                            }
-                        }
-
-                        Spacer(GlanceModifier.width(12.dp))
-                        Box(modifier = GlanceModifier.width(1.dp).height(24.dp).background(WidgetColors.Divider)) {}
-                        Spacer(GlanceModifier.width(12.dp))
-
-                        // 课程信息
-                        Column(modifier = GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = nextCourse.name,
-                                style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary),
-                                maxLines = 1
-                            )
-                            Spacer(GlanceModifier.height(2.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                 Image(
-                                    provider = ImageProvider(R.drawable.ic_location_on),
-                                    contentDescription = null,
-                                    modifier = GlanceModifier.size(12.dp),
-                                    colorFilter = ColorFilter.tint(WidgetColors.IconTint)
-                                )
-                                Spacer(GlanceModifier.width(4.dp))
-                                 Text(
-                                    text = nextCourse.location,
-                                    style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary),
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    // --- Vertical/Square Layout (2x2) ---
-                    Column {
-                        if (isCurrent) {
-                             Text(
-                                text = "正在上课",
-                                style = TextStyle(color = WidgetColors.Primary, fontSize = 12.sp, fontWeight = FontWeight.Bold),
-                                modifier = GlanceModifier.padding(bottom = 4.dp)
-                            )
-                        } else {
-                             Text(
-                                text = "接下来",
-                                style = TextStyle(color = WidgetColors.OnPrimaryContainer, fontSize = 12.sp),
-                                modifier = GlanceModifier.padding(bottom = 4.dp)
-                            )
-                        }
-
+                Column(modifier = GlanceModifier.defaultWeight()) {
+                    Text(
+                        text = nextCourse.name,
+                        style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary),
+                        maxLines = 1
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = nextCourse.name,
-                            style = TextStyle(color = WidgetColors.OnPrimaryContainer, fontSize = 20.sp, fontWeight = FontWeight.Bold),
-                            maxLines = 2
+                            text = "$startTime ",
+                            style = TextStyle(fontSize = 13.sp, color = if (isCurrent) WidgetColors.Primary else WidgetColors.TextSecondary, fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal)
                         )
-                        Spacer(GlanceModifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Image(
-                                provider = ImageProvider(R.drawable.ic_location_on),
-                                contentDescription = null,
-                                modifier = GlanceModifier.size(12.dp),
-                                colorFilter = ColorFilter.tint(WidgetColors.OnPrimaryContainer)
-                            )
-                            Spacer(GlanceModifier.width(4.dp))
-                            Text(
-                                text = nextCourse.location.ifEmpty { "未知地点" },
-                                style = TextStyle(color = WidgetColors.OnPrimaryContainer, fontSize = 14.sp)
-                            )
-                        }
-                        
-                        val timeStr = getCourseTimeString(nextCourse, sectionTimes)
                         Text(
-                            text = timeStr,
-                            style = TextStyle(color = WidgetColors.Primary, fontSize = 14.sp),
-                            modifier = GlanceModifier.padding(top = 4.dp)
+                            text = "· ${nextCourse.location}",
+                            style = TextStyle(fontSize = 13.sp, color = WidgetColors.TextSecondary),
+                            maxLines = 1
                         )
                     }
                 }
-            } else {
+                
+                // 3. 右侧状态图标 (例如：距离上课还有多久，或者单纯的装饰)
+                 if (isCurrent) {
+                     // 上课中：显示呼吸点
+                     Box(modifier = GlanceModifier.size(8.dp).background(WidgetColors.Primary).cornerRadius(4.dp)) {}
+                 } else {
+                      // 未开始：显示箭头 (如果没有箭头图标，暂时用 Text ">")
+                      Text(
+                        text = ">",
+                        style = TextStyle(fontSize = 18.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Bold)
+                    )
+                  }
+             } else {
                 // 无课状态
-                if (isHorizontal) {
-                    Row(
-                        modifier = GlanceModifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(text = "☕", style = TextStyle(fontSize = 20.sp))
-                        Spacer(GlanceModifier.width(8.dp))
-                        Text(
-                            text = "今日课程已结束",
-                            style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, color = WidgetColors.TextSecondary)
-                        )
-                    }
-                } else {
-                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "今日课程已结束",
-                            style = TextStyle(color = WidgetColors.OnPrimaryContainer, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        )
-                         Text(
-                            text = "好好休息",
-                            style = TextStyle(color = WidgetColors.OnPrimaryContainer, fontSize = 12.sp)
-                        )
-                    }
+                Column(modifier = GlanceModifier.defaultWeight(), verticalAlignment = Alignment.CenterVertically) {
+                     Text("今日已无课 ☕", style = TextStyle(fontSize = 16.sp, color = WidgetColors.TextSecondary))
                 }
             }
         }
@@ -473,16 +442,16 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
-    fun ScheduleList(courses: List<Course>, sectionTimes: List<SectionTime>, isCompact: Boolean) {
+    fun ColumnScope.ScheduleList(courses: List<Course>, sectionTimes: List<SectionTime>, isCompact: Boolean) {
         val now = LocalTime.now()
         val focusIndex = courses.indexOfFirst { course ->
             isCourseCurrentOrFuture(course, sectionTimes, now)
         }.takeIf { it != -1 } ?: 0
 
         LazyColumn(
-            modifier = GlanceModifier.fillMaxSize()
-        ) {
-            itemsIndexed(courses.sortedBy { it.startSection }) { index, course ->
+        modifier = GlanceModifier.defaultWeight()
+    ) {
+        itemsIndexed(courses.sortedBy { it.startSection }) { index, course ->
                 val isFocus = index == focusIndex
                 val isPast = index < focusIndex
 
