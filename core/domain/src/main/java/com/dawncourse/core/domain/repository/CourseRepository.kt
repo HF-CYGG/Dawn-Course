@@ -74,4 +74,12 @@ interface CourseRepository {
      * @param duration 新的时长（节数）
      */
     suspend fun updateAllCoursesDuration(duration: Int)
+
+    /**
+     * 获取指定学期中所有课程的最大周次
+     *
+     * @param semesterId 学期 ID
+     * @return 最大周次，默认为 0
+     */
+    suspend fun getMaxWeekInSemester(semesterId: Long): Int
 }

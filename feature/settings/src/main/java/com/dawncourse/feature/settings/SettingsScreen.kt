@@ -52,12 +52,14 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
     var showSemesterDialog by remember { mutableStateOf(false) }
+    var maxCourseWeek by remember { mutableIntStateOf(0) }
 
     if (showSemesterDialog) {
         SemesterSettingsDialog(
             initialName = settings.currentSemesterName,
             initialWeeks = settings.totalWeeks,
             initialStartDate = settings.startDateTimestamp,
+            maxCourseWeek = maxCourseWeek,
             onDismissRequest = { showSemesterDialog = false },
             onConfirm = { name, weeks, date ->
                 viewModel.setCurrentSemesterName(name)
@@ -175,7 +177,12 @@ fun SettingsScreen(
                     title = "当前学期",
                     description = "${settings.currentSemesterName} (第 1 周 / 共 ${settings.totalWeeks} 周)",
                     icon = { Icon(Icons.Default.DateRange, null) },
-                    onClick = { showSemesterDialog = true },
+                    onClick = {
+                        viewModel.getMaxCourseWeek { max ->
+                            maxCourseWeek = max
+                            showSemesterDialog = true
+                        }
+                    },
                     showDivider = true
                 )
                 SettingRow(

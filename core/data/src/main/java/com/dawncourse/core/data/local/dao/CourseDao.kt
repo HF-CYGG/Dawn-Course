@@ -34,6 +34,15 @@ interface CourseDao {
     fun getCoursesBySemester(semesterId: Long): Flow<List<CourseEntity>>
 
     /**
+     * 获取指定学期中所有课程的最大周次
+     *
+     * @param semesterId 学期 ID
+     * @return 最大周次，如果无课程则返回 null
+     */
+    @Query("SELECT MAX(endWeek) FROM courses WHERE semesterId = :semesterId")
+    suspend fun getMaxWeekInSemester(semesterId: Long): Int?
+
+    /**
      * 根据原始 ID 查询课程
      *
      * 用于查找由同一门课程调课分裂出的所有相关课程记录。

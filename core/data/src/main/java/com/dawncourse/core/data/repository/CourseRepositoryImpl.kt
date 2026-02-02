@@ -95,4 +95,8 @@ class CourseRepositoryImpl @Inject constructor(
     override suspend fun updateAllCoursesDuration(duration: Int) {
         courseDao.updateAllCoursesDuration(duration)
     }
+
+    override suspend fun getMaxWeekInSemester(semesterId: Long): Int {
+        return courseDao.getMaxWeekInSemester(semesterId) ?: 0
+    }
 }

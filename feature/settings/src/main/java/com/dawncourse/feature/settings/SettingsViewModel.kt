@@ -255,6 +255,24 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 获取当前学期中课程的最大周次
+     *
+     * 用于在修改学期总周数时进行校验，防止课程被隐藏。
+     * @param onResult 回调函数，参数为最大周次
+     */
+    fun getMaxCourseWeek(onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            val currentSemester = semesterRepository.getCurrentSemester().first()
+            if (currentSemester != null) {
+                val maxWeek = courseRepository.getMaxWeekInSemester(currentSemester.id)
+                onResult(maxWeek)
+            } else {
+                onResult(0)
+            }
+        }
+    }
+
     fun setStartDateTimestamp(timestamp: Long) {
         viewModelScope.launch { 
             settingsRepository.setStartDateTimestamp(timestamp)

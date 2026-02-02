@@ -32,6 +32,7 @@ fun SemesterSettingsDialog(
     initialName: String,
     initialWeeks: Int,
     initialStartDate: Long, // timestamp in millis
+    maxCourseWeek: Int = 0,
     onDismissRequest: () -> Unit,
     onConfirm: (String, Int, Long) -> Unit
 ) {
@@ -39,6 +40,7 @@ fun SemesterSettingsDialog(
     var weeks by remember { mutableStateOf(initialWeeks.toFloat()) }
     var startDate by remember { mutableStateOf(initialStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showConfirmDialog by remember { mutableStateOf(false) }
 
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
@@ -50,6 +52,23 @@ fun SemesterSettingsDialog(
             onConfirm = {
                 datePickerState.selectedDateMillis?.let { startDate = it }
                 showDatePicker = false
+            }
+        )
+    }
+
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = { Text("确认修改？") },
+            text = { Text("当前课表中第 $maxCourseWeek 周仍有课程，设定为 ${weeks.toInt()} 周将导致部分课程无法显示。确定要继续吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirmDialog = false
+                    onConfirm(name, weeks.toInt(), startDate)
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) { Text("取消") }
             }
         )
     }
@@ -82,7 +101,7 @@ fun SemesterSettingsDialog(
                         Text(
                             "${weeks.toInt()} 周",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (weeks.toInt() < maxCourseWeek) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                     }
                     Slider(
@@ -124,7 +143,11 @@ fun SemesterSettingsDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onConfirm(name, weeks.toInt(), startDate)
+                    if (weeks.toInt() < maxCourseWeek) {
+                        showConfirmDialog = true
+                    } else {
+                        onConfirm(name, weeks.toInt(), startDate)
+                    }
                 }
             ) {
                 Text("保存")

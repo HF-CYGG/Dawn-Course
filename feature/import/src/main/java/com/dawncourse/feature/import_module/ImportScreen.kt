@@ -709,12 +709,26 @@ private fun ImportSettingsSection(
             ) {
                 // Group 1: Semester
                 SettingGroup(title = "学期设置", icon = Icons.Default.DateRange) {
-                    StepperRowItem(
-                        label = "学期周数",
-                        value = uiState.weekCount,
-                        onValueChange = { onSemesterSettingsChange(uiState.semesterStartDate, it) },
-                        range = 10..30
-                    )
+                    val detectedWeeks = remember(uiState.parsedCourses) {
+                        uiState.parsedCourses.flatMap { it.weeks }.maxOrNull() ?: 20
+                    }
+                    
+                    Column {
+                        StepperRowItem(
+                            label = "学期周数",
+                            value = uiState.weekCount,
+                            onValueChange = { onSemesterSettingsChange(uiState.semesterStartDate, it) },
+                            range = 10..30
+                        )
+                        if (uiState.weekCount == detectedWeeks && uiState.parsedCourses.isNotEmpty()) {
+                            Text(
+                                text = "已根据课表自动识别",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
                     
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 

@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -139,7 +140,8 @@ internal fun TimetableScreen(
     // Determine current week (Real world week)
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
     val maxWeeks = settings.totalWeeks // Bind max weeks to settings
-    
+    val isHoliday = realCurrentWeek > maxWeeks
+
     // Pager State
     val pagerState = rememberPagerState(
         initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
@@ -187,9 +189,10 @@ internal fun TimetableScreen(
                 TimetableTopBar(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
-                    onTitleClick = {
+                    totalWeeks = maxWeeks,
+                    onWeekSelected = { week ->
                         scope.launch {
-                            val targetPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1)
+                            val targetPage = (week - 1).coerceIn(0, maxWeeks - 1)
                             pagerState.animateScrollToPage(targetPage)
                         }
                     },
@@ -200,54 +203,58 @@ internal fun TimetableScreen(
             },
             contentColor = MaterialTheme.colorScheme.onBackground
         ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                // 3. 可滚动的课表区域
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.weight(1f),
-            beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
-        ) { page ->
-                    val week = page + 1
-                    
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // 2. 星期栏头部 (跟随页面滑动)
-                        WeekHeader(
-                            isCurrentWeek = week == realCurrentWeek,
-                            displayedWeek = week,
-                            semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
-                        )
+            if (isHoliday) {
+                HolidayView(modifier = Modifier.padding(padding))
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                ) {
+                    // 3. 可滚动的课表区域
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.weight(1f),
+                        beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
+                    ) { page ->
+                        val week = page + 1
+                        
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // 2. 星期栏头部 (跟随页面滑动)
+                            WeekHeader(
+                                isCurrentWeek = week == realCurrentWeek,
+                                displayedWeek = week,
+                                semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+                            )
 
-                        // Use derivedStateOf for scroll-dependent logic if needed (e.g., sticky headers)
-                        val scrollState = rememberScrollState()
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .verticalScroll(scrollState)
-                        ) {
-                            // 左侧时间轴 (固定宽度)
-                            TimeColumnIndicator()
+                            // Use derivedStateOf for scroll-dependent logic if needed (e.g., sticky headers)
+                            val scrollState = rememberScrollState()
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .verticalScroll(scrollState)
+                            ) {
+                                // 左侧时间轴 (固定宽度)
+                                TimeColumnIndicator()
 
-                            // 右侧课程网格
-                            if (uiState is TimetableUiState.Success) {
-                                TimetableGrid(
-                                    courses = uiState.courses,
-                                    currentWeek = week,
-                                    modifier = Modifier.weight(1f),
-                                    onCourseClick = { course -> selectedCourse = course }
-                                )
-                            } else {
-                                // 空状态或加载状态
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(top = 100.dp),
-                                    contentAlignment = androidx.compose.ui.Alignment.Center
-                                ) {
-                                    Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                                // 右侧课程网格
+                                if (uiState is TimetableUiState.Success) {
+                                    TimetableGrid(
+                                        courses = uiState.courses,
+                                        currentWeek = week,
+                                        modifier = Modifier.weight(1f),
+                                        onCourseClick = { course -> selectedCourse = course }
+                                    )
+                                } else {
+                                    // 空状态或加载状态
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(top = 100.dp),
+                                        contentAlignment = androidx.compose.ui.Alignment.Center
+                                    ) {
+                                        Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                                    }
                                 }
                             }
                         }
@@ -376,20 +383,33 @@ internal fun TimetableScreen(
 private fun TimetableTopBar(
     currentWeek: Int,
     isRealCurrentWeek: Boolean,
-    onTitleClick: () -> Unit,
+    totalWeeks: Int,
+    onWeekSelected: (Int) -> Unit,
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
     onImportClick: () -> Unit
 ) {
+    var showWeekMenu by remember { mutableStateOf(false) }
+
     TopAppBar(
         title = {
-            Column(modifier = Modifier.clickable(onClick = onTitleClick)) {
-                Text(
-                    text = "第 $currentWeek 周",
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold
+            Column {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    modifier = Modifier.clickable { showWeekMenu = true }
+                ) {
+                    Text(
+                        text = "第 $currentWeek 周",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold
+                        )
                     )
-                )
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "切换周次",
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
                 if (isRealCurrentWeek) {
                     Text(
                         text = "本周",
@@ -398,6 +418,27 @@ private fun TimetableTopBar(
                             color = MaterialTheme.colorScheme.primary
                         )
                     )
+                }
+                
+                DropdownMenu(
+                    expanded = showWeekMenu,
+                    onDismissRequest = { showWeekMenu = false },
+                    modifier = Modifier.heightIn(max = 400.dp)
+                ) {
+                    for (i in 1..totalWeeks) {
+                        DropdownMenuItem(
+                            text = { 
+                                Text(
+                                    text = "第 $i 周" + if (i == currentWeek) " (当前展示)" else "",
+                                    fontWeight = if (i == currentWeek) FontWeight.Bold else FontWeight.Normal
+                                ) 
+                            },
+                            onClick = {
+                                onWeekSelected(i)
+                                showWeekMenu = false
+                            }
+                        )
+                    }
                 }
             }
         },

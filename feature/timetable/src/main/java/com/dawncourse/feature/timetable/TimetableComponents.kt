@@ -27,7 +27,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.BeachAccess
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -732,5 +732,52 @@ private fun getWeekType(type: Int): String {
         Course.WEEK_TYPE_ODD -> "(单)"
         Course.WEEK_TYPE_EVEN -> "(双)"
         else -> ""
+    }
+}
+
+/**
+ * 假期模式视图
+ *
+ * 当当前日期超过学期总周数时显示。
+ */
+@Composable
+fun HolidayView(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.BeachAccess,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(120.dp)
+                    .padding(bottom = 24.dp)
+                    .alpha(0.8f),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            
+            Text(
+                text = "好好享受假期吧！",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                ),
+                color = MaterialTheme.colorScheme.primary
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = "本学期课程已全部结束，下学期也要加油哦。",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 32.dp)
+            )
+        }
     }
 }
