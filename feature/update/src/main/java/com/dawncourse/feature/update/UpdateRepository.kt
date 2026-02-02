@@ -22,14 +22,17 @@ class UpdateRepository @Inject constructor() {
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
-    private val api: UpdateApi by lazy {
-        Retrofit.Builder()
-            .baseUrl("http://yyh163.xyz:10000/")
+    private fun createApi(baseUrl: String): UpdateApi {
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(UpdateApi::class.java)
     }
+
+    private val primaryApi by lazy { createApi("http://yyh163.xyz:10000/") }
+    private val fallbackApi by lazy { createApi("http://47.105.76.193/") }
 
     /**
      * 检查更新
@@ -37,12 +40,22 @@ class UpdateRepository @Inject constructor() {
      * @return Result<UpdateInfo> 更新信息
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
+        // 1. 尝试主域名
         try {
-            val info = api.getUpdateInfo()
-            Result.success(info)
+            val info = primaryApi.getUpdateInfo()
+            return@withContext Result.success(info)
         } catch (e: Exception) {
             e.printStackTrace()
-            Result.failure(e)
+            // 失败则继续尝试兜底 IP
+        }
+
+        // 2. 尝试兜底 IP
+        try {
+            val info = fallbackApi.getUpdateInfo()
+            return@withContext Result.success(info)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext Result.failure(e)
         }
     }
 }
