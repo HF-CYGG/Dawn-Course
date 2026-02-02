@@ -22,3 +22,19 @@
 
 # Keep DataStore
 -keep class androidx.datastore.** { *; }
+
+# --- Update Feature Rules ---
+# Retrofit & Gson for Update Check
+-keep interface com.dawncourse.feature.update.UpdateApi { *; }
+-keep class com.dawncourse.feature.update.UpdateInfo { *; }
+-keep class com.dawncourse.feature.update.UpdateType { *; }
+
+# Keep generic signatures for Retrofit
+-keepattributes Signature
+-keepattributes *Annotation*
+-keepattributes EnclosingMethod
+-keepattributes InnerClasses
+
+# Prevent R8 from being too aggressive with Retrofit interfaces
+-keep interface retrofit2.** { *; }
+-keep class retrofit2.** { *; }
