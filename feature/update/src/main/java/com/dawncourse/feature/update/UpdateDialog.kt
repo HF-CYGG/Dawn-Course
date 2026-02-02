@@ -103,11 +103,15 @@ fun UpdateDialog(
                             containerColor = MaterialTheme.colorScheme.tertiaryContainer
                         )
                     ) {
-                        val displayText = if (info.versionName.startsWith("v", ignoreCase = true)) {
+                        val versionText = if (info.versionName.startsWith("v", ignoreCase = true)) {
                             info.versionName
                         } else {
                             "v${info.versionName}"
                         }
+
+                        // 组合文本：类型 • 版本号
+                        val displayText = "${info.type.label} • $versionText"
+
                         Text(
                             text = displayText,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
