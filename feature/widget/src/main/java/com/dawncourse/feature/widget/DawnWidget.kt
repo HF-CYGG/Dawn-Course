@@ -167,7 +167,12 @@ class DawnWidget : GlanceAppWidget() {
                 Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
                 else -> true
             }
-        }.sortedBy { it.startSection }
+        }.groupBy { "${it.startSection}-${it.name}" } // 临时修复：去重逻辑
+         .map { (_, courses) ->
+             // 如果同一时间有同名课程（例如数据库中有重复条目），优先保留有地点的那个
+             courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }!!
+         }
+         .sortedBy { it.startSection }
 
         provideContent {
             GlanceTheme {
