@@ -145,6 +145,8 @@ class DawnWidget : GlanceAppWidget() {
             1 // 没读取到数据时的保底值
         }
         
+        val isSemesterEnded = semester != null && currentWeek > semester.weekCount
+        
         val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
 
         val allCourses = withContext(Dispatchers.IO) {
@@ -155,49 +157,57 @@ class DawnWidget : GlanceAppWidget() {
             }
         }
 
-        val courses = allCourses.filter { course ->
-            // 1. 匹配星期
-            if (course.dayOfWeek != currentDayOfWeek) return@filter false
-            
-            // 2. 匹配周次范围
-            if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@filter false
-            
-            // 3. 匹配单双周
-            when (course.weekType) {
-                Course.WEEK_TYPE_ALL -> true
-                Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
-                Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
-                else -> true
-            }
-        }.groupBy { "${it.startSection}-${it.name}" } // 临时修复：去重逻辑
-         .map { (_, courses) ->
-             // 如果同一时间有同名课程（例如数据库中有重复条目），优先保留有地点的那个
-             courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }!!
-         }
-         .sortedBy { it.startSection }
-
-        // 计算无课提示语
-        val emptyMessage = if (courses.isNotEmpty()) {
-            ""
+        val courses = if (isSemesterEnded) {
+            emptyList()
         } else {
-            val hasCourseThisWeek = allCourses.any { course ->
-                if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@any false
+            allCourses.filter { course ->
+                // 1. 匹配星期
+                if (course.dayOfWeek != currentDayOfWeek) return@filter false
+                
+                // 2. 匹配周次范围
+                if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@filter false
+                
+                // 3. 匹配单双周
                 when (course.weekType) {
                     Course.WEEK_TYPE_ALL -> true
                     Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
                     Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
                     else -> true
                 }
-            }
+            }.groupBy { "${it.startSection}-${it.name}" } // 临时修复：去重逻辑
+             .map { (_, courses) ->
+                 // 如果同一时间有同名课程（例如数据库中有重复条目），优先保留有地点的那个
+                 courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }!!
+             }
+             .sortedBy { it.startSection }
+        }
 
-            if (hasCourseThisWeek) {
-                "今日已无课 ☕"
+        // 计算无课提示语
+        val emptyMessage = if (courses.isNotEmpty()) {
+            ""
+        } else {
+            if (isSemesterEnded) {
+                "学期已结束 🎉"
             } else {
-                val hasFutureCourses = allCourses.any { it.endWeek > currentWeek }
-                if (hasFutureCourses) {
-                    "本周无课 🌴"
+                val hasCourseThisWeek = allCourses.any { course ->
+                    if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@any false
+                    when (course.weekType) {
+                        Course.WEEK_TYPE_ALL -> true
+                        Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
+                        Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
+                        else -> true
+                    }
+                }
+    
+                if (hasCourseThisWeek) {
+                    "今日已无课 ☕"
                 } else {
-                    "好好享受假期吧 🎉"
+                    val hasFutureCourses = allCourses.any { it.endWeek > currentWeek }
+                    if (hasFutureCourses) {
+                        "本周无课 🌴"
+                    } else {
+                        "好好享受假期吧 🎉"
+                    }
                 }
             }
         }

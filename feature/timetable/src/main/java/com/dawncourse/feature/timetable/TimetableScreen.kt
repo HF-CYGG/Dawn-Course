@@ -138,7 +138,7 @@ internal fun TimetableScreen(
     
     // Determine current week (Real world week)
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
-    val maxWeeks = 30 // Fixed max weeks for semester
+    val maxWeeks = settings.totalWeeks // Bind max weeks to settings
     
     // Pager State
     val pagerState = rememberPagerState(
