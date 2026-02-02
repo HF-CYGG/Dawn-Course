@@ -73,10 +73,20 @@ class UpdateViewModel @Inject constructor(
                     _uiState.value = UpdateUiState.Error(e.message ?: "Unknown error")
                 }
             }.onFailure {
-                if (isManual) {
-                    _eventFlow.emit(UpdateEvent.ShowToast("检查更新失败，请检查网络"))
+                val errorMsg = when {
+                    it.message?.contains("Cleartext HTTP traffic") == true -> 
+                        "系统限制了明文流量，请联系开发者适配 (Cleartext Error)"
+                    it is java.net.UnknownHostException -> 
+                        "无法连接服务器，请检查网络 (DNS Error)"
+                    it is java.net.SocketTimeoutException -> 
+                        "连接超时，请重试 (Timeout)"
+                    else -> "检查失败: ${it.message}"
                 }
-                _uiState.value = UpdateUiState.Error(it.message ?: "Network error")
+                
+                if (isManual) {
+                    _eventFlow.emit(UpdateEvent.ShowToast(errorMsg))
+                }
+                _uiState.value = UpdateUiState.Error(errorMsg)
             }
         }
     }

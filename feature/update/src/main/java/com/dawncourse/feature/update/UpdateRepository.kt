@@ -9,6 +9,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionSpec
+import java.util.Collections
 
 interface UpdateApi {
     @GET("version.json")
@@ -18,8 +20,10 @@ interface UpdateApi {
 @Singleton
 class UpdateRepository @Inject constructor() {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间
+        .readTimeout(15, TimeUnit.SECONDS)
+        // 显式允许明文传输，某些设备可能需要
+        .connectionSpecs(listOf(ConnectionSpec.CLEARTEXT, ConnectionSpec.MODERN_TLS))
         .build()
 
     private fun createApi(baseUrl: String): UpdateApi {
