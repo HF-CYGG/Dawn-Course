@@ -710,7 +710,7 @@ private fun ImportSettingsSection(
                 // Group 1: Semester
                 SettingGroup(title = "学期设置", icon = Icons.Default.DateRange) {
                     val detectedWeeks = remember(uiState.parsedCourses) {
-                        uiState.parsedCourses.flatMap { it.weeks }.maxOrNull() ?: 20
+                        uiState.parsedCourses.maxOfOrNull { it.endWeek } ?: 20
                     }
                     
                     Column {

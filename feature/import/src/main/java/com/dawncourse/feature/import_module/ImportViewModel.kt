@@ -281,7 +281,7 @@ class ImportViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
                 } else {
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
-                    val maxWeek = parsed.flatMap { it.weeks }.maxOrNull() ?: 20
+                    val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
                     _uiState.update { 
                         it.copy(
                             isLoading = false, 
@@ -406,7 +406,7 @@ class ImportViewModel @Inject constructor(
                     _uiState.update { it.copy(resultText = "ICS 解析失败: 未识别到课程", isLoading = false) }
                 } else {
                     val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
-                    val maxWeek = parsedCourses.flatMap { it.weeks }.maxOrNull() ?: 20
+                    val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
                     _uiState.update {
                         it.copy(
                             isLoading = false,
