@@ -170,8 +170,8 @@ function parseCell(cellContent, day) {
         
         // 移除课程名，剩余部分包含：教师、周次、节次、地点
         var remaining = block.replace(/<font[^>]*>.*?<\/font>/i, "");
-        // 使用 <br> 分割剩余信息
-        var parts = remaining.split(/<br>/i);
+        // 使用 <br> 分割剩余信息 (兼容 <br>, <br/>, <br />)
+        var parts = remaining.split(/<br\s*\/?>/gi);
         
         var teacher = "";
         var weeksStr = "";
@@ -193,8 +193,14 @@ function parseCell(cellContent, day) {
                 continue;
             }
             
-            // 简单的位置/教师推断逻辑
-            // 通常顺序不固定，这里采用简单的启发式规则
+            // 增强：通过关键字识别地点 (优先于顺序推断)
+            // 包含常见地点关键词，且之前未找到地点时，判定为地点
+            if (!location && /楼|室|馆|区|号|座|园|部/.test(p)) {
+                location = p;
+                continue;
+            }
+            
+            // 简单的位置/教师推断逻辑 (基于顺序的兜底策略)
             if (!weeksStr && !teacher) teacher = p; // 周次还没出现，先认为是教师
             else if (weeksStr && !location) location = p; // 周次出现后，认为是地点
             else if (!teacher) teacher = p; // 兜底
