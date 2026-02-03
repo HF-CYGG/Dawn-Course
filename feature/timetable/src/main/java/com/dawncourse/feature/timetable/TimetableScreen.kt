@@ -144,13 +144,13 @@ internal fun TimetableScreen(
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
     // 绑定总周数到设置
     val maxWeeks = settings.totalWeeks
-    // 假期模式判断：当前周 > 总周数
-    val isHoliday = realCurrentWeek > maxWeeks
+    // 允许 Pager 扩展到当前真实周次（如果超过总周数）
+    val pageCount = maxOf(maxWeeks, realCurrentWeek)
 
     // Pager 状态管理
     val pagerState = rememberPagerState(
-        initialPage = (realCurrentWeek - 1).coerceIn(0, maxWeeks - 1),
-        pageCount = { maxWeeks }
+        initialPage = (realCurrentWeek - 1).coerceIn(0, pageCount - 1),
+        pageCount = { pageCount }
     )
     
     // 根据 Pager 计算当前展示的周次
@@ -164,7 +164,7 @@ internal fun TimetableScreen(
             // 仅当学期数据已加载（semesterStartDate != null）时才执行自动滚动，
             // 避免在数据加载初期（Success 但无 semesterStartDate）错误消耗滚动标记。
             if (uiState.semesterStartDate != null) {
-                val targetPage = (uiState.currentWeek - 1).coerceIn(0, maxWeeks - 1)
+                val targetPage = (uiState.currentWeek - 1).coerceIn(0, pageCount - 1)
                 if (targetPage != pagerState.currentPage) {
                     pagerState.scrollToPage(targetPage)
                 }
@@ -197,7 +197,7 @@ internal fun TimetableScreen(
                     totalWeeks = maxWeeks,
                     onWeekSelected = { week ->
                         scope.launch {
-                            val targetPage = (week - 1).coerceIn(0, maxWeeks - 1)
+                            val targetPage = (week - 1).coerceIn(0, pageCount - 1)
                             pagerState.animateScrollToPage(targetPage)
                         }
                     },
@@ -208,22 +208,22 @@ internal fun TimetableScreen(
             },
             contentColor = MaterialTheme.colorScheme.onBackground
         ) { padding ->
-            if (isHoliday) {
-                HolidayView(modifier = Modifier.padding(padding))
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                ) {
-                    // 3. 可滚动的课表区域 (Pager)
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.weight(1f),
-                        beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
-                    ) { page ->
-                        val week = page + 1
-                        
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+            ) {
+                // 3. 可滚动的课表区域 (Pager)
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f),
+                    beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
+                ) { page ->
+                    val week = page + 1
+                    
+                    if (week > maxWeeks) {
+                        HolidayView(modifier = Modifier.fillMaxSize())
+                    } else {
                         Column(modifier = Modifier.fillMaxSize()) {
                             // 3.1 星期栏头部 (跟随页面滑动)
                             WeekHeader(
