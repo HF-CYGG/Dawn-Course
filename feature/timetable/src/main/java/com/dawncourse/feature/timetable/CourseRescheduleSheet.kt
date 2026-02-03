@@ -3,6 +3,7 @@ package com.dawncourse.feature.timetable
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -51,6 +52,7 @@ import com.dawncourse.core.ui.theme.LocalAppSettings
 @Composable
 fun CourseRescheduleSheet(
     courseId: Long,
+    initialWeek: Int = 1,
     onDismissRequest: () -> Unit,
     viewModel: CourseRescheduleViewModel = hiltViewModel()
 ) {
@@ -119,6 +121,7 @@ fun CourseRescheduleSheet(
                     RescheduleStep.SELECT_WEEKS -> {
                         WeekSelectionStep(
                             uiState = uiState,
+                            initialWeek = initialWeek,
                             onToggleWeek = viewModel::toggleWeekSelection,
                             onToggleSelectAll = viewModel::toggleSelectAllWeeks,
                             onToggleSelectOdd = viewModel::toggleSelectOddWeeks,
@@ -366,6 +369,7 @@ private fun StepDivider(active: Boolean) {
 @Composable
 private fun WeekSelectionStep(
     uiState: RescheduleUiState,
+    initialWeek: Int,
     onToggleWeek: (Int) -> Unit,
     onToggleSelectAll: () -> Unit,
     onToggleSelectOdd: () -> Unit,
@@ -404,11 +408,22 @@ private fun WeekSelectionStep(
             )
         }
 
+        // Hint for current week
+        if (uiState.availableWeeks.contains(initialWeek)) {
+             Text(
+                text = "💡 提示：您是从第 $initialWeek 周点击进入的",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
+
         // Week Grid
         WeekGridSelector(
             availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
             enabledWeeks = uiState.availableWeeks, // Only original weeks are enabled for selection
             selectedWeeks = uiState.selectedWeeks,
+            hintWeek = initialWeek,
             onToggleWeek = onToggleWeek,
             modifier = Modifier.heightIn(max = 300.dp)
         )
@@ -640,6 +655,7 @@ private fun WeekGridSelector(
     availableWeeks: Set<Int>,
     enabledWeeks: Set<Int>,
     selectedWeeks: Set<Int>,
+    hintWeek: Int = -1,
     onToggleWeek: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -652,6 +668,7 @@ private fun WeekGridSelector(
         items(availableWeeks.toList()) { week ->
             val isEnabled = enabledWeeks.contains(week)
             val isSelected = selectedWeeks.contains(week)
+            val isHint = week == hintWeek
             
             Box(
                 contentAlignment = Alignment.Center,
@@ -664,6 +681,12 @@ private fun WeekGridSelector(
                             isEnabled -> MaterialTheme.colorScheme.primaryContainer
                             else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                         }
+                    )
+                    // Add border for hint week if it's not selected
+                    .then(
+                         if (isHint && !isSelected) {
+                             Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                         } else Modifier
                     )
                     .clickable(enabled = isEnabled) { onToggleWeek(week) }
             ) {

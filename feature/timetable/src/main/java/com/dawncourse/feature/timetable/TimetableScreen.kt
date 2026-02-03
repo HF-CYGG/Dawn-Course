@@ -322,6 +322,7 @@ internal fun TimetableScreen(
     if (rescheduleCourseId != null) {
         CourseRescheduleSheet(
             courseId = rescheduleCourseId!!,
+            initialWeek = displayedWeek,
             onDismissRequest = { rescheduleCourseId = null }
         )
     }
