@@ -676,4 +676,269 @@ private fun WebViewStep(
     }
 }
 
-// ReviewStep 和其他辅助组件将在文件剩余部分继续...
+/**
+ * 步骤三：确认导入
+ *
+ * 允许用户在入库前预览解析结果，并配置学期和作息时间。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReviewStep(
+    viewModel: ImportViewModel,
+    modifier: Modifier = Modifier
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val scrollState = rememberScrollState()
+
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = uiState.semesterStartDate
+    )
+
+    if (showDatePicker) {
+        DawnDatePickerDialog(
+            state = datePickerState,
+            onDismissRequest = { showDatePicker = false },
+            onConfirm = {
+                datePickerState.selectedDateMillis?.let { timestamp ->
+                    viewModel.updateSemesterSettings(timestamp, uiState.weekCount)
+                }
+                showDatePicker = false
+            }
+        )
+    }
+
+    Column(
+        modifier = modifier
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        // 1. 解析结果概览
+        ElevatedCard(
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = "解析成功",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "共找到 ${uiState.parsedCourses.size} 门课程",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                }
+            }
+        }
+
+        // 2. 学期设置
+        ImportSettingsSection(title = "学期设置") {
+            // 开学日期
+            ListItem(
+                headlineContent = { Text("开学日期") },
+                supportingContent = {
+                    val date = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDate()
+                    Text(date.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日")))
+                },
+                leadingContent = { Icon(Icons.Default.DateRange, null) },
+                modifier = Modifier.clickable { showDatePicker = true }
+            )
+            
+            HorizontalDivider()
+
+            // 学期周数
+            ListItem(
+                headlineContent = { Text("学期周数") },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledIconButton(
+                            onClick = { 
+                                if (uiState.weekCount > 1) 
+                                    viewModel.updateSemesterSettings(uiState.semesterStartDate, uiState.weekCount - 1) 
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Remove, null) }
+                        
+                        Text(
+                            text = "${uiState.weekCount}周",
+                            modifier = Modifier.widthIn(min = 48.dp),
+                            textAlign = TextAlign.Center
+                        )
+                        
+                        FilledIconButton(
+                            onClick = { 
+                                if (uiState.weekCount < 30) 
+                                    viewModel.updateSemesterSettings(uiState.semesterStartDate, uiState.weekCount + 1) 
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Add, null) }
+                    }
+                }
+            )
+        }
+
+        // 3. 作息时间设置
+        ImportSettingsSection(title = "作息时间") {
+            // 单节时长
+            ListItem(
+                headlineContent = { Text("单节时长") },
+                leadingContent = { Icon(Icons.Outlined.Timer, null) },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration - 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                            enabled = uiState.courseDuration > 5,
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Remove, null) }
+                        
+                        Text("${uiState.courseDuration}分钟", Modifier.padding(horizontal = 8.dp))
+                        
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration + 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Add, null) }
+                    }
+                }
+            )
+
+            HorizontalDivider()
+            
+            // 课间时长
+             ListItem(
+                headlineContent = { Text("小课间") },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration - 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                            enabled = uiState.breakDuration > 0,
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Remove, null) }
+                        
+                        Text("${uiState.breakDuration}分钟", Modifier.padding(horizontal = 8.dp))
+                        
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration + 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Add, null) }
+                    }
+                }
+            )
+
+             HorizontalDivider()
+            
+            // 大节包含小节数 (用于大课间逻辑)
+             ListItem(
+                headlineContent = { Text("大节包含小节数") },
+                supportingContent = { Text("每隔几节课休息一次大课间") },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection - 1) },
+                            enabled = uiState.sectionsPerBigSection > 1,
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Remove, null) }
+                        
+                        Text("${uiState.sectionsPerBigSection}节", Modifier.padding(horizontal = 8.dp))
+                        
+                        FilledIconButton(
+                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection + 1) },
+                            modifier = Modifier.size(32.dp)
+                        ) { Icon(Icons.Default.Add, null) }
+                    }
+                }
+            )
+        }
+
+        // 4. 时间表预览
+        ImportSettingsSection(title = "时间表预览") {
+             // 简单的预览列表
+             Column(modifier = Modifier.padding(16.dp)) {
+                 // 上午
+                 SectionTimePreviewRow("上午", 1, uiState.amStartTime)
+                 // 下午
+                 SectionTimePreviewRow("下午", uiState.pmStartSection, uiState.pmStartTime)
+                 // 晚上
+                 SectionTimePreviewRow("晚上", uiState.eveStartSection, uiState.eveStartTime)
+             }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = { viewModel.confirmImport() },
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp)
+        ) {
+            Icon(Icons.Default.Check, null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("确认导入")
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun ImportSettingsSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+        )
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTimePreviewRow(
+    label: String,
+    startSection: Int,
+    startTime: LocalTime
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+        Text(
+            text = "第 $startSection 节 ${startTime.format(DateTimeFormatter.ofPattern("HH:mm"))} 开始",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
