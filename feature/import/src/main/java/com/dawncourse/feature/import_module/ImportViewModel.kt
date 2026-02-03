@@ -499,4 +499,108 @@ class ImportViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * 运行 WakeUp 课程表口令导入
+     */
+    fun runWakeUpImport(token: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, resultText = "正在获取 WakeUp 课表...") }
+            try {
+                val parsed = withContext(Dispatchers.IO) {
+                    // 1. 发送 GET 请求
+                    val urlStr = "https://i.wakeup.fun/share_schedule/get?key=$token"
+                    val url = java.net.URL(urlStr)
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.setRequestProperty("User-Agent", "okhttp/3.14.9")
+                    conn.setRequestProperty("version", "243")
+                    conn.connectTimeout = 10000
+                    conn.readTimeout = 10000
+                    
+                    if (conn.responseCode != 200) {
+                        throw Exception("HTTP Error ${conn.responseCode}")
+                    }
+                    
+                    val responseText = conn.inputStream.bufferedReader().use { it.readText() }
+                    
+                    // 2. 解析响应结构
+                    // 响应是一个 JSON: {"code": 200, "data": "...\n...\n...", "msg": ""}
+                    val rootJson = org.json.JSONObject(responseText)
+                    if (rootJson.optInt("code") != 200) {
+                         throw Exception("API Error: ${rootJson.optString("msg")}")
+                    }
+                    
+                    val dataStr = rootJson.optString("data")
+                    val parts = dataStr.split("\n")
+                    if (parts.size < 5) {
+                        throw Exception("数据格式不符合预期 (parts < 5)")
+                    }
+                    
+                    // parts[3] -> rawCourseMaps (课程元数据)
+                    val rawCourseMaps = org.json.JSONArray(parts[3])
+                    val courseNameMap = mutableMapOf<Int, String>()
+                    for (i in 0 until rawCourseMaps.length()) {
+                        val item = rawCourseMaps.getJSONObject(i)
+                        val id = item.optInt("id")
+                        val name = item.optString("courseName")
+                        courseNameMap[id] = name
+                    }
+                    
+                    // parts[4] -> rawCourses (具体的上课时间地点)
+                    val rawCourses = org.json.JSONArray(parts[4])
+                    val xiaoaiCourses = mutableListOf<com.dawncourse.feature.import_module.model.XiaoaiCourse>()
+                    
+                    for (i in 0 until rawCourses.length()) {
+                        val item = rawCourses.getJSONObject(i)
+                        val id = item.optInt("id")
+                        val name = courseNameMap[id] ?: "-"
+                        val room = item.optString("room", "-")
+                        val teacher = item.optString("teacher", "-")
+                        val startWeek = item.optInt("startWeek")
+                        val endWeek = item.optInt("endWeek")
+                        val day = item.optInt("day")
+                        val startNode = item.optInt("startNode")
+                        val step = item.optInt("step")
+                        
+                        val weeks = (startWeek..endWeek).toList()
+                        val sections = (startNode until (startNode + step)).toList()
+                        
+                        xiaoaiCourses.add(
+                            com.dawncourse.feature.import_module.model.XiaoaiCourse(
+                                name = name,
+                                teacher = teacher,
+                                position = room,
+                                day = day,
+                                weeks = weeks,
+                                sections = sections
+                            )
+                        )
+                    }
+                    
+                    convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
+                }
+                
+                if (parsed.isEmpty()) {
+                    _uiState.update { it.copy(isLoading = false, resultText = "未找到课程数据") }
+                } else {
+                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
+                     val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
+                     _uiState.update { 
+                        it.copy(
+                            isLoading = false, 
+                            parsedCourses = parsed,
+                            step = ImportStep.Review,
+                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            weekCount = maxWeek,
+                            resultText = "WakeUp 导入成功: ${parsed.size} 个课程段"
+                        ) 
+                    }
+                }
+                
+            } catch (e: Exception) {
+                 _uiState.update { it.copy(isLoading = false, resultText = "WakeUp 导入失败: ${e.message}") }
+            }
+        }
+    }
 }

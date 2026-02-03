@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
@@ -189,6 +190,43 @@ private fun SelectionStep(
         }
     }
 
+    var showWakeUpDialog by remember { mutableStateOf(false) }
+    var wakeUpToken by remember { mutableStateOf("") }
+
+    if (showWakeUpDialog) {
+        AlertDialog(
+            onDismissRequest = { showWakeUpDialog = false },
+            title = { Text("输入 WakeUp 口令") },
+            text = {
+                OutlinedTextField(
+                    value = wakeUpToken,
+                    onValueChange = { wakeUpToken = it },
+                    label = { Text("口令") },
+                    placeholder = { Text("例如：ABCD") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showWakeUpDialog = false
+                        if (wakeUpToken.isNotBlank()) {
+                            viewModel.runWakeUpImport(wakeUpToken)
+                        }
+                    }
+                ) {
+                    Text("导入")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWakeUpDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -220,6 +258,14 @@ private fun SelectionStep(
             description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果、起迪教务系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
+        )
+
+        // 选项卡：WakeUp 口令导入
+        ImportOptionCard(
+            title = "WakeUp 课程表口令导入",
+            description = "输入 WakeUp 课程表的分享口令进行导入",
+            icon = Icons.Default.CloudDownload,
+            onClick = { showWakeUpDialog = true }
         )
 
         // 选项卡：ICS 文件导入
