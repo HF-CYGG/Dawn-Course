@@ -264,6 +264,11 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
+                    // 0. 特殊处理：检测是否为强智直连数据
+                    if (raw.contains("qiangzhi_direct")) {
+                        return@withContext parseQiangZhiJson(raw)
+                    }
+
                     // 1. 尝试作为 JSON 解析
                     var courses = parseParsedCoursesFromRaw(raw)
                     if (courses.isEmpty()) {
@@ -602,5 +607,125 @@ class ImportViewModel @Inject constructor(
                  _uiState.update { it.copy(isLoading = false, resultText = "WakeUp 导入失败: ${e.message}") }
             }
         }
+    }
+
+    private fun parseQiangZhiJson(json: String): List<ParsedCourse> {
+        val root = org.json.JSONObject(json)
+        val data = root.optJSONArray("data") ?: return emptyList()
+        val xiaoaiCourses = mutableListOf<com.dawncourse.feature.import_module.model.XiaoaiCourse>()
+
+        for (i in 0 until data.length()) {
+            val item = data.getJSONObject(i)
+            val row = item.optInt("row") // 1..5
+            val col = item.optInt("col") // 1..7 (Week)
+            val text = item.optString("text")
+            
+            if (text.isBlank()) continue
+
+            // 解析文本 (Name Teacher Week Place)
+            val rawCourses = parseQiangZhiText(text)
+            
+            rawCourses.forEach { c ->
+                val startSection = (row - 1) * 2 + 1
+                val sections = listOf(startSection, startSection + 1)
+                
+                val weekList = parseWeekString(c.week)
+                
+                if (weekList.isNotEmpty()) {
+                    xiaoaiCourses.add(
+                        com.dawncourse.feature.import_module.model.XiaoaiCourse(
+                            name = c.name,
+                            teacher = c.teacher,
+                            position = c.place,
+                            day = col,
+                            weeks = weekList,
+                            sections = sections
+                        )
+                    )
+                }
+            }
+        }
+        return convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
+    }
+
+    private data class QiangZhiCourseRaw(
+        var name: String = "",
+        var teacher: String = "",
+        var week: String = "",
+        var place: String = ""
+    )
+
+    private fun parseQiangZhiText(info: String): List<QiangZhiCourseRaw> {
+        val list = mutableListOf<QiangZhiCourseRaw>()
+        var index = 0
+        val length = info.length
+        
+        while (index < length) {
+            var segNum = 1
+            val infoSeg = StringBuilder()
+            val course = QiangZhiCourseRaw()
+            
+            // Loop for one course (4 parts)
+            while (segNum <= 4 && index <= length) {
+                val ch = if (index == length) ' ' else info[index]
+                index++
+                
+                if (!ch.isWhitespace()) {
+                    infoSeg.append(ch)
+                } else {
+                    if (infoSeg.isNotEmpty()) {
+                         val strSeg = infoSeg.toString()
+                         when (segNum) {
+                             1 -> course.name = strSeg
+                             2 -> course.teacher = strSeg
+                             3 -> course.week = strSeg
+                             4 -> course.place = strSeg
+                         }
+                         segNum++
+                         infoSeg.clear()
+                    }
+                }
+            }
+            if (course.name.isNotEmpty()) {
+                list.add(course)
+            }
+        }
+        return list
+    }
+    
+    private fun parseWeekString(weekStr: String): List<Int> {
+        val weeks = mutableListOf<Int>()
+        var index = 0
+        val len = weekStr.length
+        while (index < len) {
+            // Skip non-digits
+            while (index < len && !weekStr[index].isDigit()) {
+                index++
+            }
+            if (index >= len) break
+
+            var l = 0
+            while (index < len && weekStr[index].isDigit()) {
+                l = l * 10 + (weekStr[index] - '0')
+                index++
+            }
+            
+            // Check separator
+            if (index < len && weekStr[index] == '-') {
+                index++
+                var r = 0
+                while (index < len && weekStr[index].isDigit()) {
+                    r = r * 10 + (weekStr[index] - '0')
+                    index++
+                }
+                if (r > 0) {
+                    for (i in l..r) weeks.add(i)
+                }
+            } else {
+                // Just a single number
+                if (l > 0) weeks.add(l)
+            }
+        }
+        return weeks
     }
 }

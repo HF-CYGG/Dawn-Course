@@ -255,7 +255,7 @@ private fun SelectionStep(
         // 选项卡：教务系统网页导入
         ImportOptionCard(
             title = "教务系统网页导入",
-            description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果、起迪教务系统）",
+            description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果、强智、起迪教务系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
@@ -618,6 +618,38 @@ private fun WebViewStep(
                             // 降级策略：使用原有的 HTML 提取逻辑
                             function findScheduleHtml(doc) {
                                 if (!doc) return null;
+                                
+                                // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
+                                try {
+                                    var qiangzhiData = [];
+                                    var hasQiangzhi = false;
+                                    // 遍历 1-5 节次 (CourseTable.java 逻辑)
+                                    for (var c = 1; c <= 5; c++) {
+                                        // 遍历 1-7 周次
+                                        for (var w = 1; w <= 7; w++) {
+                                            var id = c + "-" + w + "-2";
+                                            var el = doc.getElementById(id);
+                                            if (el) {
+                                                hasQiangzhi = true;
+                                                var text = el.innerText || el.textContent;
+                                                if (text && text.trim().length > 0) {
+                                                    qiangzhiData.push({
+                                                        "row": c,
+                                                        "col": w,
+                                                        "text": text.trim()
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (hasQiangzhi && qiangzhiData.length > 0) {
+                                        return JSON.stringify({
+                                            "type": "qiangzhi_direct",
+                                            "data": qiangzhiData
+                                        });
+                                    }
+                                } catch (e) { console.error("Qiangzhi extract failed", e); }
+
                                 var html = doc.body ? doc.body.innerHTML : "";
                                 if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
                                     return html;
