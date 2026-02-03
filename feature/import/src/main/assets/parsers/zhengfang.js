@@ -4,11 +4,28 @@
  * 
  * 注：由于 QuickJS 环境默认不包含 Cheerio 库，此处使用 Regex 实现文档中描述的相同解析逻辑。
  * 效果与文档提供的 cheerio 版本一致。
+ * 
+ * 更新：集成“旧正方”教务系统解析逻辑，兼容更多正方系统版本。
  */
 
 function scheduleHtmlParser(html) {
-    var courses = [];
+    // 尝试使用新正方/强智逻辑解析 (Based on ID/Class)
+    var courses = parseNewZhengfang(html);
+    
+    // 如果没有找到课程，尝试使用旧正方逻辑解析 (Based on Text/Table Structure)
+    if (courses.length === 0) {
+        courses = parseOldZhengfang(html);
+    }
+    
+    courses = dedupeCourses(courses);
+    return JSON.stringify(courses);
+}
 
+/**
+ * 新正方/强智教务系统解析逻辑
+ */
+function parseNewZhengfang(html) {
+    var courses = [];
     var tdRegex = /<td[^>]*\bid\s*=\s*["']?(\d+)-(\d+)["']?[^>]*>([\s\S]*?)<\/td>/gi;
     var match;
 
@@ -130,8 +147,132 @@ function scheduleHtmlParser(html) {
         }
     }
 
-    courses = dedupeCourses(courses);
-    return JSON.stringify(courses);
+    return courses;
+}
+
+/**
+ * 旧正方教务系统解析逻辑 (兼容 DOM/Provider 逻辑)
+ */
+function parseOldZhengfang(html) {
+    var courses = [];
+    var rows = [];
+    var trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+    var match;
+    while ((match = trRegex.exec(html)) !== null) {
+        rows.push(match[1]);
+    }
+
+    for (var i = 0; i < rows.length; i++) {
+        // i 对应 provider.js 中的 index
+        // provider.js: index -= 1; if (index < 1) return;
+        // 即跳过 index 0 和 1 (Header 和 早晨/标签行)
+        // 有效数据从 i=2 开始
+        // 默认节次 defaultSection = index - 1 (因为 index 0 是 header, index 1 是空/标签, index 2 是第一节)
+        // 实际上正方表格通常: Row 0=Header, Row 1=MorningSpan+Section1? 或者 Row 1=MorningSpan, Row 2=Section1?
+        // 这里的逻辑主要依赖内容识别，但兜底需要 defaultSection
+        
+        var rowHtml = rows[i];
+        var cells = [];
+        var tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+        var tdMatch;
+        while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
+            cells.push(tdMatch[1]);
+        }
+        
+        for (var j = 0; j < cells.length; j++) {
+            var cellHtml = cells[j];
+            // Split by <br>
+            var parts = cellHtml.split(/<br\s*\/?>/gi);
+            // Filter empty and clean
+            var rawInfo = [];
+            for(var k=0; k<parts.length; k++) {
+                var p = parts[k].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
+                if (p) rawInfo.push(p);
+            }
+            
+            if (rawInfo.length < 2) continue;
+            
+            var idx = 0;
+            // 遍历行寻找以 "周" 开头的时间描述
+            while (idx < rawInfo.length) {
+                if (!/^周/.test(rawInfo[idx])) {
+                    idx++;
+                    continue;
+                }
+                
+                // 找到时间行 idx
+                // 结构通常为: Name, Time, Teacher, Location
+                // provider.js: Name=index, Time=index+1, Teacher=index+2, Location=index+3
+                // 这里的 idx 是 Time 的位置
+                
+                if (idx - 1 < 0) { idx++; continue; }
+                
+                var name = rawInfo[idx-1];
+                var timeStr = rawInfo[idx];
+                var teacher = (idx + 1 < rawInfo.length) ? rawInfo[idx+1] : "";
+                var location = (idx + 2 < rawInfo.length) ? rawInfo[idx+2] : "";
+                
+                // 解析 Day
+                var dayChar = timeStr.charAt(1);
+                var day = 0;
+                var char2Day = {'一':1, '二':2, '三':3, '四':4, '五':5, '六':6, '日':7, '七':7};
+                if (char2Day[dayChar]) day = char2Day[dayChar];
+                
+                // 解析 Ranges (节次 和 周次)
+                var ranges = parseOldTimeRanges(timeStr);
+                var sections = [];
+                var weeks = [];
+                
+                if (ranges.length === 2) {
+                    sections = ranges[0];
+                    weeks = ranges[1];
+                } else if (ranges.length === 1) {
+                    // 只有周次，节次由行号推断
+                    // defaultSection logic: 假设 Row 2 -> Section 1
+                    var defaultSection = i - 1; 
+                    if (defaultSection > 0) sections.push(defaultSection);
+                    weeks = ranges[0];
+                }
+                
+                // 处理单双周
+                if (/\|单周/.test(timeStr)) {
+                    weeks = weeks.filter(function(w) { return w % 2 !== 0; });
+                } else if (/\|双周/.test(timeStr)) {
+                    weeks = weeks.filter(function(w) { return w % 2 === 0; });
+                }
+                
+                if (day > 0 && weeks.length > 0 && sections.length > 0) {
+                    courses.push({
+                        name: name,
+                        teacher: teacher,
+                        position: location,
+                        day: day,
+                        weeks: weeks,
+                        sections: sections
+                    });
+                }
+                
+                idx += 3; // 跳过已处理的块
+            }
+        }
+    }
+    return courses;
+}
+
+function parseOldTimeRanges(rawTime) {
+    var result = [];
+    var regex = /(\d+)[-,]?(\d*)/g;
+    var match;
+    // 限制只匹配前面的数字部分，避免匹配到无关内容
+    // 但正方格式通常比较规范，如 "周二第1,2节{第1-16周}"
+    while ((match = regex.exec(rawTime)) !== null) {
+        var start = parseInt(match[1]);
+        var end = match[2] ? parseInt(match[2]) : start;
+        var range = [];
+        for(var k=start; k<=end; k++) range.push(k);
+        result.push(range);
+    }
+    return result;
 }
 
 function stripTags(html) {

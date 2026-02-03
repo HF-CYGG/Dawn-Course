@@ -216,7 +216,7 @@ private fun SelectionStep(
         // 选项卡：教务系统网页导入
         ImportOptionCard(
             title = "教务系统网页导入",
-            description = "内置浏览器访问教务系统，自动解析课程表（支持新正方、青果系统）",
+            description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
