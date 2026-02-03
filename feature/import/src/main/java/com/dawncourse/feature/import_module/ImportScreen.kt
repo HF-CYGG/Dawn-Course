@@ -620,18 +620,20 @@ private fun WebViewStep(
                                 if (!doc) return null;
                                 
                                 // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
+                                // 强智系统课程表通常使用 ID 格式 "节次-周次-2" (例如 "1-1-2")
                                 try {
                                     var qiangzhiData = [];
                                     var hasQiangzhi = false;
-                                    // 遍历 1-5 节次 (CourseTable.java 逻辑)
+                                    // 遍历 1-5 节次 (对应强智系统的 5 个大节)
                                     for (var c = 1; c <= 5; c++) {
-                                        // 遍历 1-7 周次
+                                        // 遍历 1-7 周次 (对应周一到周日)
                                         for (var w = 1; w <= 7; w++) {
                                             var id = c + "-" + w + "-2";
                                             var el = doc.getElementById(id);
                                             if (el) {
                                                 hasQiangzhi = true;
                                                 var text = el.innerText || el.textContent;
+                                                // 仅提取非空单元格
                                                 if (text && text.trim().length > 0) {
                                                     qiangzhiData.push({
                                                         "row": c,
@@ -642,6 +644,7 @@ private fun WebViewStep(
                                             }
                                         }
                                     }
+                                    // 如果检测到强智格式且包含数据，则直接返回特定 JSON
                                     if (hasQiangzhi && qiangzhiData.length > 0) {
                                         return JSON.stringify({
                                             "type": "qiangzhi_direct",
@@ -709,9 +712,16 @@ private fun WebViewStep(
 }
 
 /**
- * 步骤三：确认导入
+ * 步骤三：确认导入与配置
  *
- * 允许用户在入库前预览解析结果，并配置学期和作息时间。
+ * 此界面展示解析成功的课程概览，并允许用户自定义学期和作息时间配置。
+ * 包含以下功能模块：
+ * 1. 解析结果概览：显示成功解析的课程数量。
+ * 2. 学期设置：配置开学日期和学期总周数。
+ * 3. 作息时间设置：配置单节课时长、课间时长以及大课间规则。
+ * 4. 预览与确认：最后确认并执行入库操作。
+ *
+ * @param viewModel 导入功能的 ViewModel，用于获取状态和更新配置
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

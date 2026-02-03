@@ -507,6 +507,11 @@ class ImportViewModel @Inject constructor(
 
     /**
      * 运行 WakeUp 课程表口令导入
+     *
+     * 通过 WakeUp 官方 API 获取分享的课程数据。
+     * API 地址: https://i.wakeup.fun/share_schedule/get?key={token}
+     *
+     * @param token 用户输入的分享口令
      */
     fun runWakeUpImport(token: String) {
         viewModelScope.launch {
@@ -514,6 +519,7 @@ class ImportViewModel @Inject constructor(
             try {
                 val parsed = withContext(Dispatchers.IO) {
                     // 1. 发送 GET 请求
+                    // 必须伪装 User-Agent 和 version 才能通过 API 校验
                     val urlStr = "https://i.wakeup.fun/share_schedule/get?key=$token"
                     val url = java.net.URL(urlStr)
                     val conn = url.openConnection() as java.net.HttpURLConnection
@@ -531,6 +537,7 @@ class ImportViewModel @Inject constructor(
                     
                     // 2. 解析响应结构
                     // 响应是一个 JSON: {"code": 200, "data": "...\n...\n...", "msg": ""}
+                    // 其中 data 字段是一个包含换行符的字符串，通过换行符分隔不同部分的数据
                     val rootJson = org.json.JSONObject(responseText)
                     if (rootJson.optInt("code") != 200) {
                          throw Exception("API Error: ${rootJson.optString("msg")}")
@@ -538,11 +545,13 @@ class ImportViewModel @Inject constructor(
                     
                     val dataStr = rootJson.optString("data")
                     val parts = dataStr.split("\n")
+                    // 校验数据完整性，通常至少包含 5 部分
                     if (parts.size < 5) {
                         throw Exception("数据格式不符合预期 (parts < 5)")
                     }
                     
-                    // parts[3] -> rawCourseMaps (课程元数据)
+                    // 3. 解析课程元数据 (parts[3])
+                    // 格式为 JSON 数组，包含课程 ID 和课程名称的映射
                     val rawCourseMaps = org.json.JSONArray(parts[3])
                     val courseNameMap = mutableMapOf<Int, String>()
                     for (i in 0 until rawCourseMaps.length()) {
@@ -552,13 +561,15 @@ class ImportViewModel @Inject constructor(
                         courseNameMap[id] = name
                     }
                     
-                    // parts[4] -> rawCourses (具体的上课时间地点)
+                    // 4. 解析具体课程时间表 (parts[4])
+                    // 格式为 JSON 数组，包含具体的上课时间、地点、老师等信息
                     val rawCourses = org.json.JSONArray(parts[4])
                     val xiaoaiCourses = mutableListOf<com.dawncourse.feature.import_module.model.XiaoaiCourse>()
                     
                     for (i in 0 until rawCourses.length()) {
                         val item = rawCourses.getJSONObject(i)
                         val id = item.optInt("id")
+                        // 通过 ID 关联获取课程名称
                         val name = courseNameMap[id] ?: "-"
                         val room = item.optString("room", "-")
                         val teacher = item.optString("teacher", "-")
@@ -568,7 +579,9 @@ class ImportViewModel @Inject constructor(
                         val startNode = item.optInt("startNode")
                         val step = item.optInt("step")
                         
+                        // 构建连续的周次列表
                         val weeks = (startWeek..endWeek).toList()
+                        // 构建节次列表 (例如: 1, 2)
                         val sections = (startNode until (startNode + step)).toList()
                         
                         xiaoaiCourses.add(
@@ -583,6 +596,7 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                     
+                    // 转换为应用内部通用的 ParsedCourse 格式
                     convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
                 }
                 
@@ -609,6 +623,21 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 解析强智教务系统直连 JSON 数据
+     *
+     * 该数据由 WebView 中的 JS 脚本直接从 DOM 提取，格式为：
+     * {
+     *   "type": "qiangzhi_direct",
+     *   "data": [
+     *     { "row": 1, "col": 1, "text": "课程名..." },
+     *     ...
+     *   ]
+     * }
+     *
+     * @param json 包含强智教务系统课程数据的 JSON 字符串
+     * @return 解析后的通用课程列表 [ParsedCourse]
+     */
     private fun parseQiangZhiJson(json: String): List<ParsedCourse> {
         val root = org.json.JSONObject(json)
         val data = root.optJSONArray("data") ?: return emptyList()
@@ -616,19 +645,24 @@ class ImportViewModel @Inject constructor(
 
         for (i in 0 until data.length()) {
             val item = data.getJSONObject(i)
+            // 强智系统的节次映射：row 1 -> 第1大节 (1-2节)
             val row = item.optInt("row") // 1..5
+            // 强智系统的周次映射：col 1 -> 周一
             val col = item.optInt("col") // 1..7 (Week)
             val text = item.optString("text")
             
             if (text.isBlank()) continue
 
-            // 解析文本 (Name Teacher Week Place)
+            // 解析文本内容 (格式通常为: 课程名 教师 周次 地点)
             val rawCourses = parseQiangZhiText(text)
             
             rawCourses.forEach { c ->
+                // 计算起始节次：(大节 - 1) * 2 + 1
+                // 例如：第1大节 -> 1节, 第2大节 -> 3节
                 val startSection = (row - 1) * 2 + 1
                 val sections = listOf(startSection, startSection + 1)
                 
+                // 解析周次字符串 (例如 "1-16周", "1-8,10-16周")
                 val weekList = parseWeekString(c.week)
                 
                 if (weekList.isNotEmpty()) {
@@ -648,6 +682,10 @@ class ImportViewModel @Inject constructor(
         return convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
     }
 
+    /**
+     * 强智课程原始数据模型
+     * 用于暂存从单元格文本中解析出的单一课程信息
+     */
     private data class QiangZhiCourseRaw(
         var name: String = "",
         var teacher: String = "",
@@ -655,24 +693,40 @@ class ImportViewModel @Inject constructor(
         var place: String = ""
     )
 
+    /**
+     * 解析强智教务系统单元格文本
+     *
+     * 单元格文本通常包含多门课程，每门课程由 4 部分组成：
+     * 1. 课程名称
+     * 2. 教师姓名
+     * 3. 周次信息 (如 "1-16(周)")
+     * 4. 上课地点
+     *
+     * 该算法通过遍历字符并识别空白分隔符，循环提取每门课程的这 4 个字段。
+     *
+     * @param info 单元格内的完整文本内容
+     * @return 解析出的 [QiangZhiCourseRaw] 列表
+     */
     private fun parseQiangZhiText(info: String): List<QiangZhiCourseRaw> {
         val list = mutableListOf<QiangZhiCourseRaw>()
         var index = 0
         val length = info.length
         
         while (index < length) {
-            var segNum = 1
+            var segNum = 1 // 当前解析字段序号 (1:Name, 2:Teacher, 3:Week, 4:Place)
             val infoSeg = StringBuilder()
             val course = QiangZhiCourseRaw()
             
-            // Loop for one course (4 parts)
+            // 循环解析一门课程的 4 个字段
             while (segNum <= 4 && index <= length) {
+                // 读取当前字符，如果已到末尾则模拟为空格以触发结束逻辑
                 val ch = if (index == length) ' ' else info[index]
                 index++
                 
                 if (!ch.isWhitespace()) {
                     infoSeg.append(ch)
                 } else {
+                    // 遇到空白字符，且缓冲区有内容，说明一个字段解析完成
                     if (infoSeg.isNotEmpty()) {
                          val strSeg = infoSeg.toString()
                          when (segNum) {
@@ -686,6 +740,7 @@ class ImportViewModel @Inject constructor(
                     }
                 }
             }
+            // 只有解析出课程名才视为有效课程
             if (course.name.isNotEmpty()) {
                 list.add(course)
             }
@@ -693,26 +748,40 @@ class ImportViewModel @Inject constructor(
         return list
     }
     
+    /**
+     * 解析周次字符串
+     *
+     * 支持格式：
+     * - "1-16" -> [1, 2, ..., 16]
+     * - "1-5,7-9" -> [1, 2, 3, 4, 5, 7, 8, 9]
+     * - "3" -> [3]
+     * - "1-16(周)" -> 自动忽略非数字字符
+     *
+     * @param weekStr 包含周次信息的字符串
+     * @return 周次整数列表
+     */
     private fun parseWeekString(weekStr: String): List<Int> {
         val weeks = mutableListOf<Int>()
         var index = 0
         val len = weekStr.length
         while (index < len) {
-            // Skip non-digits
+            // 跳过非数字字符 (如 "周", "(", "," 等)
             while (index < len && !weekStr[index].isDigit()) {
                 index++
             }
             if (index >= len) break
 
+            // 提取第一个数字 (起始周或单周)
             var l = 0
             while (index < len && weekStr[index].isDigit()) {
                 l = l * 10 + (weekStr[index] - '0')
                 index++
             }
             
-            // Check separator
+            // 检查是否为区间格式 (例如 "1-16")
             if (index < len && weekStr[index] == '-') {
                 index++
+                // 提取第二个数字 (结束周)
                 var r = 0
                 while (index < len && weekStr[index].isDigit()) {
                     r = r * 10 + (weekStr[index] - '0')
@@ -722,7 +791,7 @@ class ImportViewModel @Inject constructor(
                     for (i in l..r) weeks.add(i)
                 }
             } else {
-                // Just a single number
+                // 单周格式
                 if (l > 0) weeks.add(l)
             }
         }
