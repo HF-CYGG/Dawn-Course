@@ -3,6 +3,7 @@ package com.dawncourse.feature.import_module
 import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.JavascriptInterface
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -216,7 +217,7 @@ private fun SelectionStep(
         // 选项卡：教务系统网页导入
         ImportOptionCard(
             title = "教务系统网页导入",
-            description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果系统）",
+            description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果、起迪教务系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
@@ -358,6 +359,7 @@ private fun WebViewStep(
     viewModel: ImportViewModel,
     uiState: ImportUiState
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var webView: WebView? by remember { mutableStateOf(null) }
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
@@ -447,6 +449,13 @@ private fun WebViewStep(
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
 
+                    addJavascriptInterface(object {
+                        @JavascriptInterface
+                        fun onProviderResult(result: String) {
+                            viewModel.parseResultFromWebView(result)
+                        }
+                    }, "DawnBridge")
+
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
@@ -531,57 +540,83 @@ private fun WebViewStep(
                 
                 Button(
                     onClick = {
-                        // 注入 JS 脚本以获取页面源码
-                        // 包含对 frameset/iframe 的递归查找逻辑，以支持旧版教务系统的嵌套结构
-                        val js = """
-                            (function() {
-                                function findScheduleHtml(doc) {
-                                    if (!doc) return null;
-                                    var html = doc.body ? doc.body.innerHTML : "";
-                                    // 简单的特征匹配：是否包含“星期”和“节/课”
-                                    if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
-                                        return html;
-                                    }
-                                    
-                                    // 递归检查 frames
-                                    var frames = doc.getElementsByTagName('frame');
-                                    for (var i = 0; i < frames.length; i++) {
-                                        try {
-                                            var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                            var result = findScheduleHtml(frameDoc);
-                                            if (result) return result;
-                                        } catch(e) {}
-                                    }
-                                    
-                                    // 递归检查 iframes
-                                    var iframes = doc.getElementsByTagName('iframe');
-                                    for (var i = 0; i < iframes.length; i++) {
-                                        try {
-                                            var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                            var result = findScheduleHtml(frameDoc);
-                                            if (result) return result;
-                                        } catch(e) {}
-                                    }
-                                    return null;
-                                }
-                                return findScheduleHtml(document) || document.documentElement.outerHTML;
-                            })()
-                        """.trimIndent()
+                        try {
+                            // 读取并拼接通用工具函数和适配脚本
+                            val assets = context.assets
+                            val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
+                            val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
+                            val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
 
-                        webView?.evaluateJavascript(js) { result ->
-                            // 处理 JS 返回的转义字符串
-                            val rawHtml = try {
-                                if (result == "null" || result == null) "" 
-                                else JSONTokener(result).nextValue().toString()
-                            } catch (e: Exception) {
-                                ""
+                            // 构建注入脚本
+                            val js = StringBuilder()
+                            js.append("(async function() {\n")
+                            js.append("try {\n")
+                            js.append(outputConsole).append("\n;\n")
+                            js.append(courseUtils).append("\n;\n")
+                            js.append(qidiProvider).append("\n;\n")
+                            
+                            js.append("""
+                                // 尝试运行 scheduleHtmlProvider
+                                if (typeof scheduleHtmlProvider === 'function') {
+                                    console.log("Found scheduleHtmlProvider, running...");
+                                    var result = await scheduleHtmlProvider();
+                                    if (result !== "do not continue") {
+                                        window.DawnBridge.onProviderResult(result);
+                                        return "ASYNC_STARTED";
+                                    }
+                                }
+                            } catch(e) {
+                                console.error("Provider execution failed:", e);
                             }
                             
-                            if (rawHtml.isNotEmpty()) {
-                                viewModel.parseResultFromWebView(rawHtml)
-                            } else {
-                                viewModel.updateResultText("未能提取到有效 HTML 内容")
+                            // 降级策略：使用原有的 HTML 提取逻辑
+                            function findScheduleHtml(doc) {
+                                if (!doc) return null;
+                                var html = doc.body ? doc.body.innerHTML : "";
+                                if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                    return html;
+                                }
+                                var frames = doc.getElementsByTagName('frame');
+                                for (var i = 0; i < frames.length; i++) {
+                                    try {
+                                        var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                        var result = findScheduleHtml(frameDoc);
+                                        if (result) return result;
+                                    } catch(e) {}
+                                }
+                                var iframes = doc.getElementsByTagName('iframe');
+                                for (var i = 0; i < iframes.length; i++) {
+                                    try {
+                                        var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                                        var result = findScheduleHtml(frameDoc);
+                                        if (result) return result;
+                                    } catch(e) {}
+                                }
+                                return null;
                             }
+                            return findScheduleHtml(document) || document.documentElement.outerHTML;
+                            
+                            })()
+                            """.trimIndent())
+
+                            webView?.evaluateJavascript(js.toString()) { result ->
+                                // 如果返回的是 HTML 字符串（即降级策略生效），则在此处处理
+                                // 如果返回 "ASYNC_STARTED"，则结果将通过 DawnBridge 回调
+                                val rawHtml = try {
+                                    if (result == "null" || result == null) "" 
+                                    else org.json.JSONTokener(result).nextValue().toString()
+                                } catch (e: Exception) { "" }
+                                
+                                if (rawHtml != "ASYNC_STARTED" && rawHtml.isNotEmpty()) {
+                                    viewModel.parseResultFromWebView(rawHtml)
+                                } else if (rawHtml.isEmpty()) {
+                                    if (rawHtml != "ASYNC_STARTED") {
+                                        viewModel.updateResultText("未能提取到有效 HTML 内容")
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            viewModel.updateResultText("脚本加载失败: ${e.message}")
                         }
                     },
                     modifier = Modifier.weight(1f)

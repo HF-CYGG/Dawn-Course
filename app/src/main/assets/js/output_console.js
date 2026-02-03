@@ -50,12 +50,15 @@ async function newLogFrame() {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
     box-sizing: content-box;
     overflow: hidden;
+    scroll-behavior: smooth;
   `;
   const iframeDocument = cardElement.contentDocument || cardElement.contentWindow?.document;
   // 自动调整高度
-  new MutationObserver(() => {
+  const observer = new MutationObserver(() => {
     cardElement.style.height = (iframeDocument.body.scrollHeight + 1) + "px"; // 有小数部分所以+1
-  }).observe(iframeDocument, { childList: true, subtree: true });
+  });
+  observer.observe(iframeDocument.body, { childList: true, subtree: true, attributes: true });
+  
   // 点击外围退出
   baseElement.addEventListener("click", e => {
     if (!cardElement.contains(e.target)) {
@@ -75,12 +78,15 @@ async function newLogFrame() {
         iframeDocument.body.append(msg);
       }
     }
-    iframeDocument.body.scrollTo(0, iframeDocument.body.scrollHeight + 1);
+    // 自动滚动到底部
+    iframeDocument.body.scrollTop = iframeDocument.body.scrollHeight;
+    if(iframeDocument.documentElement) iframeDocument.documentElement.scrollTop = iframeDocument.body.scrollHeight;
   }
 
   function copyButton(str) {
     const copyButton = document.createElement("button");
     copyButton.textContent = "点击复制";
+    copyButton.style.cssText = "margin: 0 4px; padding: 2px 6px; border-radius: 4px; border: 1px solid #ccc; background: #fff; cursor: pointer;";
     copyButton.addEventListener("click", async e => {
       const clipboard = navigator.clipboard ?? {
         writeText: async (s) => new Promise(resolve => {
@@ -97,6 +103,7 @@ async function newLogFrame() {
       };
       await clipboard.writeText(String(str));
       e.target.textContent = "已复制";
+      setTimeout(() => e.target.textContent = "点击复制", 2000);
     });
     return copyButton;
   }
@@ -152,6 +159,15 @@ async function newLogFrame() {
   baseElement.codeBlockShort = codeBlockShort;
   baseElement.repoLink = repoLink;
   baseElement.jumpToPage = jumpToPage;
+  
+  // 注入样式到 iframe
+  const style = document.createElement('style');
+  style.textContent = `
+    body { font-family: sans-serif; line-height: 1.5; color: #333; word-break: break-all; }
+    button { cursor: pointer; }
+  `;
+  iframeDocument.head.append(style);
+
   return baseElement;
 
 }
