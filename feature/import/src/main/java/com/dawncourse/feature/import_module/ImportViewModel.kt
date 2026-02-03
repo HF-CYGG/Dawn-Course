@@ -434,6 +434,11 @@ class ImportViewModel @Inject constructor(
                 )
                 val semesterId = semesterRepository.insertSemester(newSemester)
                 
+                // 2.1 同步更新 AppSettings (DataStore)，防止设置页面显示旧数据
+                settingsRepository.setCurrentSemesterName(newSemester.name)
+                settingsRepository.setStartDateTimestamp(newSemester.startDate)
+                settingsRepository.setTotalWeeks(newSemester.weekCount)
+                
                 // 3. 插入课程数据
                 val domainCourses = state.parsedCourses.map { parsed ->
                     parsed.toDomainCourse().copy(semesterId = semesterId)

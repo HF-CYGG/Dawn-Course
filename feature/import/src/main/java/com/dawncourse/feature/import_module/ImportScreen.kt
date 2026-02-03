@@ -72,6 +72,9 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.time.ZoneId
+import java.time.LocalDate
 
 /**
  * 导入功能主屏幕
@@ -767,6 +770,52 @@ private fun ImportSettingsSection(
                     
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
+                    // 当前周次设置 (根据开学日期反推)
+                    val today = LocalDate.now()
+                    val startDate = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
+                        .atZone(ZoneId.of("UTC"))
+                        .toLocalDate()
+                    
+                    // 计算当前周次: ((今天 - 开学日期) / 7) + 1
+                    // 如果开学日期在未来，这里可能是负数或0，这里限制显示范围
+                    val daysDiff = ChronoUnit.DAYS.between(startDate, today)
+                    val currentWeek = ((daysDiff / 7).toInt() + 1).coerceIn(1, 30) // 允许稍微越界用于调整，但UI限制在1-30
+
+                    StepperRowItem(
+                        label = "当前周次",
+                        value = currentWeek,
+                        onValueChange = { newWeek ->
+                            // 根据新的当前周次，反推开学日期
+                            // 保持 "今天" 对应的星期几不变，只平移周数
+                            // 比如：今天周三是第1周 -> 开学是本周一
+                            // 设为第2周 -> 开学是上周一
+                            // 差异周数 = newWeek - currentWeek
+                            // newStartDate = startDate - (diff * 7 days)
+                            
+                            // 更稳健的逻辑：
+                            // 假设开学日期总是周一 (通常情况，但不强制)
+                            // 实际上我们只需要保持相对偏移量
+                            val diffWeeks = newWeek - currentWeek
+                            val newStartDate = startDate.minusWeeks(diffWeeks.toLong())
+                            
+                            val newStartMillis = newStartDate.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli()
+                            onSemesterSettingsChange(newStartMillis, uiState.weekCount)
+                        },
+                        range = 1..uiState.weekCount,
+                        suffix = "周"
+                    )
+                    
+                    if (currentWeek != ((daysDiff / 7).toInt() + 1)) {
+                         Text(
+                            text = "当前日期不在学期范围内",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -776,13 +825,22 @@ private fun ImportSettingsSection(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "开学日期",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Column {
+                            Text(
+                                text = "开学日期",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "通常为第一周的周一",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        // 使用 UTC 解析显示，与 DatePicker 保持一致，避免时区偏移导致日期显示错误
                         val dateStr = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
-                            .atZone(java.time.ZoneId.systemDefault())
+                            .atZone(ZoneId.of("UTC"))
                             .toLocalDate()
                             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
                         Text(
@@ -793,6 +851,7 @@ private fun ImportSettingsSection(
                         )
                     }
                 }
+
                 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 

@@ -47,6 +47,32 @@ class SettingsViewModel @Inject constructor(
             initialValue = AppSettings()
         )
 
+    init {
+        // 同步 DataStore 设置与数据库中的当前学期数据
+        // 防止因导入或其他操作导致 DataStore 中的缓存数据（如开学日期）滞后
+        viewModelScope.launch {
+            try {
+                val currentSemester = semesterRepository.getCurrentSemester().first()
+                if (currentSemester != null) {
+                    // 获取当前 DataStore 中的值（不阻塞主线程）
+                    val cachedSettings = settingsRepository.settings.first()
+                    
+                    // 检查是否有不一致，如果有则更新 DataStore
+                    if (cachedSettings.currentSemesterName != currentSemester.name ||
+                        cachedSettings.startDateTimestamp != currentSemester.startDate ||
+                        cachedSettings.totalWeeks != currentSemester.weekCount
+                    ) {
+                        settingsRepository.setCurrentSemesterName(currentSemester.name)
+                        settingsRepository.setStartDateTimestamp(currentSemester.startDate)
+                        settingsRepository.setTotalWeeks(currentSemester.weekCount)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     /**
      * 设置是否启用动态取色 (Material You)
      *
