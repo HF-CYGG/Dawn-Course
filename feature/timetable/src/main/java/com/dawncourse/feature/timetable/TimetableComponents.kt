@@ -537,24 +537,29 @@ fun CourseCard(
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
-                    lineHeight = 16.sp,
+                    lineHeight = 14.sp, // 稍微紧凑一点
                     color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
-                maxLines = if (isCurrentWeek) 3 else 4,
+                maxLines = if (isCurrentWeek) 2 else 3, // 减少行数预留空间给详情
                 overflow = TextOverflow.Ellipsis
             )
             
             // 2. 底部信息块 (仅本周显示)
             if (isCurrentWeek) {
-                Column {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(1.dp) // 极小的间距
+                ) {
                     // 教室
                     if (course.location.isNotEmpty()) {
                         Text(
                             text = course.location,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
+                                lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
-                            )
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     
@@ -564,9 +569,11 @@ fun CourseCard(
                             text = course.teacher,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
+                                lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
                             ),
-                            modifier = Modifier.padding(top = 2.dp)
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

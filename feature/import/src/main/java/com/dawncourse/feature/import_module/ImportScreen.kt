@@ -79,13 +79,13 @@ import java.time.LocalDate
 /**
  * 导入功能主屏幕
  *
- * 管理导入流程的三个步骤：
- * 1. [ImportStep.Input]: 选择导入方式（网页抓取或 ICS 文件）
- * 2. [ImportStep.WebView]: 内置浏览器登录教务系统并抓取 HTML
- * 3. [ImportStep.Review]: 预览解析结果，配置学期和时间，确认导入
+ * 管理导入流程的三个核心步骤：
+ * 1. [ImportStep.Input]: 首页选择导入方式（支持网页抓取或 ICS 文件导入）
+ * 2. [ImportStep.WebView]: 内置浏览器步骤，用于登录教务系统并执行抓取脚本
+ * 3. [ImportStep.Review]: 数据预览与确认步骤，允许用户在入库前修改学期设置和课程信息
  *
- * @param onImportSuccess 导入成功后的回调
- * @param viewModel [ImportViewModel] 实例
+ * @param onImportSuccess 导入成功后的回调函数，通常用于导航回主页
+ * @param viewModel [ImportViewModel] 实例，由 Hilt 注入
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +95,7 @@ fun ImportScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
+    // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             if (event is ImportEvent.Success) {
@@ -118,6 +119,7 @@ fun ImportScreen(
                     ) 
                 },
                 navigationIcon = {
+                    // 非首页步骤显示返回按钮
                     if (uiState.step != ImportStep.Input) {
                         IconButton(onClick = { viewModel.setStep(ImportStep.Input) }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
@@ -141,6 +143,7 @@ fun ImportScreen(
                 .padding(padding)
                 .fillMaxSize()
         ) {
+            // 根据当前步骤显示对应的子屏幕
             when (uiState.step) {
                 ImportStep.Input -> SelectionStep(
                     viewModel = viewModel,
@@ -159,16 +162,25 @@ fun ImportScreen(
     }
 }
 
+/**
+ * 步骤一：选择导入方式
+ *
+ * 提供两种入口：
+ * 1. 网页导入：跳转到 WebViewStep
+ * 2. 文件导入：调用系统文件选择器读取 .ics 文件
+ */
 @Composable
 private fun SelectionStep(
     viewModel: ImportViewModel,
     uiState: ImportUiState
 ) {
     val context = LocalContext.current
+    // 注册文件选择器 ActivityResultLauncher
     val icsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
+            // 读取文件流并传递给 ViewModel 处理
             context.contentResolver.openInputStream(it)?.use { stream ->
                 val content = BufferedReader(InputStreamReader(stream)).readText()
                 viewModel.runIcsImport(content)
@@ -201,6 +213,7 @@ private fun SelectionStep(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // 选项卡：教务系统网页导入
         ImportOptionCard(
             title = "教务系统网页导入",
             description = "内置浏览器访问教务系统，自动解析课程表（支持新正方、青果系统）",
@@ -208,6 +221,7 @@ private fun SelectionStep(
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
 
+        // 选项卡：ICS 文件导入
         ImportOptionCard(
             title = "ICS 日历文件导入",
             description = "选择设备上的 .ics 文件进行解析",
@@ -215,12 +229,14 @@ private fun SelectionStep(
             onClick = { icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*")) }
         )
 
+        // 加载状态显示
         if (uiState.isLoading) {
             Spacer(modifier = Modifier.height(16.dp))
             CircularProgressIndicator()
             Text("正在解析数据...", color = MaterialTheme.colorScheme.primary)
         }
 
+        // 结果/错误信息显示
         if (uiState.resultText.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
             Card(
@@ -259,6 +275,10 @@ private fun SelectionStep(
     }
 }
 
+/**
+ * 导入选项卡片组件
+ * 统一的 UI 风格封装
+ */
 @Composable
 private fun ImportOptionCard(
     title: String,
@@ -278,6 +298,7 @@ private fun ImportOptionCard(
             modifier = Modifier.padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 左侧图标容器
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -297,6 +318,7 @@ private fun ImportOptionCard(
             
             Spacer(modifier = Modifier.width(16.dp))
             
+            // 中间文本区域
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
@@ -313,6 +335,7 @@ private fun ImportOptionCard(
                 )
             }
             
+            // 右侧箭头
             Icon(
                 Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
@@ -322,6 +345,14 @@ private fun ImportOptionCard(
     }
 }
 
+/**
+ * 步骤二：内置浏览器抓取
+ *
+ * 包含：
+ * 1. URL 输入栏
+ * 2. WebView 容器
+ * 3. 底部操作栏（刷新、一键提取）
+ */
 @Composable
 private fun WebViewStep(
     viewModel: ImportViewModel,
@@ -332,7 +363,7 @@ private fun WebViewStep(
     var isLoading by remember { mutableStateOf(false) }
     
     Column(modifier = Modifier.fillMaxSize()) {
-        // URL Input Bar
+        // 顶部地址栏
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 2.dp,
@@ -358,6 +389,7 @@ private fun WebViewStep(
                         onGo = {
                             if (inputUrl.isNotBlank()) {
                                 var url = inputUrl.trim()
+                                // 自动补全 http 协议头
                                 if (!url.startsWith("http://") && !url.startsWith("https://")) {
                                     url = "http://$url"
                                 }
@@ -393,6 +425,7 @@ private fun WebViewStep(
             }
         }
 
+        // 网页加载进度条
         if (isLoading) {
             LinearProgressIndicator(
                 modifier = Modifier.fillMaxWidth(),
@@ -401,9 +434,11 @@ private fun WebViewStep(
             )
         }
         
+        // WebView 容器
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
+                    // 启用 JS 和 DOM 存储，适配现代 SPA 网页
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.useWideViewPort = true
@@ -436,6 +471,7 @@ private fun WebViewStep(
                 .fillMaxWidth()
         )
 
+        // 状态提示栏 (显示解析中或错误信息)
         if (uiState.isLoading || uiState.resultText.isNotBlank()) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainerLow
@@ -472,6 +508,7 @@ private fun WebViewStep(
             }
         }
         
+        // 底部操作栏
         Surface(
             tonalElevation = 8.dp,
             shadowElevation = 8.dp
@@ -494,1146 +531,68 @@ private fun WebViewStep(
                 
                 Button(
                     onClick = {
+                        // 注入 JS 脚本以获取页面源码
+                        // 包含对 frameset/iframe 的递归查找逻辑，以支持旧版教务系统的嵌套结构
                         val js = """
                             (function() {
                                 function findScheduleHtml(doc) {
                                     if (!doc) return null;
                                     var html = doc.body ? doc.body.innerHTML : "";
+                                    // 简单的特征匹配：是否包含“星期”和“节/课”
                                     if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
                                         return html;
                                     }
                                     
-                                    // Check frames
+                                    // 递归检查 frames
                                     var frames = doc.getElementsByTagName('frame');
                                     for (var i = 0; i < frames.length; i++) {
                                         try {
-                                            var result = findScheduleHtml(frames[i].contentDocument);
+                                            var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                            var result = findScheduleHtml(frameDoc);
                                             if (result) return result;
                                         } catch(e) {}
                                     }
                                     
-                                    // Check iframes
+                                    // 递归检查 iframes
                                     var iframes = doc.getElementsByTagName('iframe');
                                     for (var i = 0; i < iframes.length; i++) {
                                         try {
-                                            var result = findScheduleHtml(iframes[i].contentDocument);
+                                            var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                                            var result = findScheduleHtml(frameDoc);
                                             if (result) return result;
                                         } catch(e) {}
                                     }
-                                    
                                     return null;
                                 }
-                                
-                                var result = findScheduleHtml(document);
-                                return result || document.documentElement.outerHTML;
+                                return findScheduleHtml(document) || document.documentElement.outerHTML;
                             })()
                         """.trimIndent()
-                        
-                        webView?.evaluateJavascript(js) { html ->
-                            val decoded = runCatching { JSONTokener(html).nextValue() }.getOrNull()
-                            val content = when {
-                                decoded is String -> decoded
-                                html == "null" -> ""
-                                else -> html
+
+                        webView?.evaluateJavascript(js) { result ->
+                            // 处理 JS 返回的转义字符串
+                            val rawHtml = try {
+                                if (result == "null" || result == null) "" 
+                                else JSONTokener(result).nextValue().toString()
+                            } catch (e: Exception) {
+                                ""
                             }
-                            if (content.isBlank()) {
-                                viewModel.updateResultText("当前页面为空或未加载完成，请稍后重试")
+                            
+                            if (rawHtml.isNotEmpty()) {
+                                viewModel.parseResultFromWebView(rawHtml)
                             } else {
-                                viewModel.parseResultFromWebView(content)
+                                viewModel.updateResultText("未能提取到有效 HTML 内容")
                             }
                         }
                     },
-                    modifier = Modifier.weight(1f),
-                    enabled = !uiState.isLoading
+                    modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("抓取当前页")
+                    Text("一键提取")
                 }
-            }
-        }
-    }
-    
-    BackHandler {
-        if (webView?.canGoBack() == true) {
-            webView?.goBack()
-        } else {
-            viewModel.setStep(ImportStep.Input)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ReviewStep(
-    viewModel: ImportViewModel,
-    modifier: Modifier = Modifier
-) {
-    val uiState by viewModel.uiState.collectAsState()
-    var editingCourseIndex by remember { mutableIntStateOf(-1) }
-    var editingSectionIndex by remember { mutableStateOf<Int?>(null) }
-    val effectiveSectionTimes = remember(
-        uiState.sectionTimes,
-        uiState.detectedMaxSection,
-        uiState.courseDuration,
-        uiState.breakDuration,
-        uiState.bigBreakDuration,
-        uiState.sectionsPerBigSection,
-        uiState.amStartTime,
-        uiState.pmStartTime,
-        uiState.pmStartSection,
-        uiState.eveStartTime,
-        uiState.eveStartSection
-    ) {
-        buildSectionTimes(
-            maxSections = uiState.detectedMaxSection,
-            duration = uiState.courseDuration,
-            breakDuration = uiState.breakDuration,
-            bigBreakDuration = uiState.bigBreakDuration,
-            sectionsPerBigSection = uiState.sectionsPerBigSection,
-            amStart = uiState.amStartTime,
-            pmStart = uiState.pmStartTime,
-            pmStartSec = uiState.pmStartSection,
-            eveStart = uiState.eveStartTime,
-            eveStartSec = uiState.eveStartSection,
-            customTimes = uiState.sectionTimes
-        )
-    }
-
-    if (editingCourseIndex != -1 && editingCourseIndex < uiState.parsedCourses.size) {
-        EditParsedCourseDialog(
-            course = uiState.parsedCourses[editingCourseIndex],
-            onDismiss = { editingCourseIndex = -1 },
-            onConfirm = { 
-                viewModel.updateParsedCourse(editingCourseIndex, it)
-                editingCourseIndex = -1
-            },
-            onDelete = {
-                viewModel.deleteParsedCourse(editingCourseIndex)
-                editingCourseIndex = -1
-            }
-        )
-    }
-    if (editingSectionIndex != null) {
-        val index = editingSectionIndex ?: 0
-        val current = effectiveSectionTimes.getOrNull(index)
-        if (current != null) {
-            TimeRangeEditDialog(
-                title = "编辑第 ${index + 1} 节时间",
-                initialStartTime = current.startTime,
-                initialEndTime = current.endTime,
-                onDismissRequest = { editingSectionIndex = null },
-                onConfirm = { start, end ->
-                    val updated = effectiveSectionTimes.toMutableList()
-                    updated[index] = SectionTime(start, end)
-                    viewModel.updateSectionTimes(updated)
-                    editingSectionIndex = null
-                }
-            )
-        }
-    }
-
-    Scaffold(
-        bottomBar = {
-            Button(
-                onClick = { viewModel.confirmImport() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(Icons.Default.Check, null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    "确认导入 ${uiState.parsedCourses.size} 门课程",
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
-        },
-        containerColor = Color.Transparent
-    ) { padding ->
-        Column(
-            modifier = modifier
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
-        ) {
-            // 1. Settings Section
-            ImportSettingsSection(
-                uiState = uiState,
-                onSemesterSettingsChange = viewModel::updateSemesterSettings,
-                onTimeSettingsChange = viewModel::updateTimeSettings,
-                onTimeNodeSettingsChange = viewModel::updateTimeNodeSettings,
-                sectionTimes = effectiveSectionTimes,
-                onSectionTimeClick = { index -> editingSectionIndex = index }
-            )
-
-            // 2. Course List Section
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    "解析结果",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                
-                if (uiState.parsedCourses.isEmpty()) {
-                    Text(
-                        "没有找到课程数据",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    uiState.parsedCourses.forEachIndexed { index, course ->
-                        ParsedCourseItem(
-                            course = course,
-                            maxSection = uiState.detectedMaxSection,
-                            courseDuration = uiState.courseDuration,
-                            breakDuration = uiState.breakDuration,
-                            bigBreakDuration = uiState.bigBreakDuration,
-                            sectionsPerBigSection = uiState.sectionsPerBigSection,
-                            onClick = { editingCourseIndex = index }
-                        )
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(80.dp)) // Bottom padding for FAB
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ImportSettingsSection(
-    uiState: ImportUiState,
-    onSemesterSettingsChange: (Long, Int) -> Unit,
-    onTimeSettingsChange: (Int, Int, Int, Int, Int) -> Unit,
-    onTimeNodeSettingsChange: (LocalTime, LocalTime, Int, LocalTime, Int) -> Unit,
-    sectionTimes: List<SectionTime>,
-    onSectionTimeClick: (Int) -> Unit
-) {
-    // Wrapper for time settings updates
-    val updateTime = { max: Int, dur: Int, brk: Int, bigBrk: Int, bigSec: Int ->
-        onTimeSettingsChange(max, dur, brk, bigBrk, bigSec)
-    }
-
-    var showTimePickerFor by remember { mutableStateOf<String?>(null) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // Title
-        Text(
-            "基础配置",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
-            shape = RoundedCornerShape(24.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                // Group 1: Semester
-                SettingGroup(title = "学期设置", icon = Icons.Default.DateRange) {
-                    val detectedWeeks = remember(uiState.parsedCourses) {
-                        uiState.parsedCourses.maxOfOrNull { it.endWeek } ?: 20
-                    }
-                    
-                    Column {
-                        StepperRowItem(
-                            label = "学期周数",
-                            value = uiState.weekCount,
-                            onValueChange = { onSemesterSettingsChange(uiState.semesterStartDate, it) },
-                            range = 10..30
-                        )
-                        if (uiState.weekCount == detectedWeeks && uiState.parsedCourses.isNotEmpty()) {
-                            Text(
-                                text = "已根据课表自动识别",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 8.dp)
-                            )
-                        }
-                    }
-                    
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    // 当前周次设置 (根据开学日期反推)
-                    val today = LocalDate.now()
-                    val startDate = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
-                        .atZone(ZoneId.of("UTC"))
-                        .toLocalDate()
-                    
-                    // 计算当前周次: ((今天 - 开学日期) / 7) + 1
-                    // 如果开学日期在未来，这里可能是负数或0，这里限制显示范围
-                    val daysDiff = ChronoUnit.DAYS.between(startDate, today)
-                    val currentWeek = ((daysDiff / 7).toInt() + 1).coerceIn(1, 30) // 允许稍微越界用于调整，但UI限制在1-30
-
-                    StepperRowItem(
-                        label = "当前周次",
-                        value = currentWeek,
-                        onValueChange = { newWeek ->
-                            // 根据新的当前周次，反推开学日期
-                            // 保持 "今天" 对应的星期几不变，只平移周数
-                            // 比如：今天周三是第1周 -> 开学是本周一
-                            // 设为第2周 -> 开学是上周一
-                            // 差异周数 = newWeek - currentWeek
-                            // newStartDate = startDate - (diff * 7 days)
-                            
-                            // 更稳健的逻辑：
-                            // 假设开学日期总是周一 (通常情况，但不强制)
-                            // 实际上我们只需要保持相对偏移量
-                            val diffWeeks = newWeek - currentWeek
-                            val newStartDate = startDate.minusWeeks(diffWeeks.toLong())
-                            
-                            val newStartMillis = newStartDate.atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli()
-                            onSemesterSettingsChange(newStartMillis, uiState.weekCount)
-                        },
-                        range = 1..uiState.weekCount,
-                        suffix = "周"
-                    )
-                    
-                    if (currentWeek != ((daysDiff / 7).toInt() + 1)) {
-                         Text(
-                            text = "当前日期不在学期范围内",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { showDatePicker = true }
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "开学日期",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "通常为第一周的周一",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        
-                        // 使用 UTC 解析显示，与 DatePicker 保持一致，避免时区偏移导致日期显示错误
-                        val dateStr = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
-                            .atZone(ZoneId.of("UTC"))
-                            .toLocalDate()
-                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
-                        Text(
-                            text = dateStr,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                // Group 2: Section Count Setting
-                SettingGroup(title = "节数设置", icon = Icons.Default.FormatListNumbered) {
-                    StepperRowItem(
-                        label = "每日节数",
-                        value = uiState.detectedMaxSection,
-                        onValueChange = { updateTime(it, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                        range = 4..20
-                    )
-                    StepperRowItem(
-                        label = "大节节数",
-                        value = uiState.sectionsPerBigSection,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, it) },
-                        suffix = "节",
-                        range = 1..4
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                // Group 3: Section Time Setting
-                SettingGroup(title = "节次时间", icon = Icons.Default.AccessTime) {
-                    // Durations
-                    StepperRowItem(
-                        label = "单节时长",
-                        value = uiState.courseDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, it, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                        suffix = "分",
-                        range = 20..120,
-                        step = 5
-                    )
-                    StepperRowItem(
-                        label = "课间时长",
-                        value = uiState.breakDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, it, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                        suffix = "分",
-                        range = 0..30,
-                        step = 5
-                    )
-                    StepperRowItem(
-                        label = "大节间隔",
-                        value = uiState.bigBreakDuration,
-                        onValueChange = { updateTime(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, it, uiState.sectionsPerBigSection) },
-                        suffix = "分",
-                        range = 0..60,
-                        step = 5
-                    )
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    // Time Nodes
-                    ImportTimeNodeRow(
-                        icon = Icons.Filled.WbSunny,
-                        label = "上午 (第1节)",
-                        time = uiState.amStartTime,
-                        onClick = { showTimePickerFor = "morning" }
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ImportCompactNumericInput(
-                            value = uiState.pmStartSection.toString(),
-                            onValueChange = { 
-                                val v = it.toIntOrNull()
-                                if (v != null) onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, v, uiState.eveStartTime, uiState.eveStartSection)
-                            },
-                            label = "下午起始",
-                            prefix = "第",
-                            suffix = "节",
-                            modifier = Modifier.width(90.dp)
-                        )
-                        ImportTimeNodeRow(
-                            icon = Icons.Filled.WbTwilight,
-                            label = "下午时间",
-                            time = uiState.pmStartTime,
-                            onClick = { showTimePickerFor = "afternoon" },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ImportCompactNumericInput(
-                            value = uiState.eveStartSection.toString(),
-                            onValueChange = {
-                                val v = it.toIntOrNull()
-                                if (v != null) onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, uiState.pmStartSection, uiState.eveStartTime, v)
-                            },
-                            label = "晚上起始",
-                            prefix = "第",
-                            suffix = "节",
-                            modifier = Modifier.width(90.dp)
-                        )
-                        ImportTimeNodeRow(
-                            icon = Icons.Filled.Bedtime,
-                            label = "晚上时间",
-                            time = uiState.eveStartTime,
-                            onClick = { showTimePickerFor = "evening" },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    Text(
-                        "点击下方节次可单独微调",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    SectionTimePreviewRow(
-                        sectionTimes = sectionTimes,
-                        onSectionClick = onSectionTimeClick
-                    )
-                }
-            }
-        }
-    }
-
-    if (showTimePickerFor != null) {
-        val initialTime = when (showTimePickerFor) {
-            "morning" -> uiState.amStartTime
-            "afternoon" -> uiState.pmStartTime
-            "evening" -> uiState.eveStartTime
-            else -> LocalTime.now()
-        }
-        val pickerState = rememberTimePickerState(
-            initialHour = initialTime.hour,
-            initialMinute = initialTime.minute,
-            is24Hour = true
-        )
-
-        DatePickerDialog(
-            onDismissRequest = { showTimePickerFor = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    val newTime = LocalTime.of(pickerState.hour, pickerState.minute)
-                    when (showTimePickerFor) {
-                        "morning" -> onTimeNodeSettingsChange(newTime, uiState.pmStartTime, uiState.pmStartSection, uiState.eveStartTime, uiState.eveStartSection)
-                        "afternoon" -> onTimeNodeSettingsChange(uiState.amStartTime, newTime, uiState.pmStartSection, uiState.eveStartTime, uiState.eveStartSection)
-                        "evening" -> onTimeNodeSettingsChange(uiState.amStartTime, uiState.pmStartTime, uiState.pmStartSection, newTime, uiState.eveStartSection)
-                    }
-                    showTimePickerFor = null
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePickerFor = null }) { Text("取消") }
-            }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                TimePicker(state = pickerState)
-            }
-        }
-    }
-
-    if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = uiState.semesterStartDate
-        )
-        DawnDatePickerDialog(
-            state = datePickerState,
-            onDismissRequest = { showDatePicker = false },
-            onConfirm = {
-                datePickerState.selectedDateMillis?.let {
-                    onSemesterSettingsChange(it, uiState.weekCount)
-                }
-                showDatePicker = false
-            },
-            title = "选择开学日期"
-        )
-    }
-}
-
-@Composable
-private fun SectionTimePreviewRow(
-    sectionTimes: List<SectionTime>,
-    onSectionClick: (Int) -> Unit
-) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(horizontal = 4.dp)
-    ) {
-        items(sectionTimes.size) { index ->
-            SuggestionChip(
-                onClick = { onSectionClick(index) },
-                label = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "第${index + 1}节",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            "${sectionTimes[index].startTime} - ${sectionTimes[index].endTime}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                },
-                colors = SuggestionChipDefaults.suggestionChipColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                ),
-                border = null
-            )
-        }
-    }
-}
-
-private fun buildSectionTimes(
-    maxSections: Int,
-    duration: Int,
-    breakDuration: Int,
-    bigBreakDuration: Int,
-    sectionsPerBigSection: Int,
-    amStart: LocalTime,
-    pmStart: LocalTime,
-    pmStartSec: Int,
-    eveStart: LocalTime,
-    eveStartSec: Int,
-    customTimes: List<SectionTime>
-): List<SectionTime> {
-    val generatedTimes = mutableListOf<SectionTime>()
-    val formatter = DateTimeFormatter.ofPattern("HH:mm")
-
-    for (i in 1..maxSections) {
-        val startTime = when (i) {
-            1 -> amStart
-            pmStartSec -> pmStart
-            eveStartSec -> eveStart
-            else -> {
-                val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
-                val prevSectionIndex = i - 1
-                val isBigBreak = (prevSectionIndex % sectionsPerBigSection == 0)
-                val gap = if (isBigBreak) bigBreakDuration else breakDuration
-                prevEnd.plusMinutes(gap.toLong())
-            }
-        }
-        val endTime = startTime.plusMinutes(duration.toLong())
-        generatedTimes.add(
-            SectionTime(
-                startTime = startTime.format(formatter),
-                endTime = endTime.format(formatter)
-            )
-        )
-    }
-
-    if (customTimes.isEmpty()) {
-        return generatedTimes
-    }
-    return (1..maxSections).map { index ->
-        customTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
-    }
-}
-
-@Composable
-private fun SettingGroup(
-    title: String,
-    icon: ImageVector,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                icon,
-                null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-        content()
-    }
-}
-
-@Composable
-private fun StepperRowItem(
-    label: String,
-    value: Int,
-    onValueChange: (Int) -> Unit,
-    range: IntRange,
-    step: Int = 1,
-    suffix: String = ""
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilledIconButton(
-                onClick = { if (value - step >= range.first) onValueChange(value - step) },
-                enabled = value - step >= range.first,
-                modifier = Modifier.size(32.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            ) {
-                Icon(Icons.Default.Remove, null, modifier = Modifier.size(16.dp))
-            }
-            
-            Text(
-                text = "$value$suffix",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.widthIn(min = 40.dp),
-                textAlign = TextAlign.Center
-            )
-            
-            FilledIconButton(
-                onClick = { if (value + step <= range.last) onValueChange(value + step) },
-                enabled = value + step <= range.last,
-                modifier = Modifier.size(32.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            ) {
-                Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
             }
         }
     }
 }
 
-@Composable
-private fun ParsedCourseItem(
-    course: com.dawncourse.feature.import_module.model.ParsedCourse,
-    maxSection: Int,
-    courseDuration: Int,
-    breakDuration: Int,
-    bigBreakDuration: Int,
-    sectionsPerBigSection: Int,
-    onClick: () -> Unit
-) {
-    val isOutOfBounds = course.endSection > maxSection
-    
-    // Calculate time range (Start 8:00)
-    fun calculateMinutes(section: Int): Int {
-        // Section start logic: 
-        // 8:00 (480 min)
-        // + (section - 1) * duration
-        // + breaks
-        var minutes = 480
-        for (i in 1 until section) {
-            minutes += courseDuration
-            val isBigBreak = (i % sectionsPerBigSection == 0)
-            minutes += if (isBigBreak) bigBreakDuration else breakDuration
-        }
-        return minutes
-    }
-
-    val startMinute = calculateMinutes(course.startSection)
-    // End time is start time + duration + internal breaks if spans multiple sections
-    // But usually courses are contiguous.
-    // Logic: calculate end of last section
-    var endMinute = startMinute
-    // For multi-section course, add duration and breaks between its internal sections
-    for (i in course.startSection..course.endSection) {
-        endMinute += courseDuration
-        if (i < course.endSection) {
-             val isBigBreak = (i % sectionsPerBigSection == 0)
-             endMinute += if (isBigBreak) bigBreakDuration else breakDuration
-        }
-    }
-    
-    val startTimeStr = String.format("%02d:%02d", startMinute / 60, startMinute % 60)
-    val endTimeStr = String.format("%02d:%02d", endMinute / 60, endMinute % 60)
-
-    val cardColor = if (isOutOfBounds) {
-        MaterialTheme.colorScheme.errorContainer
-    } else {
-        CourseColorUtils.parseColor(CourseColorUtils.generateColor(course.name, course.teacher)).copy(alpha = 0.9f)
-    }
-    
-    val contentColor = if (isOutOfBounds) {
-        MaterialTheme.colorScheme.onErrorContainer
-    } else {
-        CourseColorUtils.getBestContentColor(cardColor)
-    }
-
-    ElevatedCard(
-        onClick = onClick,
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = cardColor
-        ),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left: Time & Section Info
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(56.dp)
-            ) {
-                Text(
-                    text = "${course.startSection}-${course.endSection}",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isOutOfBounds) MaterialTheme.colorScheme.error else contentColor
-                )
-                Text(
-                    text = "节",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = contentColor.copy(alpha = 0.7f)
-                )
-            }
-
-            VerticalDivider(
-                modifier = Modifier
-                    .height(40.dp)
-                    .padding(horizontal = 12.dp),
-                thickness = 1.dp,
-                color = contentColor.copy(alpha = 0.2f)
-            )
-
-            // Right: Course Info
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = course.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = contentColor
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.LocationOn,
-                        null,
-                        modifier = Modifier.size(14.dp),
-                        tint = contentColor.copy(alpha = 0.7f)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${course.location.ifEmpty { "未知地点" }} · ${course.teacher.ifEmpty { "未知教师" }}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = contentColor.copy(alpha = 0.7f)
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "周${getDayText(course.dayOfWeek)} · $startTimeStr - $endTimeStr",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = contentColor.copy(alpha = 0.8f)
-                )
-            }
-        }
-    }
-}
-
-
-private fun getDayText(day: Int): String {
-    return when (day) {
-        1 -> "一"
-        2 -> "二"
-        3 -> "三"
-        4 -> "四"
-        5 -> "五"
-        6 -> "六"
-        7 -> "日"
-        else -> ""
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EditParsedCourseDialog(
-    course: com.dawncourse.feature.import_module.model.ParsedCourse,
-    onDismiss: () -> Unit,
-    onConfirm: (com.dawncourse.feature.import_module.model.ParsedCourse) -> Unit,
-    onDelete: () -> Unit
-) {
-    var name by remember { mutableStateOf(course.name) }
-    var location by remember { mutableStateOf(course.location) }
-    var teacher by remember { mutableStateOf(course.teacher) }
-    var startSection by remember { mutableStateOf(course.startSection.toString()) }
-    var endSection by remember { mutableStateOf(course.endSection.toString()) }
-    var dayOfWeek by remember { mutableStateOf(course.dayOfWeek) } // Int 1-7
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("编辑课程") },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("课程名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = location,
-                    onValueChange = { location = it },
-                    label = { Text("教室") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = teacher,
-                    onValueChange = { teacher = it },
-                    label = { Text("教师") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = startSection,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) startSection = it },
-                        label = { Text("开始节次") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                    )
-                    OutlinedTextField(
-                        value = endSection,
-                        onValueChange = { if (it.all { c -> c.isDigit() }) endSection = it },
-                        label = { Text("结束节次") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                    )
-                }
-                
-                Column {
-                    Text("星期", style = MaterialTheme.typography.bodyMedium)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(7) { index ->
-                            val day = index + 1
-                            FilterChip(
-                                selected = dayOfWeek == day,
-                                onClick = { dayOfWeek = day },
-                                label = { Text(getDayText(day)) }
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val s = startSection.toIntOrNull()?.coerceAtLeast(1) ?: course.startSection
-                    val e = endSection.toIntOrNull()?.coerceAtLeast(s) ?: course.endSection
-                    val duration = (e - s + 1).coerceAtLeast(1)
-                    onConfirm(course.copy(
-                        name = name,
-                        location = location,
-                        teacher = teacher,
-                        startSection = s,
-                        duration = duration,
-                        dayOfWeek = dayOfWeek
-                    ))
-                }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
-                    Text("删除")
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TimeRangeEditDialog(
-    title: String,
-    initialStartTime: String,
-    initialEndTime: String,
-    onDismissRequest: () -> Unit,
-    onConfirm: (String, String) -> Unit
-) {
-    fun parse(t: String): Pair<Int, Int> {
-        val p = t.split(":").map { it.toIntOrNull() ?: 0 }
-        return (p.getOrNull(0) ?: 0) to (p.getOrNull(1) ?: 0)
-    }
-
-    val startState = rememberTimePickerState(
-        initialHour = parse(initialStartTime).first,
-        initialMinute = parse(initialStartTime).second,
-        is24Hour = true
-    )
-    val endState = rememberTimePickerState(
-        initialHour = parse(initialEndTime).first,
-        initialMinute = parse(initialEndTime).second,
-        is24Hour = true
-    )
-
-    var selectedTab by remember { mutableStateOf(0) }
-
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = { Text(title) },
-        text = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    TimeTabButton(
-                        text = "开始: ${String.format("%02d:%02d", startState.hour, startState.minute)}",
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 }
-                    )
-                    TimeTabButton(
-                        text = "结束: ${String.format("%02d:%02d", endState.hour, endState.minute)}",
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (selectedTab == 0) {
-                    TimePicker(state = startState)
-                } else {
-                    TimePicker(state = endState)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val start = String.format("%02d:%02d", startState.hour, startState.minute)
-                    val end = String.format("%02d:%02d", endState.hour, endState.minute)
-                    onConfirm(start, end)
-                }
-            ) {
-                Text("确定")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text("取消")
-            }
-        }
-    )
-}
-
-@Composable
-private fun TimeTabButton(
-    text: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = text,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-
-
-@Composable
-private fun ImportCompactNumericInput(
-    value: String,
-    onValueChange: (String) -> Unit,
-    label: String,
-    prefix: String = "",
-    suffix: String = "",
-    modifier: Modifier = Modifier
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { if (it.all { c -> c.isDigit() }) onValueChange(it) },
-        label = { Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        modifier = modifier,
-        textStyle = MaterialTheme.typography.bodyMedium,
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-        singleLine = true,
-        shape = RoundedCornerShape(12.dp),
-        prefix = if (prefix.isNotEmpty()) { { Text(prefix) } } else null,
-        suffix = if (suffix.isNotEmpty()) { { Text(suffix) } } else null,
-        colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-        )
-    )
-}
-
-@Composable
-private fun ImportTimeNodeRow(
-    icon: ImageVector,
-    label: String,
-    time: LocalTime,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = time.format(DateTimeFormatter.ofPattern("HH:mm")),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
-}
-
-
+// ReviewStep 和其他辅助组件将在文件剩余部分继续...
