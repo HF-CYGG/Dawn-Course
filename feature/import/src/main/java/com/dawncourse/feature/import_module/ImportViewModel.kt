@@ -270,16 +270,25 @@ class ImportViewModel @Inject constructor(
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
                     
-                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (默认使用正方脚本)
+                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试正方、青果等脚本)
                     if (courses.isEmpty()) {
-                        try {
-                            // 加载默认解析脚本
-                            val script = application.assets.open("parsers/zhengfang.js").bufferedReader().use { it.readText() }
-                            val jsonResult = scriptEngine.parseHtml(script, raw)
-                            val xiaoai = parseXiaoaiProviderResult(jsonResult)
-                            courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
+                        val parsers = listOf("parsers/zhengfang.js", "parsers/kingosoft.js")
+                        for (parserPath in parsers) {
+                            try {
+                                // 加载解析脚本
+                                val script = application.assets.open(parserPath).bufferedReader().use { it.readText() }
+                                val jsonResult = scriptEngine.parseHtml(script, raw)
+                                val xiaoai = parseXiaoaiProviderResult(jsonResult)
+                                val result = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
+                                
+                                if (result.isNotEmpty()) {
+                                    courses = result
+                                    break // 解析成功，停止尝试
+                                }
+                            } catch (e: Exception) {
+                                // 当前解析器失败，继续尝试下一个
+                                e.printStackTrace()
+                            }
                         }
                     }
                     

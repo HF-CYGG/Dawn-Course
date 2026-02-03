@@ -200,7 +200,7 @@ private fun SelectionStep(
 
         ImportOptionCard(
             title = "教务系统网页导入",
-            description = "内置浏览器访问教务系统，自动解析课程表（支持正方系统）",
+            description = "内置浏览器访问教务系统，自动解析课程表（支持新正方、青果系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
@@ -491,7 +491,42 @@ private fun WebViewStep(
                 
                 Button(
                     onClick = {
-                        webView?.evaluateJavascript("document.documentElement.outerHTML") { html ->
+                        val js = """
+                            (function() {
+                                function findScheduleHtml(doc) {
+                                    if (!doc) return null;
+                                    var html = doc.body ? doc.body.innerHTML : "";
+                                    if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                        return html;
+                                    }
+                                    
+                                    // Check frames
+                                    var frames = doc.getElementsByTagName('frame');
+                                    for (var i = 0; i < frames.length; i++) {
+                                        try {
+                                            var result = findScheduleHtml(frames[i].contentDocument);
+                                            if (result) return result;
+                                        } catch(e) {}
+                                    }
+                                    
+                                    // Check iframes
+                                    var iframes = doc.getElementsByTagName('iframe');
+                                    for (var i = 0; i < iframes.length; i++) {
+                                        try {
+                                            var result = findScheduleHtml(iframes[i].contentDocument);
+                                            if (result) return result;
+                                        } catch(e) {}
+                                    }
+                                    
+                                    return null;
+                                }
+                                
+                                var result = findScheduleHtml(document);
+                                return result || document.documentElement.outerHTML;
+                            })()
+                        """.trimIndent()
+                        
+                        webView?.evaluateJavascript(js) { html ->
                             val decoded = runCatching { JSONTokener(html).nextValue() }.getOrNull()
                             val content = when {
                                 decoded is String -> decoded
