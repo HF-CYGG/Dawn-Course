@@ -57,11 +57,29 @@ import com.dawncourse.core.ui.util.CourseColorUtils
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 // 常量定义
 const val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
+
+/**
+ * 课表网格中单个课程的布局信息
+ *
+ * 注意：课表网格采用绝对定位，如果同一天存在节次区间重叠的课程，
+ * 需要通过“横向分栏（lane）”避免卡片覆盖显示。
+ */
+private data class TimetableLayoutItem(
+    val course: Course,
+    val isCurrentWeek: Boolean,
+    val safeDayOfWeek: Int,
+    val safeStartSection: Int,
+    val safeEndSection: Int,
+    val laneIndex: Int,
+    val laneCount: Int
+)
 
 /**
  * 课表顶部操作栏
@@ -342,9 +360,8 @@ fun TimetableGrid(
         }
     }
 
-    // 1. 准备显示列表
-    // 筛选并处理课程
-    val displayList = remember(courses, currentWeek, settings.hideNonThisWeek) {
+    // 1. 准备显示列表（仅负责“本周/非本周”决策，不在此阶段做布局运算）
+    val rawDisplayList = remember(courses, currentWeek, settings.hideNonThisWeek) {
         val courseGroups = courses.groupBy { it.dayOfWeek to it.startSection }
         val list = mutableListOf<Pair<Course, Boolean>>() // 课程, 是否为本周
         courseGroups.forEach { (_, group) ->
@@ -366,12 +383,95 @@ fun TimetableGrid(
             } else if (!settings.hideNonThisWeek) {
                 // 显示非本周课程（取 ID 最大的一个作为代表）
                 // 移除周次范围限制，确保只要未开启"隐藏非本周"，所有时段的课程（包括已结课/未开始）都能显示
-                group.maxByOrNull { it.id }?.let {
-                        list.add(it to false)
-                    }
+                group.maxByOrNull { it.id }?.let { list.add(it to false) }
             }
         }
         list
+    }
+
+    // 2. 生成最终布局列表：补齐边界、防止异常数据导致堆叠，并对节次区间重叠的课程做横向分栏
+    val layoutItems = remember(rawDisplayList, maxNodes) {
+        data class Tmp(
+            val course: Course,
+            val isCurrentWeek: Boolean,
+            val safeDayOfWeek: Int,
+            val safeStartSection: Int,
+            val safeEndSection: Int
+        )
+
+        val normalized = rawDisplayList
+            .map { (course, isCurrentWeek) ->
+                val safeDay = course.dayOfWeek.coerceIn(1, 7)
+                val safeStart = course.startSection.coerceIn(1, maxNodes)
+                val safeDuration = course.duration.coerceAtLeast(1)
+                val safeEnd = (safeStart + safeDuration - 1).coerceIn(1, maxNodes)
+                Tmp(
+                    course = course,
+                    isCurrentWeek = isCurrentWeek,
+                    safeDayOfWeek = safeDay,
+                    safeStartSection = safeStart,
+                    safeEndSection = safeEnd
+                )
+            }
+            // 稳定排序：避免输入列表顺序变化导致测量/放置“看起来错位”
+            .sortedWith(
+                compareBy<Tmp>({ it.safeDayOfWeek }, { it.safeStartSection }, { it.safeEndSection }, { it.course.id })
+            )
+
+        val result = mutableListOf<TimetableLayoutItem>()
+
+        // 按星期分组，分别处理每一列（避免跨天影响 lane 计算）
+        val byDay = normalized.groupBy { it.safeDayOfWeek }.toSortedMap()
+        byDay.forEach { (day, dayCourses) ->
+            var i = 0
+            while (i < dayCourses.size) {
+                // 1) 构造“重叠簇”：同一星期内，只要节次区间存在重叠，就划入同一簇
+                var clusterEnd = dayCourses[i].safeEndSection
+                var j = i + 1
+                while (j < dayCourses.size && dayCourses[j].safeStartSection <= clusterEnd) {
+                    clusterEnd = max(clusterEnd, dayCourses[j].safeEndSection)
+                    j++
+                }
+
+                val cluster = dayCourses.subList(i, j)
+
+                // 2) 对重叠簇做横向分栏：同一簇内的课程会被分配到不同 lane，避免覆盖显示
+                val laneEnds = mutableListOf<Int>()
+                val assigned = mutableListOf<Pair<Tmp, Int>>()
+
+                cluster.forEach { item ->
+                    // 注意：节次区间是闭区间 [start, end]，所以 lane 可复用条件为 laneEnd < start
+                    val laneIndex = laneEnds.indexOfFirst { laneEnd -> laneEnd < item.safeStartSection }
+                    val finalLaneIndex = if (laneIndex >= 0) {
+                        laneEnds[laneIndex] = item.safeEndSection
+                        laneIndex
+                    } else {
+                        laneEnds.add(item.safeEndSection)
+                        laneEnds.size - 1
+                    }
+                    assigned.add(item to finalLaneIndex)
+                }
+
+                val laneCount = laneEnds.size.coerceAtLeast(1)
+                assigned.forEach { (item, laneIndex) ->
+                    result.add(
+                        TimetableLayoutItem(
+                            course = item.course,
+                            isCurrentWeek = item.isCurrentWeek,
+                            safeDayOfWeek = day,
+                            safeStartSection = item.safeStartSection,
+                            safeEndSection = item.safeEndSection,
+                            laneIndex = laneIndex,
+                            laneCount = laneCount
+                        )
+                    )
+                }
+
+                i = j
+            }
+        }
+
+        result
     }
 
     Box(
@@ -393,7 +493,7 @@ fun TimetableGrid(
                 }
             }
     ) {
-        if (displayList.isEmpty()) {
+        if (layoutItems.isEmpty()) {
             Column(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -416,11 +516,12 @@ fun TimetableGrid(
         } else {
             Layout(
                 content = {
-                    displayList.forEach { (course, isCurrentWeek) ->
+                    layoutItems.forEach { item ->
+                        val course = item.course
                         androidx.compose.runtime.key(course.id) {
                             CourseCard(
                                 course = course,
-                                isCurrentWeek = isCurrentWeek,
+                                isCurrentWeek = item.isCurrentWeek,
                                 onClick = { onCourseClick(course) }
                             )
                         }
@@ -435,12 +536,14 @@ fun TimetableGrid(
                 
                 // 2. 测量所有子元素
                 val placeables = measurables.mapIndexed { index, measurable ->
-                    val (course, _) = displayList[index]
-                    val span = course.duration
+                    val item = layoutItems[index]
+                    val span = (item.safeEndSection - item.safeStartSection + 1).coerceAtLeast(1)
                     val height = (span * nodeHeightPx).roundToInt()
-                    
-                    // 使用完整宽度，间距由 Card 内部 padding 控制
-                    val placeableWidth = cellWidth
+
+                    // 同一天列内，如果存在重叠课程，则按 laneCount 把列宽等分，避免覆盖
+                    val baseWidth = cellWidth / item.laneCount
+                    val remainder = cellWidth % item.laneCount
+                    val placeableWidth = baseWidth + if (item.laneIndex < remainder) 1 else 0
                     
                     measurable.measure(
                         constraints.copy(
@@ -454,14 +557,18 @@ fun TimetableGrid(
                 
                 layout(width, (maxNodes * nodeHeightPx).roundToInt()) {
                     placeables.forEachIndexed { index, placeable ->
-                        val (course, _) = displayList[index]
+                        val item = layoutItems[index]
                         
                         // 计算位置
-                        // X: (dayOfWeek - 1) * cellWidth
-                        val x = (course.dayOfWeek - 1) * cellWidth
+                        // X: (dayOfWeek - 1) * cellWidth + laneOffset
+                        val dayX = (item.safeDayOfWeek - 1) * cellWidth
+                        val baseWidth = cellWidth / item.laneCount
+                        val remainder = cellWidth % item.laneCount
+                        val laneExtraOffset = min(item.laneIndex, remainder)
+                        val x = dayX + (item.laneIndex * baseWidth) + laneExtraOffset
                         
                         // Y: (startSection - 1) * nodeHeight
-                        val y = ((course.startSection - 1) * nodeHeightPx).roundToInt()
+                        val y = ((item.safeStartSection - 1) * nodeHeightPx).roundToInt()
                         
                         placeable.place(x, y)
                     }
