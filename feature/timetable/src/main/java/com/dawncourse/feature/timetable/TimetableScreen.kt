@@ -192,8 +192,8 @@ internal fun TimetableScreen(
             topBar = {
                 // 顶部栏 (透明背景)
                 TimetableTopBar(
-                    currentWeek = displayedWeek,
-                    isRealCurrentWeek = displayedWeek == realCurrentWeek,
+                    displayedWeek = displayedWeek,
+                    realCurrentWeek = realCurrentWeek,
                     isHolidayMode = realCurrentWeek > maxWeeks,
                     totalWeeks = maxWeeks,
                     onWeekSelected = { week ->

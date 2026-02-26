@@ -90,8 +90,8 @@ private data class TimetableLayoutItem(
  *
  * 显示当前周次、周次切换下拉菜单以及常用功能入口（导入、添加、设置）。
  *
- * @param currentWeek 当前展示的周次
- * @param isRealCurrentWeek 是否为真实时间的本周
+ * @param displayedWeek 当前展示的周次（用户正在查看的周次）
+ * @param realCurrentWeek 当前日期所属的真实周次（用于“当前”标记与本周提示）
  * @param isHolidayMode 是否处于假期模式（当前日期已超过学期总周数）
  * @param totalWeeks 学期总周数
  * @param onWeekSelected 周次选择回调
@@ -102,8 +102,8 @@ private data class TimetableLayoutItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimetableTopBar(
-    currentWeek: Int,
-    isRealCurrentWeek: Boolean,
+    displayedWeek: Int,
+    realCurrentWeek: Int,
     isHolidayMode: Boolean,
     totalWeeks: Int,
     onWeekSelected: (Int) -> Unit,
@@ -122,7 +122,7 @@ fun TimetableTopBar(
                     modifier = Modifier.clickable { showWeekMenu = true }
                 ) {
                     Text(
-                        text = if (isHolidayMode) "假期中" else "第 $currentWeek 周",
+                        text = if (isHolidayMode) "假期中" else "第 $displayedWeek 周",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold
                         )
@@ -135,13 +135,13 @@ fun TimetableTopBar(
                 }
                 if (isHolidayMode) {
                     Text(
-                        text = "当前展示：第 $currentWeek 周",
+                        text = "当前展示：第 $displayedWeek 周",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
-                } else if (isRealCurrentWeek) {
+                } else if (displayedWeek == realCurrentWeek) {
                     Text(
                         text = "本周",
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -183,7 +183,8 @@ fun TimetableTopBar(
                             .padding(horizontal = 6.dp, vertical = 6.dp)
                     ) {
                         for (i in 1..totalWeeks) {
-                            val isSelected = i == currentWeek
+                            val isDisplayedWeek = i == displayedWeek
+                            val isRealCurrent = i == realCurrentWeek
                             DropdownMenuItem(
                                 text = {
                                     Row(
@@ -193,10 +194,10 @@ fun TimetableTopBar(
                                         Text(
                                             text = "第 $i 周",
                                             style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                            fontWeight = if (isDisplayedWeek) FontWeight.Bold else FontWeight.Normal
                                         )
                                         Spacer(modifier = Modifier.weight(1f))
-                                        if (isSelected) {
+                                        if (isRealCurrent) {
                                             Text(
                                                 text = "当前",
                                                 style = MaterialTheme.typography.labelSmall,
@@ -206,7 +207,7 @@ fun TimetableTopBar(
                                         }
                                     }
                                 },
-                                leadingIcon = if (isSelected) {
+                                leadingIcon = if (isDisplayedWeek) {
                                     {
                                         Icon(
                                             imageVector = Icons.Default.Check,
@@ -225,7 +226,7 @@ fun TimetableTopBar(
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(
-                                        if (isSelected) {
+                                        if (isDisplayedWeek) {
                                             MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
                                         } else {
                                             MaterialTheme.colorScheme.surface.copy(alpha = 0f)
