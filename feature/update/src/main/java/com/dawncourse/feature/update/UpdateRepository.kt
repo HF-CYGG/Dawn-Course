@@ -21,6 +21,18 @@ interface UpdateApi {
 
 @Singleton
 class UpdateRepository @Inject constructor() {
+    /**
+     * 检查更新失败异常（可恢复）
+     *
+     * 设计目标：
+     * - 对外返回 Result.failure 时提供“用户可理解”的 message
+     * - 保留底层 cause（网络异常/HTTP 异常等）用于定位问题，但不打印堆栈
+     */
+    class UpdateCheckException(
+        message: String,
+        cause: Throwable? = null
+    ) : Exception(message, cause)
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间
         .readTimeout(15, TimeUnit.SECONDS)
@@ -47,30 +59,32 @@ class UpdateRepository @Inject constructor() {
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名
-        try {
+        val primaryAttempt = runCatching {
             val response = primaryApi.getUpdateInfo().execute()
-            if (response.isSuccessful && response.body() != null) {
-                return@withContext Result.success(response.body()!!)
-            } else {
-                // 如果主域名响应失败（如 404），抛出异常以便尝试 fallback
-                throw Exception("Primary API failed: ${response.code()}")
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            // 失败则继续尝试兜底 IP
+            val body = response.body()
+            // 避免使用非空断言：即使 isSuccessful，也可能出现 body 为空的情况（服务端返回空/解析失败）。
+            if (response.isSuccessful && body != null) body
+            // 如果主域名响应失败（如 404 / body 为空），抛出异常以便尝试 fallback
+            else throw Exception("Primary API failed: HTTP ${response.code()}")
         }
+        if (primaryAttempt.isSuccess) return@withContext Result.success(primaryAttempt.getOrThrow())
+        val primaryFailure = primaryAttempt.exceptionOrNull() ?: Exception("Primary API failed")
 
         // 2. 尝试兜底 IP
         try {
             val response = fallbackApi.getUpdateInfo().execute()
-            if (response.isSuccessful && response.body() != null) {
-                return@withContext Result.success(response.body()!!)
-            } else {
-                return@withContext Result.failure(Exception("Fallback API failed: ${response.code()}"))
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext Result.failure(e)
+            val body = response.body()
+            // 避免使用非空断言：即使 isSuccessful，也可能出现 body 为空的情况（服务端返回空/解析失败）。
+            if (response.isSuccessful && body != null) return@withContext Result.success(body)
+            val fallbackFailure = Exception("Fallback API failed: HTTP ${response.code()}")
+            val ex = UpdateCheckException("检查更新失败，请稍后重试", fallbackFailure)
+            ex.addSuppressed(primaryFailure)
+            return@withContext Result.failure(ex)
+        } catch (e: Throwable) {
+            // 主/备均失败：返回“用户可理解”的错误信息，并保留 cause 供排查问题
+            val ex = UpdateCheckException("检查更新失败，请检查网络或稍后重试", e)
+            ex.addSuppressed(primaryFailure)
+            return@withContext Result.failure(ex)
         }
     }
 }

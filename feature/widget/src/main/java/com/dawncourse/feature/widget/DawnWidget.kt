@@ -177,7 +177,8 @@ class DawnWidget : GlanceAppWidget() {
             }.groupBy { "${it.startSection}-${it.name}" } // 临时修复：去重逻辑
              .map { (_, courses) ->
                  // 如果同一时间有同名课程（例如数据库中有重复条目），优先保留有地点的那个
-                 courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }!!
+                 // groupBy 的 value 理论上不会为空，但仍做兜底，避免异常数据导致崩溃。
+                 courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 } ?: courses.first()
              }
              .sortedBy { it.startSection }
         }

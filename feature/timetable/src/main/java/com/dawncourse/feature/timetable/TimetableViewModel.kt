@@ -346,7 +346,8 @@ class TimetableViewModel @Inject constructor(
         
         val pending = sorted.toMutableSet()
         while (pending.isNotEmpty()) {
-            val first = pending.minOrNull()!!
+            // pending 非空时 minOrNull 理论上不会为 null，这里仍做兜底避免异常状态下崩溃。
+            val first = pending.minOrNull() ?: break
             
             // 尝试构建连续周 (1,2,3,4...)
             var endAll = first

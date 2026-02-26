@@ -264,6 +264,17 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
+                    // 解析流程的设计目标：
+                    // - 尽可能“自适应”不同教务系统/不同解析器输出格式
+                    // - 任意单个解析器失败不影响后续尝试（可恢复、可重试）
+                    // - 不打印堆栈，避免把页面内容/账号信息等潜在敏感数据暴露到日志中
+                    //
+                    // 这里用两个标志位区分两类“最终失败”：
+                    // 1) 所有解析器都正常执行但结果为空：更像是“页面不对/未登录/未加载完成”
+                    // 2) 解析器执行过程中发生异常：更像是“解析器不兼容/脚本运行失败”
+                    var hasParserCrash = false
+                    var hasAnyParserAttempt = false
+
                     // 0. 特殊处理：检测是否为强智直连数据
                     if (raw.contains("qiangzhi_direct")) {
                         return@withContext parseQiangZhiJson(raw)
@@ -280,6 +291,7 @@ class ImportViewModel @Inject constructor(
                     if (courses.isEmpty()) {
                         val parsers = listOf("parsers/zhengfang.js", "parsers/kingosoft.js")
                         for (parserPath in parsers) {
+                            hasAnyParserAttempt = true
                             try {
                                 // 加载解析脚本
                                 val script = application.assets.open(parserPath).bufferedReader().use { it.readText() }
@@ -291,13 +303,26 @@ class ImportViewModel @Inject constructor(
                                     courses = result
                                     break // 解析成功，停止尝试其他脚本
                                 }
-                            } catch (e: Exception) {
-                                // 当前解析器失败，继续尝试下一个
-                                e.printStackTrace()
+                            } catch (_: ScriptEngine.ScriptExecutionException) {
+                                // JS 解析器运行失败属于“可预期异常”：
+                                // - 可能是脚本与当前页面不匹配
+                                // - 可能是教务系统页面结构变更
+                                // - 可能是脚本语法/运行时错误
+                                //
+                                // 对用户而言，这些错误可通过“重试/换导入方式/换解析器”恢复，因此不打印堆栈。
+                                hasParserCrash = true
+                            } catch (_: Throwable) {
+                                // 兜底：任何解析器异常都不应中断后续解析器的尝试
+                                hasParserCrash = true
                             }
                         }
                     }
                     
+                    // 通过“空结果 + 是否发生过解析器异常/是否尝试过解析器”返回更准确的失败语义，
+                    // 由上层决定如何向用户提示。
+                    if (courses.isEmpty() && hasAnyParserAttempt && hasParserCrash) {
+                        throw ScriptEngine.ScriptExecutionException("解析器运行失败")
+                    }
                     courses
                 }
                 
@@ -315,8 +340,24 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, resultText = "解析失败: ${e.message}") }
+            } catch (_: ScriptEngine.ScriptExecutionException) {
+                // 给出明确但不泄露敏感信息的提示，并保持“可重试”：
+                // - 不显示底层异常 message（可能包含页面片段/请求信息）
+                // - 用户可直接重新导入，或切换为“文件导入”等方式
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，可尝试文件导入或更换导入方式。"
+                    )
+                }
+            } catch (_: Throwable) {
+                // 兜底：避免把异常细节直接展示给用户
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        resultText = "解析失败：数据格式不支持或解析过程发生异常。\n请重试；若仍失败，请确认已登录且位于课表页面。"
+                    )
+                }
             }
         }
     }
@@ -360,8 +401,20 @@ class ImportViewModel @Inject constructor(
                         ) 
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, resultText = "解析失败: ${e.message}") }
+            } catch (_: ScriptEngine.ScriptExecutionException) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，建议更换导入方式。"
+                    )
+                }
+            } catch (_: Throwable) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        resultText = "解析失败：解析过程发生异常。\n请重试。"
+                    )
+                }
             }
         }
     }

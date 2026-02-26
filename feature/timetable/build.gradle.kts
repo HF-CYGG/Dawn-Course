@@ -51,4 +51,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.ktx)
     implementation(libs.coil.compose)
     implementation(libs.work.runtime.ktx)
+
+    // 单元测试（纯 JVM 测试）
+    testImplementation(libs.junit)
 }

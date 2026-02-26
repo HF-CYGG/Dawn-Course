@@ -17,6 +17,7 @@ out/
 build/
 .gradle/
 .gradle_home/
+.gradle-trae/
 
 # Gradle files
 local.properties
@@ -51,6 +52,8 @@ google-services.json
 # Trae/AI related
 .trae/
 logs/
+hs_err_pid*.log
+replay_pid*.log
 
 # Specific project ignores
 /docs/

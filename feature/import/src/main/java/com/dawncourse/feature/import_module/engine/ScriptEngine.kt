@@ -15,6 +15,19 @@ import javax.inject.Singleton
 class ScriptEngine @Inject constructor() {
 
     /**
+     * 导入脚本执行异常（可恢复）
+     *
+     * 设计目标：
+     * - 作为“解析失败”的结构化错误信号，便于上层做统一的 UI 提示与重试
+     * - message 不携带 HTML/脚本内容，避免把敏感信息带到 UI 或日志里
+     * - 保留 cause，便于在必要时进行问题定位（但默认不上报/不打印堆栈）
+     */
+    class ScriptExecutionException(
+        message: String,
+        cause: Throwable? = null
+    ) : RuntimeException(message, cause)
+
+    /**
      * 执行 JS 脚本并返回解析结果
      *
      * @param script JS 脚本内容
@@ -27,9 +40,14 @@ class ScriptEngine @Inject constructor() {
             setupRuntime(quickJs)
             quickJs.evaluate(script)
             executeScript(quickJs, html)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            throw RuntimeException("Script execution failed: ${e.message}")
+        } catch (e: Throwable) {
+            // 解析脚本属于“外部输入 + 多实现差异”的高风险区域：
+            // - 可能出现脚本语法错误、页面结构变化、QuickJS 运行时异常等
+            // - 这些错误不应导致应用崩溃，更不应在用户设备上打印堆栈（可能泄露页面/账号相关信息）
+            //
+            // 因此这里统一转换为“可恢复”的异常类型，并保留原始 cause 供上层必要时分析。
+            if (e is ScriptExecutionException) throw e
+            throw ScriptExecutionException("解析器执行失败", e)
         } finally {
             quickJs.close()
         }
@@ -197,7 +215,10 @@ class ScriptEngine @Inject constructor() {
         }
         val error = quickJs.evaluate("globalThis.__dc_error")?.toString()
         if (!error.isNullOrBlank()) {
-            throw RuntimeException(error)
+            // JS 侧错误字符串可能包含页面片段/请求信息等敏感内容：
+            // - 不作为异常 message 直接向上冒泡，避免被 UI 展示或被日志系统采集
+            // - 作为 cause 保留，便于在需要时定位解析器问题
+            throw ScriptExecutionException("解析器执行失败", RuntimeException(error))
         }
         return quickJs.evaluate("globalThis.__dc_flowValue")?.toString() ?: ""
     }

@@ -93,7 +93,10 @@ fun parseIcsToParsedCourses(raw: String): List<ParsedCourse> {
         expandIcsOccurrences(event)
     }.map { it.toLocalDate() }
     if (allDates.isEmpty()) return emptyList()
-    val baseWeekStart = allDates.minOrNull()!!.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+    // allDates 已判空，但仍避免使用非空断言，保证在异常数据下也不会崩溃。
+    val baseWeekStart = allDates.minOrNull()
+        ?.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        ?: return emptyList()
     val parsedCourses = mutableListOf<ParsedCourse>()
     for (event in events) {
         val occurrences = expandIcsOccurrences(event)

@@ -67,8 +67,12 @@ class SettingsViewModel @Inject constructor(
                         settingsRepository.setTotalWeeks(currentSemester.weekCount)
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (_: Throwable) {
+                // 启动阶段的“同步设置与学期”属于一致性优化：
+                // - 失败不会影响 Settings 页面正常展示（仍会使用 DataStore 的缓存值）
+                // - 失败通常来自数据库未初始化/迁移中、短暂 IO 问题等，可在后续自然恢复
+                //
+                // 因此这里选择“安全忽略”，避免打印堆栈造成噪音与潜在隐私风险。
             }
         }
     }

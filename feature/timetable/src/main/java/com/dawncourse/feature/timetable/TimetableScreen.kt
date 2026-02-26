@@ -271,24 +271,29 @@ internal fun TimetableScreen(
     }
 
     // 课程详情弹窗
-    if (selectedCourse != null) {
+    val currentSelectedCourse = selectedCourse
+    if (currentSelectedCourse != null) {
         CourseDetailSheet(
-            course = selectedCourse!!,
+            course = currentSelectedCourse,
             onDismissRequest = { selectedCourse = null },
             onEditClick = {
-                onCourseClick(selectedCourse!!.id)
+                // 使用 currentSelectedCourse 作为稳定快照，避免回调触发时 state 已被清空导致空指针。
+                onCourseClick(currentSelectedCourse.id)
                 selectedCourse = null
             },
             onRescheduleClick = {
-                rescheduleCourseId = selectedCourse!!.id
+                // 使用 currentSelectedCourse 作为稳定快照，避免回调触发时 state 已被清空导致空指针。
+                rescheduleCourseId = currentSelectedCourse.id
                 selectedCourse = null
             },
             onUndoRescheduleClick = {
-                onUndoReschedule(selectedCourse!!)
+                // 使用 currentSelectedCourse 作为稳定快照，避免回调触发时 state 已被清空导致空指针。
+                onUndoReschedule(currentSelectedCourse)
                 selectedCourse = null
             },
             onDeleteClick = {
-                val currentCourse = selectedCourse!!
+                // 使用 currentSelectedCourse 作为稳定快照，避免回调触发时 state 已被清空导致空指针。
+                val currentCourse = currentSelectedCourse
                 targetCourseForDelete = currentCourse
                 
                 // 查找同名且同地点的所有课程时段 (简单判断是否为同一门课)
@@ -303,10 +308,12 @@ internal fun TimetableScreen(
     }
     
     // 智能删除确认弹窗
-    if (coursesToDelete != null && targetCourseForDelete != null) {
+    val currentCoursesToDelete = coursesToDelete
+    val currentTargetCourseForDelete = targetCourseForDelete
+    if (currentCoursesToDelete != null && currentTargetCourseForDelete != null) {
         DeleteConfirmationDialog(
-            coursesToDelete = coursesToDelete!!,
-            targetCourse = targetCourseForDelete!!,
+            coursesToDelete = currentCoursesToDelete,
+            targetCourse = currentTargetCourseForDelete,
             onConfirmDelete = { courses ->
                 onConfirmDelete(courses)
                 coursesToDelete = null
@@ -320,9 +327,10 @@ internal fun TimetableScreen(
     }
     
     // 调课弹窗
-    if (rescheduleCourseId != null) {
+    val currentRescheduleCourseId = rescheduleCourseId
+    if (currentRescheduleCourseId != null) {
         CourseRescheduleSheet(
-            courseId = rescheduleCourseId!!,
+            courseId = currentRescheduleCourseId,
             initialWeek = displayedWeek,
             onDismissRequest = { rescheduleCourseId = null }
         )

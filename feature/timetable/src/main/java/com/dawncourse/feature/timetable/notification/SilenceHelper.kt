@@ -37,8 +37,11 @@ object SilenceHelper {
                     audioManager.ringerMode != AudioManager.RINGER_MODE_SILENT) {
                     audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (_: SecurityException) {
+                // 可预期异常：部分机型/ROM 即使已授予勿扰权限，仍可能在切换铃声模式时抛出 SecurityException。
+                // 这里选择静默失败，避免“自动静音”功能导致应用崩溃或产生日志噪音。
+            } catch (_: Throwable) {
+                // 兜底：任何异常都不应影响课表/通知主流程
             }
         }
     }
@@ -54,8 +57,9 @@ object SilenceHelper {
                 if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
                     audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (_: SecurityException) {
+                // 可预期异常：与 mute 同理，保持静默即可
+            } catch (_: Throwable) {
             }
         }
     }

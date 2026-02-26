@@ -449,11 +449,15 @@ class SettingsRepositoryImpl @Inject constructor(
      * @return 模糊后的新位图
      */
     private fun fastBlur(sentBitmap: Bitmap, radius: Int): Bitmap {
-        val bitmap = sentBitmap.copy(sentBitmap.config, true)
-
         if (radius < 1) {
-            return (null)!!
+            // radius < 1 表示不需要模糊，直接返回原图，避免返回 null 导致崩溃。
+            return sentBitmap
         }
+
+        // sentBitmap.config 在大多数情况下是稳定可用的，但为了兼容极端/异常来源的 Bitmap，
+        // 这里通过 runCatching 做一次兜底，避免 copy 因 config 异常导致崩溃。
+        val config = runCatching { sentBitmap.config }.getOrNull() ?: Bitmap.Config.ARGB_8888
+        val bitmap = sentBitmap.copy(config, true)
 
         val w = bitmap.width
         val h = bitmap.height

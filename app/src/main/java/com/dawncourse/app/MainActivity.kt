@@ -94,9 +94,20 @@ class MainActivity : ComponentActivity() {
             if (uiState is MainUiState.Success) {
                 val settings = (uiState as MainUiState.Success).settings
 
-                // 监听设置变化，调度提醒任务
-                LaunchedEffect(settings.enableClassReminder) {
-                    if (settings.enableClassReminder) {
+                // 监听设置变化，调度每日闹钟计算任务（WorkManager）
+                //
+                // 说明：
+                // - DailySchedulerWorker 的职责是“根据今日课程 + 用户设置”去设置 AlarmManager 闹钟
+                // - 它同时承担两类闹钟的计算与下发：
+                //   1) 上课提醒（通知）
+                //   2) 自动静音/取消静音
+                //
+                // 因此 WorkManager 的调度条件必须与上述“任一功能开关”一致：
+                // - 只要【上课提醒】或【自动静音】任一开启，就需要定期运行 Worker 以保证闹钟更新
+                // - 两者都关闭时，应取消 Worker，避免无意义的后台开销
+                LaunchedEffect(settings.enableClassReminder, settings.enableAutoMute) {
+                    val shouldScheduleDailyWorker = settings.enableClassReminder || settings.enableAutoMute
+                    if (shouldScheduleDailyWorker) {
                         ReminderScheduler.scheduleDailyWork(applicationContext)
                     } else {
                         ReminderScheduler.cancelWork(applicationContext)

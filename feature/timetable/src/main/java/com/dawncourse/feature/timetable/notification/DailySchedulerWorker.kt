@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.dawncourse.core.domain.model.Course
@@ -94,12 +95,9 @@ class DailySchedulerWorker(
             if (settings.enableClassReminder) {
                 if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
                      val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                     try {
-                         val timeParts = startTimeStr.split(":")
-                         val hour = timeParts[0].toInt()
-                         val minute = timeParts[1].toInt()
-                         
-                         val courseDateTime = LocalDateTime.of(today, LocalTime.of(hour, minute))
+                     val startTime = parseLocalTimeOrNull(startTimeStr)
+                     if (startTime != null) {
+                         val courseDateTime = LocalDateTime.of(today, startTime)
                          // 计算提醒触发时间
                          val triggerTime = courseDateTime.minusMinutes(reminderMinutes.toLong())
                          
@@ -119,8 +117,8 @@ class DailySchedulerWorker(
                              
                              setExactAlarm(alarmManager, triggerTime, pendingIntent)
                          }
-                     } catch (e: Exception) {
-                         e.printStackTrace()
+                     } else {
+                         // 可恢复：时间字符串格式异常时仅跳过该课程的提醒调度，避免影响其它课程与 Worker 主流程
                      }
                 }
             }
@@ -130,10 +128,10 @@ class DailySchedulerWorker(
                 // 1. 上课时静音 (Mute)
                 if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
                     val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                    try {
-                        val parts = startTimeStr.split(":")
-                        val startDateTime = LocalDateTime.of(today, LocalTime.of(parts[0].toInt(), parts[1].toInt()))
-                        
+                    val startTime = parseLocalTimeOrNull(startTimeStr)
+                    if (startTime != null) {
+                        val startDateTime = LocalDateTime.of(today, startTime)
+
                         if (startDateTime.isAfter(LocalDateTime.now())) {
                             val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
                                 action = SilenceReceiver.ACTION_MUTE
@@ -141,23 +139,25 @@ class DailySchedulerWorker(
                             // 使用 ID + 10000 避免与提醒的 RequestCode 冲突
                             val pendingIntent = PendingIntent.getBroadcast(
                                 applicationContext,
-                                course.id.toInt() + 10000, 
+                                course.id.toInt() + 10000,
                                 intent,
                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                             )
                             setExactAlarm(alarmManager, startDateTime, pendingIntent)
                         }
-                    } catch (e: Exception) { e.printStackTrace() }
+                    } else {
+                        // 可恢复：时间字符串异常时跳过本课程的自动静音闹钟
+                    }
                 }
 
                 // 2. 下课时取消静音 (Unmute)
                 val endSection = course.startSection + course.duration - 1
                 if (sectionTimes.isNotEmpty() && endSection <= sectionTimes.size && endSection > 0) {
                     val endTimeStr = sectionTimes[endSection - 1].endTime
-                    try {
-                        val parts = endTimeStr.split(":")
-                        val endDateTime = LocalDateTime.of(today, LocalTime.of(parts[0].toInt(), parts[1].toInt()))
-                        
+                    val endTime = parseLocalTimeOrNull(endTimeStr)
+                    if (endTime != null) {
+                        val endDateTime = LocalDateTime.of(today, endTime)
+
                         if (endDateTime.isAfter(LocalDateTime.now())) {
                             val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
                                 action = SilenceReceiver.ACTION_UNMUTE
@@ -165,13 +165,15 @@ class DailySchedulerWorker(
                             // 使用 ID + 20000
                             val pendingIntent = PendingIntent.getBroadcast(
                                 applicationContext,
-                                course.id.toInt() + 20000, 
+                                course.id.toInt() + 20000,
                                 intent,
                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                             )
                             setExactAlarm(alarmManager, endDateTime, pendingIntent)
                         }
-                    } catch (e: Exception) { e.printStackTrace() }
+                    } else {
+                        // 可恢复：时间字符串异常时跳过本课程的取消静音闹钟
+                    }
                 }
             }
         }
@@ -179,14 +181,91 @@ class DailySchedulerWorker(
         return Result.success()
     }
 
+    /**
+     * 将形如 "HH:mm" 或 "H:mm" 的时间字符串解析为 [LocalTime]
+     *
+     * 说明：
+     * - 时间数据来自用户配置/导入结果，理论上应规范，但仍可能出现不合法值
+     * - 本方法采用“返回 null 表示解析失败”的方式，避免抛异常影响 Worker 主流程
+     */
+    private fun parseLocalTimeOrNull(value: String): LocalTime? {
+        val parts = value.split(":")
+        if (parts.size != 2) return null
+        val hour = parts[0].toIntOrNull() ?: return null
+        val minute = parts[1].toIntOrNull() ?: return null
+        if (hour !in 0..23) return null
+        if (minute !in 0..59) return null
+        return LocalTime.of(hour, minute)
+    }
+
     private fun setExactAlarm(alarmManager: AlarmManager, triggerTime: LocalDateTime, pendingIntent: PendingIntent) {
         val triggerMillis = triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-         } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
-             alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-         } else {
-             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-         }
+        
+        // Android 12 (API 31) 起，精确闹钟受系统权限与策略限制：
+        // - 若未获准使用精确闹钟，调用 setExact*/setAlarmClock 可能直接抛出 SecurityException
+        // - 这会导致 Worker 失败，并造成“提醒/静音”整体不可用
+        //
+        // 因此这里采用“能力判断 + SecurityException 兜底 + 降级策略”的组合：
+        // 1) Android 12+：优先通过 canScheduleExactAlarms() 判断是否允许精确闹钟
+        // 2) 允许则尝试 setExactAndAllowWhileIdle / setExact
+        // 3) 任意一步如果抛出 SecurityException，则降级为非精确闹钟（setAndAllowWhileIdle / set）
+        //
+        // 注意：降级为非精确闹钟后，触发时间可能存在偏差（系统会合并/延迟），但可以保证“不崩溃、尽力提醒”。
+        val canUseExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                alarmManager.canScheduleExactAlarms()
+            } catch (e: Throwable) {
+                // 极少数 ROM/系统实现可能存在兼容性问题：此处一律保守降级
+                false
+            }
+        } else {
+            true
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (canUseExactAlarm) {
+                try {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                    return
+                } catch (e: SecurityException) {
+                    // 继续走降级逻辑
+                } catch (e: Throwable) {
+                    // 任何异常都不应影响 Worker 主流程，继续走降级逻辑
+                }
+            }
+
+            // Android 6.0+：非精确但允许在 Doze 下执行，作为“尽力而为”的 fallback
+            try {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+            } catch (e: SecurityException) {
+                // 理论上非精确不需要精确闹钟权限，但依然做兜底，保证不崩溃
+                try {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                } catch (_: Throwable) {
+                }
+            } catch (_: Throwable) {
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            // Android 4.4 - 5.x：无 Doze 概念，但仍可能存在 setExact 调用异常，统一做兜底
+            try {
+                if (canUseExactAlarm) {
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                } else {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                }
+            } catch (e: SecurityException) {
+                try {
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                } catch (_: Throwable) {
+                }
+            } catch (_: Throwable) {
+            }
+        } else {
+            // Android 4.3 及以下：仅支持非精确闹钟
+            try {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+            } catch (_: Throwable) {
+            }
+        }
     }
 }

@@ -23,4 +23,7 @@ android {
 dependencies {
     implementation(libs.coroutines.core)
     implementation(libs.javax.inject) // Need to ensure javax.inject is available or use hilt-core
+
+    // 单元测试（纯 JVM 测试）
+    testImplementation(libs.junit)
 }

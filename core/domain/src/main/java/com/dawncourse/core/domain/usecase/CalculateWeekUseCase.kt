@@ -30,6 +30,9 @@ class CalculateWeekUseCase @Inject constructor() {
         val current = Instant.ofEpochMilli(currentMillis).atZone(zone).toLocalDate()
         
         val daysDiff = ChronoUnit.DAYS.between(start, current)
-        return (daysDiff / 7).toInt() + 1
+        // 注意：这里必须使用“向下取整”的整除（floorDiv）。
+        // 否则在开学前（daysDiff 为负数）时，Kotlin/Java 的整除会向 0 截断，
+        // 例如 -1 / 7 会得到 0，导致周次被错误计算为 1。
+        return Math.floorDiv(daysDiff, 7).toInt() + 1
     }
 }

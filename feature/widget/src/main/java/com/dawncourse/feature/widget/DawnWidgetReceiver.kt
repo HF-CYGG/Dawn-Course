@@ -31,5 +31,10 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
         WidgetSyncManager.cancelUpdate(context)
+        
+        // 当用户移除所有 Widget 实例时，主动取消“午夜刷新”闹钟：
+        // - 避免无 Widget 时仍每天触发闹钟唤醒
+        // - 减少后台开销，符合“本地优先/长期维护”的资源控制原则
+        MidnightUpdateReceiver.cancelNextMidnightUpdate(context)
     }
 }

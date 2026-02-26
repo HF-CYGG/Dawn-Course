@@ -44,7 +44,7 @@ fun TimetableSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
-    var showTimePickerDialog by remember { mutableStateOf<Int?>(null) } // Int is the section index (1-based) being edited
+    var showTimePickerDialog by remember { mutableStateOf<Int?>(null) } // 当前正在编辑的节次序号（从 1 开始），为 null 表示不显示弹窗
     var showBatchGenerateDialog by remember { mutableStateOf(false) }
     var showBatchUpdateDurationDialog by remember { mutableStateOf(false) }
 
@@ -335,36 +335,45 @@ fun TimetableSettingsScreen(
     }
 
     // Time Picker Dialog Logic
-    if (showTimePickerDialog != null) {
-        val sectionIndex = showTimePickerDialog!!
-        // Get current time or default
-        val currentList = (1..settings.maxDailySections).map { index ->
-             if (index <= settings.sectionTimes.size) settings.sectionTimes[index - 1]
-             else {
-                 val startHour = 8 + (index - 1)
-                 SectionTime(String.format("%02d:00", startHour), String.format("%02d:00", startHour + 1))
-             }
-        }
-        val currentTime = currentList[sectionIndex - 1]
-        
-        // We need a custom dialog to edit both start and end, or two steps.
-        // Let's do a simple dialog with two text fields or two clickable areas for TimePicker?
-        // Or better: Two TimePickers in a row? Too big.
-        // Let's use a custom Dialog with state to toggle between Start/End picker.
-        
-        TimeRangeEditDialog(
-            title = "编辑第 $sectionIndex 节时间",
-            initialStartTime = currentTime.startTime,
-            initialEndTime = currentTime.endTime,
-            onDismissRequest = { showTimePickerDialog = null },
-            onConfirm = { start, end ->
-                // Update the list
-                val newList = currentList.toMutableList()
-                newList[sectionIndex - 1] = SectionTime(start, end)
-                viewModel.setSectionTimes(newList)
-                showTimePickerDialog = null
+    val rawSectionIndex = showTimePickerDialog
+    if (rawSectionIndex != null) {
+        val maxDailySections = settings.maxDailySections.coerceAtLeast(1)
+        // 这里必须做边界裁剪：
+        // - 可能出现“点开弹窗后用户立刻把每天总节数调小”的情况
+        // - 也可能出现状态恢复/快速点击导致的 sectionIndex 异常值
+        // 任何越界都应该安全降级为关闭弹窗，避免 UI 崩溃。
+        val safeSectionIndex = rawSectionIndex.coerceIn(1, maxDailySections)
+
+        // 生成用于展示与编辑的节次时间列表：优先使用已保存配置，不足部分使用默认值补齐。
+        val currentList = (1..maxDailySections).map { index ->
+            settings.sectionTimes.getOrNull(index - 1) ?: run {
+                val startHour = 8 + (index - 1)
+                SectionTime(
+                    String.format("%02d:00", startHour),
+                    String.format("%02d:00", startHour + 1)
+                )
             }
-        )
+        }
+
+        val currentTime = currentList.getOrNull(safeSectionIndex - 1)
+        if (currentTime == null) {
+            // 理论上在 safeSectionIndex 已裁剪后不会发生，但仍保留兜底，避免异常状态导致崩溃。
+            showTimePickerDialog = null
+        } else {
+            TimeRangeEditDialog(
+                title = "编辑第 $safeSectionIndex 节时间",
+                initialStartTime = currentTime.startTime,
+                initialEndTime = currentTime.endTime,
+                onDismissRequest = { showTimePickerDialog = null },
+                onConfirm = { start, end ->
+                    // 更新节次时间列表：仅替换当前节次，其余保持不变。
+                    val newList = currentList.toMutableList()
+                    newList[safeSectionIndex - 1] = SectionTime(start, end)
+                    viewModel.setSectionTimes(newList)
+                    showTimePickerDialog = null
+                }
+            )
+        }
     }
 
     if (showBatchGenerateDialog) {
