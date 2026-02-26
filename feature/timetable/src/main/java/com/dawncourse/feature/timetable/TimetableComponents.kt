@@ -15,15 +15,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -88,6 +92,7 @@ private data class TimetableLayoutItem(
  *
  * @param currentWeek 当前展示的周次
  * @param isRealCurrentWeek 是否为真实时间的本周
+ * @param isHolidayMode 是否处于假期模式（当前日期已超过学期总周数）
  * @param totalWeeks 学期总周数
  * @param onWeekSelected 周次选择回调
  * @param onSettingsClick 设置按钮点击回调
@@ -99,6 +104,7 @@ private data class TimetableLayoutItem(
 fun TimetableTopBar(
     currentWeek: Int,
     isRealCurrentWeek: Boolean,
+    isHolidayMode: Boolean,
     totalWeeks: Int,
     onWeekSelected: (Int) -> Unit,
     onSettingsClick: () -> Unit,
@@ -106,6 +112,7 @@ fun TimetableTopBar(
     onImportClick: () -> Unit
 ) {
     var showWeekMenu by remember { mutableStateOf(false) }
+    val weekMenuScrollState = rememberScrollState()
 
     TopAppBar(
         title = {
@@ -115,7 +122,7 @@ fun TimetableTopBar(
                     modifier = Modifier.clickable { showWeekMenu = true }
                 ) {
                     Text(
-                        text = "第 $currentWeek 周",
+                        text = if (isHolidayMode) "假期中" else "第 $currentWeek 周",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold
                         )
@@ -126,7 +133,15 @@ fun TimetableTopBar(
                         modifier = Modifier.padding(start = 4.dp)
                     )
                 }
-                if (isRealCurrentWeek) {
+                if (isHolidayMode) {
+                    Text(
+                        text = "当前展示：第 $currentWeek 周",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+                } else if (isRealCurrentWeek) {
                     Text(
                         text = "本周",
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -139,21 +154,85 @@ fun TimetableTopBar(
                 DropdownMenu(
                     expanded = showWeekMenu,
                     onDismissRequest = { showWeekMenu = false },
-                    modifier = Modifier.heightIn(max = 400.dp)
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .width(220.dp)
+                        .clip(RoundedCornerShape(16.dp))
                 ) {
-                    for (i in 1..totalWeeks) {
-                        DropdownMenuItem(
-                            text = { 
-                                Text(
-                                    text = "第 $i 周" + if (i == currentWeek) " (当前展示)" else "",
-                                    fontWeight = if (i == currentWeek) FontWeight.Bold else FontWeight.Normal
-                                ) 
-                            },
-                            onClick = {
-                                onWeekSelected(i)
-                                showWeekMenu = false
-                            }
-                        )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "选择周次",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = { },
+                        enabled = false
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(weekMenuScrollState)
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
+                    ) {
+                        for (i in 1..totalWeeks) {
+                            val isSelected = i == currentWeek
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "第 $i 周",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        if (isSelected) {
+                                            Text(
+                                                text = "当前",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                },
+                                leadingIcon = if (isSelected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                onClick = {
+                                    onWeekSelected(i)
+                                    showWeekMenu = false
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (isSelected) {
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                        } else {
+                                            MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                                        }
+                                    )
+                            )
+                        }
                     }
                 }
             }

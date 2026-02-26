@@ -194,6 +194,7 @@ internal fun TimetableScreen(
                 TimetableTopBar(
                     currentWeek = displayedWeek,
                     isRealCurrentWeek = displayedWeek == realCurrentWeek,
+                    isHolidayMode = realCurrentWeek > maxWeeks,
                     totalWeeks = maxWeeks,
                     onWeekSelected = { week ->
                         scope.launch {
