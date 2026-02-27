@@ -285,21 +285,50 @@ function sanitizePlainText(rawHtml) {
         text = text.replace(/<[^>]*>/g, "");
     }
 
-    text = text.replace(/&nbsp;|&#160;/gi, " ");
-    text = text.replace(/&amp;/gi, "&");
-    text = text.replace(/&lt;/gi, "<");
-    text = text.replace(/&gt;/gi, ">");
-    text = text.replace(/&quot;/gi, "\"");
-    text = text.replace(/&#39;/gi, "'");
-    text = text.replace(/&#x([0-9a-fA-F]+);/g, function(_, code) {
-        var n = parseInt(code, 16);
-        return isNaN(n) ? "" : String.fromCharCode(n);
-    });
-    text = text.replace(/&#(\d+);/g, function(_, code) {
-        var n = parseInt(code, 10);
-        return isNaN(n) ? "" : String.fromCharCode(n);
-    });
+    text = decodeHtmlEntities(text);
     return text.replace(/\s+/g, " ").trim();
+}
+
+function decodeHtmlEntities(rawText) {
+    var text = String(rawText);
+    var result = "";
+    var i = 0;
+    while (i < text.length) {
+        var ch = text.charAt(i);
+        if (ch !== "&") {
+            result += ch;
+            i++;
+            continue;
+        }
+        var semi = text.indexOf(";", i + 1);
+        if (semi === -1 || semi - i > 12) {
+            result += "&";
+            i++;
+            continue;
+        }
+        var entity = text.slice(i + 1, semi);
+        var decoded = null;
+        if (entity === "nbsp") decoded = " ";
+        else if (entity === "lt") decoded = "<";
+        else if (entity === "gt") decoded = ">";
+        else if (entity === "quot") decoded = "\"";
+        else if (entity === "#39") decoded = "'";
+        else if (entity === "amp") decoded = "&";
+        else if (entity.length > 1 && entity.charAt(0) === "#") {
+            var code = entity.charAt(1).toLowerCase() === "x"
+                ? parseInt(entity.slice(2), 16)
+                : parseInt(entity.slice(1), 10);
+            if (!isNaN(code)) decoded = String.fromCharCode(code);
+        }
+        if (decoded === null) {
+            result += "&";
+            i++;
+            continue;
+        }
+        result += decoded;
+        i = semi + 1;
+    }
+    return result;
 }
 
 function stripTags(html) {
@@ -310,7 +339,7 @@ function stripTags(html) {
         text = text.replace(/<[^>]*>/g, "");
     }
     
-    return text.replace(/&nbsp;/g, " ").trim();
+    return decodeHtmlEntities(text).replace(/\s+/g, " ").trim();
 }
 
 function normalizeText(html) {
