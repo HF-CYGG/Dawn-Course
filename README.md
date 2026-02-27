@@ -96,11 +96,10 @@ DawnCourse/
 （代码不要太烂就行，需要包含必要的注释和测试）
 
 1.  **自动化检查**：
-    *   **本地**：建议运行 `./gradlew installGitHooks` 安装钩子。安装后，每次 `git push` 前会自动运行单元测试 (`testDebugUnitTest`) 和 Lint 检查 (`lintDebug`)。
     *   **CI (GitHub Actions)**：每次提交和 PR 都会在云端自动执行构建、测试和 Lint 检查。只有通过检查的代码才能被合并。
 2.  **代码规范**：
     *   请确保代码通过所有单元测试。
-    *   保持代码风格整洁，无 Lint 错误（项目已配置 `abortOnError = true`）。
+    *   保持代码风格整洁，无 Lint 错误。
     *   提交信息请清晰描述变更内容。
 
 ## 开源协议
