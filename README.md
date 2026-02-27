@@ -83,12 +83,25 @@ DawnCourse/
     ```
 2.  在 Android Studio 中打开项目根目录。
 3.  等待 Gradle 同步完成。
-4.  连接 Android 设备或启动模拟器。
-5.  运行 `app` 模块。
+4.86.  连接 Android 设备或启动模拟器。
+87.  (推荐) 安装 Git 钩子以确保提交前自动检查代码质量：
+    ```bash
+    ./gradlew installGitHooks
+    ```
+88.  运行 `app` 模块。
 
 ## 贡献指南
 
-欢迎提交 Issue 和 Pull Request！（代码不要太烂就行，需要包含必要的注释和测试）
+欢迎提交 Issue 和 Pull Request！为了保证代码质量，本项目引入了严格的代码检查流程：
+（代码不要太烂就行，需要包含必要的注释和测试）
+
+1.  **自动化检查**：
+    *   **本地**：建议运行 `./gradlew installGitHooks` 安装钩子。安装后，每次 `git push` 前会自动运行单元测试 (`testDebugUnitTest`) 和 Lint 检查 (`lintDebug`)。
+    *   **CI (GitHub Actions)**：每次提交和 PR 都会在云端自动执行构建、测试和 Lint 检查。只有通过检查的代码才能被合并。
+2.  **代码规范**：
+    *   请确保代码通过所有单元测试。
+    *   保持代码风格整洁，无 Lint 错误（项目已配置 `abortOnError = true`）。
+    *   提交信息请清晰描述变更内容。
 
 ## 开源协议
 
