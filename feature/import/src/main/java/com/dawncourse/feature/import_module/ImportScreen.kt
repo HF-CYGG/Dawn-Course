@@ -409,6 +409,8 @@ private fun WebViewStep(
     var webView: WebView? by remember { mutableStateOf(null) }
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
+    // 会话令牌：用于校验 JS 与本地桥的调用来源，防止任意页面滥用接口
+    val sessionToken = remember { java.util.UUID.randomUUID().toString() }
     
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部地址栏
@@ -486,13 +488,20 @@ private fun WebViewStep(
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
-                    // 安全配置：禁用文件访问，防止本地文件泄露
+                    // 开启安全浏览（API 26+）
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        settings.safeBrowsingEnabled = true
+                    }
+                    // 安全配置：禁用文件与内容访问，避免通过 WebView 读取本地文件或 content://
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
-                    // 仅允许 HTTPS 加载（如果可能），或保持混合内容模式需谨慎
+                    settings.allowFileAccessFromFileURLs = false
+                    settings.allowUniversalAccessFromFileURLs = false
+                    // 禁止 JS 自动弹窗
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    // 仅允许 HTTPS 混合内容策略为禁止（如有强需可下调）
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-
-                    // 启用 JS 和 DOM 存储，适配现代 SPA 网页
+                    // 安全配置：禁用文件访问，防止本地文件泄露
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.useWideViewPort = true
@@ -501,19 +510,23 @@ private fun WebViewStep(
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
 
-                    addJavascriptInterface(object {
+                    // 仅允许持有正确令牌的调用进入 ViewModel，避免任意页面滥用 JS 桥
+                    class DawnBridge(private val expectedToken: String) {
                         @JavascriptInterface
-                        fun onProviderResult(result: String) {
-                            viewModel.parseResultFromWebView(result)
+                        fun onProviderResult(result: String, token: String) {
+                            if (token == expectedToken) {
+                                viewModel.parseResultFromWebView(result)
+                            }
                         }
-                    }, "DawnBridge")
-
+                    }
+                    addJavascriptInterface(DawnBridge(sessionToken), "DawnBridge")
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
                             isLoading = true
                             url?.let { inputUrl = it }
                         }
+                        
                         
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
@@ -603,6 +616,8 @@ private fun WebViewStep(
                             val js = StringBuilder()
                             js.append("(async function() {\n")
                             js.append("try {\n")
+                            // 注入令牌到 JS 作用域，桥接调用时必须附带
+                            js.append("var __dawnToken = '").append(sessionToken).append("';\n")
                             js.append(outputConsole).append("\n;\n")
                             js.append(courseUtils).append("\n;\n")
                             js.append(qidiProvider).append("\n;\n")
@@ -613,7 +628,7 @@ private fun WebViewStep(
                                     console.log("Found scheduleHtmlProvider, running...");
                                     var result = await scheduleHtmlProvider();
                                     if (result !== "do not continue") {
-                                        window.DawnBridge.onProviderResult(result);
+                                        window.DawnBridge.onProviderResult(result, __dawnToken);
                                         return "ASYNC_STARTED";
                                     }
                                 }
