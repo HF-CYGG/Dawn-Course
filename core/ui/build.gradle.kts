@@ -15,7 +15,7 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8" // Check if this matches Kotlin 1.9.22
+        kotlinCompilerExtensionVersion = "1.5.11" // Check if this matches Kotlin 1.9.23
     }
 
     compileOptions {
