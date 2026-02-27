@@ -44,15 +44,43 @@ function scheduleHtmlParser(html) {
     function sanitizePlainText(rawHtml) {
         if (!rawHtml) return "";
         var text = String(rawHtml);
-
-        // 循环去除 HTML 标签，防止嵌套标签绕过
-        var maxLoop = 10;
-        while (/<[^>]*>/.test(text) && maxLoop-- > 0) {
-            text = text.replace(/<[^>]*>/g, "");
-        }
-
+        text = removeHtmlTags(text);
         text = decodeHtmlEntities(text);
         return text.replace(/\s+/g, " ").trim();
+    }
+
+    function removeHtmlTags(rawText) {
+        var text = String(rawText);
+        var result = "";
+        var inTag = false;
+        for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            if (ch === "<") {
+                inTag = true;
+                continue;
+            }
+            if (ch === ">" && inTag) {
+                inTag = false;
+                continue;
+            }
+            if (!inTag && ch !== ">") {
+                result += ch;
+            }
+        }
+        return removeAngleBrackets(result);
+    }
+
+    function removeAngleBrackets(rawText) {
+        var text = String(rawText);
+        var result = "";
+        for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            if (ch === "<" || ch === ">") {
+                continue;
+            }
+            result += ch;
+        }
+        return result;
     }
 
     function decodeHtmlEntities(rawText) {
