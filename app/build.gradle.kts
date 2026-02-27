@@ -118,5 +118,5 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.coil.compose)
     
-    implementation("androidx.core:core-splashscreen:1.0.1")
+    implementation("androidx.core:core-splashscreen:1.2.0")
 }
