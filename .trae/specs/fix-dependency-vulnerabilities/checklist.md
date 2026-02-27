@@ -1,9 +1,0 @@
-- [x] AGP 版本已升级到 8.3.1 (或更高稳定版)
-- [x] Kotlin 版本已升级到 1.9.23
-- [x] Retrofit 版本已升级到 2.11.0
-- [x] Gson 版本强制为 2.10.1 (或更高)
-- [x] Guava 版本强制为 33.0.0-android (或更高)
-- [x] Protobuf 版本强制为 3.25.3 (或更高)
-- [x] `:app:assembleDebug` 构建成功
-- [x] App 启动正常，网络请求（如更新检查）功能可用
-- [x] 依赖树中无高危传递版本残留 (./gradlew app:dependencies)
