@@ -24,7 +24,7 @@ javax-inject = "1" # Java 注入标准注解
 coil = "2.7.0" # 图片加载框架
 
 # Security Fixes (Dependabot)
-netty = "4.1.125.Final"
+netty = "4.2.10.Final"
 bouncycastle = "1.83"
 jose4j = "0.9.6"
 commons-compress = "1.28.0"
