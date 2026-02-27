@@ -32,7 +32,7 @@ commons-io = "2.21.0"
 protobuf = "4.34.0"
 jdom = "2.0.6.1"
 guava = "33.5.0-android"
-gson = "2.10.1"
+gson = "2.13.2"
 
 # 库依赖定义 (Libraries)
 [libraries]
