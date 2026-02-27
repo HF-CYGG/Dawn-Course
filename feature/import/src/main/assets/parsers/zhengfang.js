@@ -303,7 +303,14 @@ function sanitizePlainText(rawHtml) {
 }
 
 function stripTags(html) {
-    return sanitizePlainText(html);
+    var text = String(html);
+    // 循环去除 HTML 标签，防止嵌套标签绕过 (e.g. <<script>script>)
+    var maxLoop = 10;
+    while (/<[^>]*>/.test(text) && maxLoop-- > 0) {
+        text = text.replace(/<[^>]*>/g, "");
+    }
+    
+    return text.replace(/&nbsp;/g, " ").trim();
 }
 
 function normalizeText(html) {
