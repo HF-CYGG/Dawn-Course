@@ -17,8 +17,8 @@
 推荐报告渠道（优先级从高到低）：
 1. GitHub Security Advisories（推荐）
    - 进入仓库页面 → Security → Advisories → “Report a vulnerability”
-2. 私密沟通渠道（如维护者在仓库主页公开的邮箱/联系方式）
-   - 若仓库未公开邮箱，请使用 GitHub Security Advisories
+2. 私密沟通渠道（仓库所有者的邮箱）
+   - yyh1677696627@outlook.com
 
 报告时请尽量包含以下信息（越完整越好）：
 - 漏洞类型（例如：数据泄露、任意代码执行、权限绕过、拒绝服务等）
