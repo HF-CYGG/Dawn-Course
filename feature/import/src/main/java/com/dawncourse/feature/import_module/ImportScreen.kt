@@ -1,5 +1,6 @@
 package com.dawncourse.feature.import_module
 
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -411,6 +412,7 @@ private fun ImportOptionCard(
  * 2. WebView 容器
  * 3. 底部操作栏（刷新、一键提取）
  */
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun WebViewStep(
     viewModel: ImportViewModel,
@@ -522,7 +524,6 @@ private fun WebViewStep(
         }
         
         // WebView 容器
-        @SuppressLint("SetJavaScriptEnabled")
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
