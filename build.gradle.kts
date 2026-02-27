@@ -10,17 +10,19 @@ plugins {
 allprojects {
     configurations.all {
         resolutionStrategy {
-            force("io.netty:netty-codec-http2:4.1.124.Final")
-            force("io.netty:netty-handler:4.1.124.Final")
-            force("org.bouncycastle:bcprov-jdk18on:1.83")
-            force("org.bouncycastle:bcpkix-jdk18on:1.83")
-            force("org.bitbucket.b_c:jose4j:0.9.6")
-            force("org.apache.commons:commons-compress:1.28.0")
-            force("commons-io:commons-io:2.21.0")
-            force("com.google.protobuf:protobuf-java:3.25.5")
-            force("org.jdom:jdom2:2.0.6.1")
-            force("com.google.guava:guava:33.0.0-android")
-            force("io.netty:netty-codec:4.1.125.Final")
+            // Security Vulnerability Fixes (Versions managed in libs.versions.toml for Dependabot visibility)
+            force("io.netty:netty-codec-http2:${libs.versions.netty.get()}")
+            force("io.netty:netty-handler:${libs.versions.netty.get()}")
+            force("io.netty:netty-codec:${libs.versions.netty.get()}")
+            force("org.bouncycastle:bcprov-jdk18on:${libs.versions.bouncycastle.get()}")
+            force("org.bouncycastle:bcpkix-jdk18on:${libs.versions.bouncycastle.get()}")
+            force("org.bitbucket.b_c:jose4j:${libs.versions.jose4j.get()}")
+            force("org.apache.commons:commons-compress:${libs.versions.commons.compress.get()}")
+            force("commons-io:commons-io:${libs.versions.commons.io.get()}")
+            force("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
+            force("org.jdom:jdom2:${libs.versions.jdom.get()}")
+            force("com.google.guava:guava:${libs.versions.guava.get()}")
+            force("com.google.code.gson:gson:${libs.versions.gson.get()}")
         }
     }
 }

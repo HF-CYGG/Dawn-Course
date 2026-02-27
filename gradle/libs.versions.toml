@@ -23,6 +23,17 @@ hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
 coil = "2.6.0" # 图片加载框架
 
+# Security Fixes (Dependabot)
+netty = "4.1.125.Final"
+bouncycastle = "1.83"
+jose4j = "0.9.6"
+commons-compress = "1.28.0"
+commons-io = "2.18.0"
+protobuf = "3.25.5"
+jdom = "2.0.6.1"
+guava = "33.0.0-android"
+gson = "2.10.1"
+
 # 库依赖定义 (Libraries)
 [libraries]
 # AndroidX Core
@@ -70,6 +81,20 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
 quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
+# Security Fixes (Dependabot)
+netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }
+netty-handler = { group = "io.netty", name = "netty-handler", version.ref = "netty" }
+netty-codec = { group = "io.netty", name = "netty-codec", version.ref = "netty" }
+bouncycastle-prov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+bouncycastle-pkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+jose4j = { group = "org.bitbucket.b_c", name = "jose4j", version.ref = "jose4j" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commons-compress" }
+commons-io = { group = "commons-io", name = "commons-io", version.ref = "commons-io" }
+protobuf-java = { group = "com.google.protobuf", name = "protobuf-java", version.ref = "protobuf" }
+jdom = { group = "org.jdom", name = "jdom2", version.ref = "jdom" }
+guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 # Networking
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version = "2.11.0" }
