@@ -417,6 +417,12 @@ private fun WebViewStep(
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
 
+    fun configureWebViewSecurity(targetWebView: WebView) {
+        // Explicitly disallow access to content:// URLs to avoid exposing sensitive data
+        val settings = targetWebView.settings
+        settings.allowContentAccess = false
+    }
+
     fun parseJavascriptResult(raw: String?): String {
         return try {
             if (raw == null || raw == "null") ""
