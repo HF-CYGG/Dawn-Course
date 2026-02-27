@@ -186,7 +186,7 @@ function parseOldZhengfang(html) {
             // Filter empty and clean
             var rawInfo = [];
             for(var k=0; k<parts.length; k++) {
-                var p = parts[k].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").trim();
+                var p = sanitizePlainText(parts[k]);
                 if (p) rawInfo.push(p);
             }
             
@@ -275,8 +275,29 @@ function parseOldTimeRanges(rawTime) {
     return result;
 }
 
+function sanitizePlainText(rawHtml) {
+    if (!rawHtml) return "";
+    var text = String(rawHtml);
+    text = text.replace(/<[^>]*>/g, "");
+    text = text.replace(/&nbsp;|&#160;/gi, " ");
+    text = text.replace(/&amp;/gi, "&");
+    text = text.replace(/&lt;/gi, "<");
+    text = text.replace(/&gt;/gi, ">");
+    text = text.replace(/&quot;/gi, "\"");
+    text = text.replace(/&#39;/gi, "'");
+    text = text.replace(/&#x([0-9a-fA-F]+);/g, function(_, code) {
+        var n = parseInt(code, 16);
+        return isNaN(n) ? "" : String.fromCharCode(n);
+    });
+    text = text.replace(/&#(\d+);/g, function(_, code) {
+        var n = parseInt(code, 10);
+        return isNaN(n) ? "" : String.fromCharCode(n);
+    });
+    return text.replace(/\s+/g, " ").trim();
+}
+
 function stripTags(html) {
-    return html.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ");
+    return sanitizePlainText(html);
 }
 
 function normalizeText(html) {

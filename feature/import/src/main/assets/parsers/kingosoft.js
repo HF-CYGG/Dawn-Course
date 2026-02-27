@@ -41,6 +41,27 @@ function scheduleHtmlParser(html) {
         return cells;
     }
 
+    function sanitizePlainText(rawHtml) {
+        if (!rawHtml) return "";
+        var text = String(rawHtml);
+        text = text.replace(/<[^>]*>/g, "");
+        text = text.replace(/&nbsp;|&#160;/gi, " ");
+        text = text.replace(/&amp;/gi, "&");
+        text = text.replace(/&lt;/gi, "<");
+        text = text.replace(/&gt;/gi, ">");
+        text = text.replace(/&quot;/gi, "\"");
+        text = text.replace(/&#39;/gi, "'");
+        text = text.replace(/&#x([0-9a-fA-F]+);/g, function(_, code) {
+            var n = parseInt(code, 16);
+            return isNaN(n) ? "" : String.fromCharCode(n);
+        });
+        text = text.replace(/&#(\d+);/g, function(_, code) {
+            var n = parseInt(code, 10);
+            return isNaN(n) ? "" : String.fromCharCode(n);
+        });
+        return text.replace(/\s+/g, " ").trim();
+    }
+
     // 3. 遍历每一行进行解析
     for (var r = 0; r < rows.length; r++) {
         var rowContent = rows[r];
@@ -51,7 +72,7 @@ function scheduleHtmlParser(html) {
             // 遍历当前行的所有单元格，检查是否包含 "星期X" 或 "周X"
             for (var c = 0; c < cells.length; c++) {
                 // 去除所有 HTML 标签，获取纯文本进行判断
-                var text = cells[c].replace(/<[^>]+>/g, "");
+                var text = sanitizePlainText(cells[c]);
                 
                 if (text.indexOf("星期一") !== -1 || text.indexOf("周一") !== -1) dayMap[c] = 1;
                 else if (text.indexOf("星期二") !== -1 || text.indexOf("周二") !== -1) dayMap[c] = 2;
@@ -165,7 +186,7 @@ function parseCell(cellContent, day) {
         
         // 提取课程名: 通常在 <font> 标签中
         var nameMatch = /<font[^>]*>(.*?)<\/font>/i.exec(block);
-        var name = nameMatch ? nameMatch[1] : "";
+        var name = nameMatch ? sanitizePlainText(nameMatch[1]) : "";
         if (!name) continue; // 没有课程名则忽略
         
         // 移除课程名，剩余部分包含：教师、周次、节次、地点
@@ -180,9 +201,7 @@ function parseCell(cellContent, day) {
         
         // 遍历分割后的片段，通过正则特征识别信息类型
         for (var j = 0; j < parts.length; j++) {
-            var p = parts[j].trim();
-            // 清洗数据：将 HTML 空格转为普通空格
-            p = p.replace(/&nbsp;/g, " ").trim();
+            var p = sanitizePlainText(parts[j]);
             if (!p) continue;
             
             // 匹配周次和节次: 格式如 "1-16[1-2]" 或 "1,3,5[1-2]"

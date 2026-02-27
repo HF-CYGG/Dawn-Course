@@ -71,10 +71,9 @@ async function newLogFrame() {
       console.log(msg);
       if (typeof msg === "string") {
         const e = document.createElement("span");
-        e.innerHTML = msg;
-        iframeDocument.body.append(...e.childNodes);
-      }
-      else {
+        e.textContent = msg;
+        iframeDocument.body.append(e);
+      } else {
         iframeDocument.body.append(msg);
       }
     }
