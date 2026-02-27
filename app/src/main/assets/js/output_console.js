@@ -144,17 +144,24 @@ async function newLogFrame() {
     const button = document.createElement("button");
     button.textContent = "跳转";
     button.addEventListener("click", () => {
-      const url = input.value.trim();
-      if (url) {
-      // 修复 DOM XSS 风险：对 url 进行编码
-      const safeUrl = encodeURIComponent(url);
-      const validUrl = /^https?:\/\//.test(url) ? url : "https://" + url;
-      // 注意：直接操作 location.href 通常不会导致 XSS，除非 url 包含 javascript: 协议
-      // 但为了安全起见，这里进行协议检查
-      if (/^https?:\/\//.test(validUrl)) {
-          window.location.href = validUrl;
+      const rawUrl = input.value.trim();
+      if (!rawUrl) {
+        return;
       }
-    }
+      let targetUrl;
+      try {
+        targetUrl = new URL(
+          rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+            ? rawUrl
+            : "https://" + rawUrl
+        );
+      } catch (e) {
+        return;
+      }
+      if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
+        return;
+      }
+      window.location.href = targetUrl.toString();
     });
 
     const e = document.createElement("span");

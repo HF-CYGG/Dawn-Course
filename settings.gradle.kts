@@ -22,9 +22,8 @@ buildscript {
             force("io.netty:netty-transport-native-epoll:4.1.125.Final")
             force("io.netty:netty-transport-native-unix-common:4.1.125.Final")
             
-            // 强制 Bouncy Castle 使用安全版本 (>= 1.78 for jdk15on, >= 1.78 for jdk18on)
-            // 许多旧插件可能仍依赖 jdk15on
-            force("org.bouncycastle:bcprov-jdk15on:1.70") // 注意：1.70 是 jdk15on 的最后一个主要版本，之后迁移到了 jdk18on。但为了修复漏洞，如果有更高版本兼容的话。
+            // 强制 Bouncy Castle 使用安全版本 (jdk15on: 1.70, jdk18on: 1.83)
+            // 旧插件可能仍依赖 jdk15on
             force("org.bouncycastle:bcprov-jdk15on:1.70")
             force("org.bouncycastle:bcpkix-jdk15on:1.70")
             force("org.bouncycastle:bcprov-jdk18on:1.83")
