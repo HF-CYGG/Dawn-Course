@@ -284,37 +284,13 @@ function sanitizePlainText(rawHtml) {
 }
 
 function removeHtmlTags(rawText) {
-    var text = String(rawText);
-    var result = "";
-    var inTag = false;
-    for (var i = 0; i < text.length; i++) {
-        var ch = text.charAt(i);
-        if (ch === "<") {
-            inTag = true;
-            continue;
-        }
-        if (ch === ">" && inTag) {
-            inTag = false;
-            continue;
-        }
-        if (!inTag && ch !== ">") {
-            result += ch;
-        }
-    }
-    return removeAngleBrackets(result);
-}
-
-function removeAngleBrackets(rawText) {
-    var text = String(rawText);
-    var result = "";
-    for (var i = 0; i < text.length; i++) {
-        var ch = text.charAt(i);
-        if (ch === "<" || ch === ">") {
-            continue;
-        }
-        result += ch;
-    }
-    return result;
+    var result = String(rawText);
+    var previous;
+    do {
+        previous = result;
+        result = result.replace(/<[^>]*>/g, "");
+    } while (result !== previous);
+    return result.replace(/[<>]/g, "");
 }
 
 function decodeHtmlEntities(rawText) {
