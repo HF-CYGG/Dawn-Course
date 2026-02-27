@@ -44,7 +44,13 @@ function scheduleHtmlParser(html) {
     function sanitizePlainText(rawHtml) {
         if (!rawHtml) return "";
         var text = String(rawHtml);
-        text = text.replace(/<[^>]*>/g, "");
+
+        // 循环去除 HTML 标签，防止嵌套标签绕过
+        var maxLoop = 10;
+        while (/<[^>]*>/.test(text) && maxLoop-- > 0) {
+            text = text.replace(/<[^>]*>/g, "");
+        }
+
         text = text.replace(/&nbsp;|&#160;/gi, " ");
         text = text.replace(/&amp;/gi, "&");
         text = text.replace(/&lt;/gi, "<");

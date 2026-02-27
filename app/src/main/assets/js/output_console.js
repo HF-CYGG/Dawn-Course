@@ -67,16 +67,20 @@ async function newLogFrame() {
   });
 
   function log(...msgs) {
+    const lineContainer = document.createElement("div");
+    lineContainer.style.marginBottom = "4px";
+    lineContainer.style.borderBottom = "1px solid #eee";
+    
     for (const msg of msgs) {
       console.log(msg);
-      if (typeof msg === "string") {
-        const e = document.createElement("span");
-        e.textContent = msg;
-        iframeDocument.body.append(e);
-      } else {
-        iframeDocument.body.append(msg);
-      }
+      const span = document.createElement("span");
+      span.textContent = String(msg) + " ";
+      span.style.whiteSpace = "pre-wrap";
+      lineContainer.append(span);
     }
+    
+    iframeDocument.body.append(lineContainer);
+
     // 自动滚动到底部
     iframeDocument.body.scrollTop = iframeDocument.body.scrollHeight;
     if(iframeDocument.documentElement) iframeDocument.documentElement.scrollTop = iframeDocument.body.scrollHeight;
