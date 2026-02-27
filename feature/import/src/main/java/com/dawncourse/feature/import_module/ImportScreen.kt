@@ -486,6 +486,12 @@ private fun WebViewStep(
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
+                    // 安全配置：禁用文件访问，防止本地文件泄露
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    // 仅允许 HTTPS 加载（如果可能），或保持混合内容模式需谨慎
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+
                     // 启用 JS 和 DOM 存储，适配现代 SPA 网页
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
