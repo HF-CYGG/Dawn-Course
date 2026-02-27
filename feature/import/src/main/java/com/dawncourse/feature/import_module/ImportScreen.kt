@@ -83,6 +83,12 @@ import java.time.ZoneId
 import java.time.LocalDate
 import kotlin.coroutines.resume
 
+private fun configureImportWebViewSecurity(webView: WebView) {
+    val settings = webView.settings
+    // Disable access to content:// URLs to avoid exposing protected content
+    settings.allowContentAccess = false
+}
+
 /**
  * 导入功能主屏幕
  *
