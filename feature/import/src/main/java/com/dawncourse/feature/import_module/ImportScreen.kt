@@ -510,6 +510,7 @@ private fun WebViewStep(
         }
         
         // WebView 容器
+        @SuppressLint("SetJavaScriptEnabled")
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {

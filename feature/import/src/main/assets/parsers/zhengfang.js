@@ -280,9 +280,14 @@ function sanitizePlainText(rawHtml) {
     var text = String(rawHtml);
     text = removeHtmlTags(text);
     text = decodeHtmlEntities(text);
+    // Decode后再次清洗，防止实体解码产生新标签
+    text = removeHtmlTags(text);
     return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * 移除HTML标签（循环移除防止嵌套绕过）
+ */
 function removeHtmlTags(rawText) {
     var result = String(rawText);
     var previous;
@@ -293,51 +298,24 @@ function removeHtmlTags(rawText) {
     return result.replace(/[<>]/g, "");
 }
 
-function decodeHtmlEntities(rawText) {
-    var text = String(rawText);
-    var result = "";
-    var i = 0;
-    while (i < text.length) {
-        var ch = text.charAt(i);
-        if (ch !== "&") {
-            result += ch;
-            i++;
-            continue;
-        }
-        var semi = text.indexOf(";", i + 1);
-        if (semi === -1 || semi - i > 12) {
-            result += "&";
-            i++;
-            continue;
-        }
-        var entity = text.slice(i + 1, semi);
-        var decoded = null;
-        if (entity === "nbsp") decoded = " ";
-        else if (entity === "lt") decoded = "<";
-        else if (entity === "gt") decoded = ">";
-        else if (entity === "quot") decoded = "\"";
-        else if (entity === "#39") decoded = "'";
-        else if (entity === "amp") decoded = "&";
-        else if (entity.length > 1 && entity.charAt(0) === "#") {
-            var code = entity.charAt(1).toLowerCase() === "x"
-                ? parseInt(entity.slice(2), 16)
-                : parseInt(entity.slice(1), 10);
-            if (!isNaN(code)) decoded = String.fromCharCode(code);
-        }
-        if (decoded === null) {
-            result += "&";
-            i++;
-            continue;
-        }
-        result += decoded;
-        i = semi + 1;
-    }
-    return result;
+/**
+ * 解码HTML实体
+ */
+function decodeHtmlEntities(text) {
+    if (!text) return "";
+    var entities = {
+        '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>',
+        '&quot;': '"', '&apos;': "'", '&#039;': "'"
+    };
+    return text.replace(/&[a-zA-Z0-9#]+;/g, function(match) {
+        return entities[match] || match;
+    });
 }
 
 function stripTags(html) {
     var text = removeHtmlTags(html);
-    return decodeHtmlEntities(text).replace(/\s+/g, " ").trim();
+    text = decodeHtmlEntities(text);
+    return removeHtmlTags(text).replace(/\s+/g, " ").trim();
 }
 
 function normalizeText(html) {

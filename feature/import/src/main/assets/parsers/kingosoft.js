@@ -46,9 +46,14 @@ function scheduleHtmlParser(html) {
         var text = String(rawHtml);
         text = removeHtmlTags(text);
         text = decodeHtmlEntities(text);
+        // Decode后再次清洗，防止实体解码产生新标签
+        text = removeHtmlTags(text);
         return text.replace(/\s+/g, " ").trim();
     }
 
+    /**
+     * 移除HTML标签（循环移除防止嵌套绕过）
+     */
     function removeHtmlTags(rawText) {
         var result = String(rawText);
         var previous;
