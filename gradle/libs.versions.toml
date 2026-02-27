@@ -21,7 +21,7 @@ datastore = "1.0.0" # DataStore 数据存储
 quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
 hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
-coil = "2.6.0" # 图片加载框架
+coil = "2.7.0" # 图片加载框架
 
 # Security Fixes (Dependabot)
 netty = "4.1.125.Final"
