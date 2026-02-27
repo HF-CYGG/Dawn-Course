@@ -5,6 +5,54 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
+
+buildscript {
+    repositories {
+        mavenCentral()
+        google()
+    }
+    configurations.classpath {
+        resolutionStrategy {
+            // 强制 Netty 使用安全版本 (>= 4.1.125.Final)
+            force("io.netty:netty-codec-http2:4.1.125.Final")
+            force("io.netty:netty-handler:4.1.125.Final")
+            force("io.netty:netty-codec:4.1.125.Final")
+            force("io.netty:netty-common:4.1.125.Final")
+            force("io.netty:netty-codec-http:4.1.125.Final")
+            force("io.netty:netty-transport-native-epoll:4.1.125.Final")
+            force("io.netty:netty-transport-native-unix-common:4.1.125.Final")
+            
+            // 强制 Bouncy Castle 使用安全版本 (>= 1.78 for jdk15on, >= 1.78 for jdk18on)
+            // 许多旧插件可能仍依赖 jdk15on
+            force("org.bouncycastle:bcprov-jdk15on:1.70") // 注意：1.70 是 jdk15on 的最后一个主要版本，之后迁移到了 jdk18on。但为了修复漏洞，如果有更高版本兼容的话。
+            force("org.bouncycastle:bcprov-jdk15on:1.70")
+            force("org.bouncycastle:bcpkix-jdk15on:1.70")
+            force("org.bouncycastle:bcprov-jdk18on:1.83")
+            force("org.bouncycastle:bcpkix-jdk18on:1.83")
+            
+            // 强制 Apache Commons IO (>= 2.18.0)
+            force("commons-io:commons-io:2.18.0")
+            
+            // 强制 Apache Commons Compress (>= 1.28.0)
+            force("org.apache.commons:commons-compress:1.28.0")
+            
+            // 强制 Protobuf-java (>= 3.25.5)
+            force("com.google.protobuf:protobuf-java:3.25.5")
+            
+            // 强制 JDOM2 (>= 2.0.6.1)
+            force("org.jdom:jdom2:2.0.6.1")
+            
+            // 强制 Jose4j (>= 0.9.6)
+            force("org.bitbucket.b_c:jose4j:0.9.6")
+            
+            // 强制 Guava (>= 33.0.0-android)
+            force("com.google.guava:guava:33.0.0-android")
+            
+            // 强制 Gson (>= 2.10.1)
+            force("com.google.code.gson:gson:2.10.1")
+        }
+    }
+}
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
