@@ -3,7 +3,7 @@ package com.dawncourse.feature.import_module
 import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -69,6 +69,10 @@ import androidx.compose.runtime.*
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONTokener
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -77,6 +81,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.time.ZoneId
 import java.time.LocalDate
+import kotlin.coroutines.resume
 
 /**
  * 导入功能主屏幕
@@ -406,11 +411,31 @@ private fun WebViewStep(
     uiState: ImportUiState
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var webView: WebView? by remember { mutableStateOf(null) }
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
-    // 会话令牌：用于校验 JS 与本地桥的调用来源，防止任意页面滥用接口
-    val sessionToken = remember { java.util.UUID.randomUUID().toString() }
+    var pollJob: Job? by remember { mutableStateOf(null) }
+
+    fun parseJavascriptResult(raw: String?): String {
+        return try {
+            if (raw == null || raw == "null") ""
+            else JSONTokener(raw).nextValue().toString()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    suspend fun evaluateJs(script: String): String {
+        val currentWebView = webView ?: return "null"
+        return suspendCancellableCoroutine { cont ->
+            currentWebView.evaluateJavascript(script) { result ->
+                if (cont.isActive) {
+                    cont.resume(result ?: "null")
+                }
+            }
+        }
+    }
     
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部地址栏
@@ -510,17 +535,24 @@ private fun WebViewStep(
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
 
-                    // 仅允许持有正确令牌的调用进入 ViewModel，避免任意页面滥用 JS 桥
-                    class DawnBridge(private val expectedToken: String) {
-                        @JavascriptInterface
-                        fun onProviderResult(result: String, token: String) {
-                            if (token == expectedToken) {
-                                viewModel.parseResultFromWebView(result)
-                            }
-                        }
-                    }
-                    addJavascriptInterface(DawnBridge(sessionToken), "DawnBridge")
                     webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val url = request?.url?.toString().orEmpty()
+                            if (url == "about:blank") {
+                                return false
+                            }
+                            return !url.startsWith("http://") && !url.startsWith("https://")
+                        }
+
+                        @Deprecated("Deprecated in Java")
+                        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                            val targetUrl = url.orEmpty()
+                            if (targetUrl == "about:blank") {
+                                return false
+                            }
+                            return !targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")
+                        }
+
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
                             isLoading = true
@@ -614,108 +646,120 @@ private fun WebViewStep(
 
                             // 构建注入脚本
                             val js = StringBuilder()
-                            js.append("(async function() {\n")
+                            js.append("(function() {\n")
                             js.append("try {\n")
-                            // 注入令牌到 JS 作用域，桥接调用时必须附带
-                            js.append("var __dawnToken = '").append(sessionToken).append("';\n")
+                            js.append("window.__dawnResult = null;\n")
+                            js.append("window.__dawnReady = false;\n")
                             js.append(outputConsole).append("\n;\n")
                             js.append(courseUtils).append("\n;\n")
                             js.append(qidiProvider).append("\n;\n")
                             
                             js.append("""
                                 // 尝试运行 scheduleHtmlProvider
-                                if (typeof scheduleHtmlProvider === 'function') {
-                                    console.log("Found scheduleHtmlProvider, running...");
-                                    var result = await scheduleHtmlProvider();
-                                    if (result !== "do not continue") {
-                                        window.DawnBridge.onProviderResult(result, __dawnToken);
-                                        return "ASYNC_STARTED";
-                                    }
-                                }
-                            } catch(e) {
-                                console.error("Provider execution failed:", e);
-                            }
-                            
-                            // 降级策略：使用原有的 HTML 提取逻辑
-                            function findScheduleHtml(doc) {
-                                if (!doc) return null;
-                                
-                                // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
-                                // 强智系统课程表通常使用 ID 格式 "节次-周次-2" (例如 "1-1-2")
-                                try {
-                                    var qiangzhiData = [];
-                                    var hasQiangzhi = false;
-                                    // 遍历 1-5 节次 (对应强智系统的 5 个大节)
-                                    for (var c = 1; c <= 5; c++) {
-                                        // 遍历 1-7 周次 (对应周一到周日)
-                                        for (var w = 1; w <= 7; w++) {
-                                            var id = c + "-" + w + "-2";
-                                            var el = doc.getElementById(id);
-                                            if (el) {
-                                                hasQiangzhi = true;
-                                                var text = el.innerText || el.textContent;
-                                                // 仅提取非空单元格
-                                                if (text && text.trim().length > 0) {
-                                                    qiangzhiData.push({
-                                                        "row": c,
-                                                        "col": w,
-                                                        "text": text.trim()
-                                                    });
-                                                }
+                                (async function() {
+                                    try {
+                                        if (typeof scheduleHtmlProvider === 'function') {
+                                            console.log("Found scheduleHtmlProvider, running...");
+                                            var result = await scheduleHtmlProvider();
+                                            if (result !== "do not continue") {
+                                                window.__dawnResult = result;
+                                                window.__dawnReady = true;
+                                                return;
                                             }
                                         }
+                                    } catch(e) {
+                                        console.error("Provider execution failed:", e);
                                     }
-                                    // 如果检测到强智格式且包含数据，则直接返回特定 JSON
-                                    if (hasQiangzhi && qiangzhiData.length > 0) {
-                                        return JSON.stringify({
-                                            "type": "qiangzhi_direct",
-                                            "data": qiangzhiData
-                                        });
+                                    
+                                    // 降级策略：使用原有的 HTML 提取逻辑
+                                    function findScheduleHtml(doc) {
+                                        if (!doc) return null;
+                                        
+                                        // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
+                                        // 强智系统课程表通常使用 ID 格式 "节次-周次-2" (例如 "1-1-2")
+                                        try {
+                                            var qiangzhiData = [];
+                                            var hasQiangzhi = false;
+                                            // 遍历 1-5 节次 (对应强智系统的 5 个大节)
+                                            for (var c = 1; c <= 5; c++) {
+                                                // 遍历 1-7 周次 (对应周一到周日)
+                                                for (var w = 1; w <= 7; w++) {
+                                                    var id = c + "-" + w + "-2";
+                                                    var el = doc.getElementById(id);
+                                                    if (el) {
+                                                        hasQiangzhi = true;
+                                                        var text = el.innerText || el.textContent;
+                                                        // 仅提取非空单元格
+                                                        if (text && text.trim().length > 0) {
+                                                            qiangzhiData.push({
+                                                                "row": c,
+                                                                "col": w,
+                                                                "text": text.trim()
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // 如果检测到强智格式且包含数据，则直接返回特定 JSON
+                                            if (hasQiangzhi && qiangzhiData.length > 0) {
+                                                return JSON.stringify({
+                                                    "type": "qiangzhi_direct",
+                                                    "data": qiangzhiData
+                                                });
+                                            }
+                                        } catch (e) { console.error("Qiangzhi extract failed", e); }
+                                        
+                                        var html = doc.body ? doc.body.innerHTML : "";
+                                        if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                            return html;
+                                        }
+                                        var frames = doc.getElementsByTagName('frame');
+                                        for (var i = 0; i < frames.length; i++) {
+                                            try {
+                                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                                var result = findScheduleHtml(frameDoc);
+                                                if (result) return result;
+                                            } catch(e) {}
+                                        }
+                                        var iframes = doc.getElementsByTagName('iframe');
+                                        for (var i = 0; i < iframes.length; i++) {
+                                            try {
+                                                var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                                                var result = findScheduleHtml(frameDoc);
+                                                if (result) return result;
+                                            } catch(e) {}
+                                        }
+                                        return null;
                                     }
-                                } catch (e) { console.error("Qiangzhi extract failed", e); }
-
-                                var html = doc.body ? doc.body.innerHTML : "";
-                                if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
-                                    return html;
-                                }
-                                var frames = doc.getElementsByTagName('frame');
-                                for (var i = 0; i < frames.length; i++) {
-                                    try {
-                                        var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                        var result = findScheduleHtml(frameDoc);
-                                        if (result) return result;
-                                    } catch(e) {}
-                                }
-                                var iframes = doc.getElementsByTagName('iframe');
-                                for (var i = 0; i < iframes.length; i++) {
-                                    try {
-                                        var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                        var result = findScheduleHtml(frameDoc);
-                                        if (result) return result;
-                                    } catch(e) {}
-                                }
-                                return null;
+                                    window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
+                                    window.__dawnReady = true;
+                                })();
+                            } catch(e) {
+                                console.error("Provider execution failed:", e);
+                                window.__dawnReady = true;
                             }
-                            return findScheduleHtml(document) || document.documentElement.outerHTML;
-                            
-                            })()
+                            })();
                             """.trimIndent())
 
-                            webView?.evaluateJavascript(js.toString()) { result ->
-                                // 如果返回的是 HTML 字符串（即降级策略生效），则在此处处理
-                                // 如果返回 "ASYNC_STARTED"，则结果将通过 DawnBridge 回调
-                                val rawHtml = try {
-                                    if (result == "null" || result == null) "" 
-                                    else org.json.JSONTokener(result).nextValue().toString()
-                                } catch (e: Exception) { "" }
-                                
-                                if (rawHtml != "ASYNC_STARTED" && rawHtml.isNotEmpty()) {
-                                    viewModel.parseResultFromWebView(rawHtml)
-                                } else if (rawHtml.isEmpty()) {
-                                    if (rawHtml != "ASYNC_STARTED") {
-                                        viewModel.updateResultText("未能提取到有效 HTML 内容")
+                            val currentWebView = webView
+                            if (currentWebView == null) {
+                                viewModel.updateResultText("未能提取到有效 HTML 内容")
+                                return@Button
+                            }
+                            currentWebView.evaluateJavascript(js.toString(), null)
+                            viewModel.updateResultText("正在提取...")
+                            pollJob?.cancel()
+                            pollJob = coroutineScope.launch {
+                                repeat(40) {
+                                    val raw = evaluateJs("window.__dawnReady ? window.__dawnResult : null")
+                                    val rawHtml = parseJavascriptResult(raw)
+                                    if (rawHtml.isNotEmpty()) {
+                                        viewModel.parseResultFromWebView(rawHtml)
+                                        return@launch
                                     }
+                                    delay(300)
                                 }
+                                viewModel.updateResultText("未能提取到有效 HTML 内容")
                             }
                         } catch (e: Exception) {
                             viewModel.updateResultText("脚本加载失败: ${e.message}")
