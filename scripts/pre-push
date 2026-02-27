@@ -2,7 +2,7 @@
 
 # 运行单元测试
 echo "Running unit tests before push..."
-./gradlew testDebugUnitTest
+./gradlew testDebugUnitTest --no-daemon
 
 # 检查测试结果
 if [ $? -ne 0 ]; then
@@ -12,7 +12,7 @@ fi
 
 # 运行 Lint 检查
 echo "Running lint check before push..."
-./gradlew lintDebug
+./gradlew lintDebug --no-daemon
 
 # 检查 Lint 结果
 if [ $? -ne 0 ]; then
