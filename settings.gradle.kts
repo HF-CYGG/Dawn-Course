@@ -49,6 +49,27 @@ buildscript {
             
             // 强制 Gson (>= 2.10.1)
             force("com.google.code.gson:gson:2.10.1")
+
+            dependencySubstitution {
+                substitute(module("commons-io:commons-io")).using(module("commons-io:commons-io:2.18.0"))
+                substitute(module("org.apache.commons:commons-compress")).using(module("org.apache.commons:commons-compress:1.28.0"))
+                substitute(module("com.google.protobuf:protobuf-java")).using(module("com.google.protobuf:protobuf-java:3.25.5"))
+                substitute(module("org.jdom:jdom2")).using(module("org.jdom:jdom2:2.0.6.1"))
+                substitute(module("org.bitbucket.b_c:jose4j")).using(module("org.bitbucket.b_c:jose4j:0.9.6"))
+                substitute(module("com.google.guava:guava")).using(module("com.google.guava:guava:33.0.0-android"))
+                substitute(module("com.google.code.gson:gson")).using(module("com.google.code.gson:gson:2.10.1"))
+                substitute(module("io.netty:netty-codec-http2")).using(module("io.netty:netty-codec-http2:4.1.125.Final"))
+                substitute(module("io.netty:netty-handler")).using(module("io.netty:netty-handler:4.1.125.Final"))
+                substitute(module("io.netty:netty-codec")).using(module("io.netty:netty-codec:4.1.125.Final"))
+                substitute(module("io.netty:netty-common")).using(module("io.netty:netty-common:4.1.125.Final"))
+                substitute(module("io.netty:netty-codec-http")).using(module("io.netty:netty-codec-http:4.1.125.Final"))
+                substitute(module("io.netty:netty-transport-native-epoll")).using(module("io.netty:netty-transport-native-epoll:4.1.125.Final"))
+                substitute(module("io.netty:netty-transport-native-unix-common")).using(module("io.netty:netty-transport-native-unix-common:4.1.125.Final"))
+                substitute(module("org.bouncycastle:bcprov-jdk15on")).using(module("org.bouncycastle:bcprov-jdk15on:1.70"))
+                substitute(module("org.bouncycastle:bcpkix-jdk15on")).using(module("org.bouncycastle:bcpkix-jdk15on:1.70"))
+                substitute(module("org.bouncycastle:bcprov-jdk18on")).using(module("org.bouncycastle:bcprov-jdk18on:1.83"))
+                substitute(module("org.bouncycastle:bcpkix-jdk18on")).using(module("org.bouncycastle:bcpkix-jdk18on:1.83"))
+            }
         }
     }
 }
