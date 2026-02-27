@@ -26,3 +26,6 @@ allprojects {
         }
     }
 }
+
+// 引入 git-hooks 配置
+apply(from = "git-hooks.gradle.kts")

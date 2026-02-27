@@ -77,6 +77,13 @@ android {
         }
     }
 
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = true
+        xmlReport = true
+        htmlReport = true
+    }
+
     applicationVariants.all {
         outputs.all {
             val output = this as? com.android.build.gradle.api.ApkVariantOutput

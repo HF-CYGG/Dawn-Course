@@ -1,0 +1,24 @@
+#!/bin/sh
+
+# 运行单元测试
+echo "Running unit tests before push..."
+./gradlew testDebugUnitTest
+
+# 检查测试结果
+if [ $? -ne 0 ]; then
+    echo "Unit tests failed. Push aborted."
+    exit 1
+fi
+
+# 运行 Lint 检查
+echo "Running lint check before push..."
+./gradlew lintDebug
+
+# 检查 Lint 结果
+if [ $? -ne 0 ]; then
+    echo "Lint check failed. Push aborted."
+    exit 1
+fi
+
+echo "All checks passed. Proceeding with push."
+exit 0
