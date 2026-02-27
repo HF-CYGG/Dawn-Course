@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ["java-kotlin"]  # 如需 JS/TS，可扩展为 ["java-kotlin", "javascript-typescript"]
+        language: ["java-kotlin", "javascript-typescript"]
 
     steps:
       - name: Checkout
@@ -52,6 +52,7 @@ jobs:
           queries: +security-and-quality
 
       - name: Build (Android)
+        if: matrix.language == 'java-kotlin'
         run: |
           ./gradlew --no-daemon :app:assembleDebug
 
