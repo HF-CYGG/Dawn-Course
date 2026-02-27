@@ -83,6 +83,12 @@ import java.time.ZoneId
 import java.time.LocalDate
 import kotlin.coroutines.resume
 
+private fun configureImportWebViewSecurity(webView: WebView) {
+    val settings = webView.settings
+    // Disable access to content:// URLs to avoid exposing protected content
+    settings.allowContentAccess = false
+}
+
 /**
  * 导入功能主屏幕
  *
@@ -416,6 +422,12 @@ private fun WebViewStep(
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
+
+    fun configureWebViewSecurity(targetWebView: WebView) {
+        // Explicitly disallow access to content:// URLs to avoid exposing sensitive data
+        val settings = targetWebView.settings
+        settings.allowContentAccess = false
+    }
 
     fun parseJavascriptResult(raw: String?): String {
         return try {
