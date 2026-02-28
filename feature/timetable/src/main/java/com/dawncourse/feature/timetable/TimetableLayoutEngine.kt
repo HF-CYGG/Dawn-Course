@@ -131,17 +131,29 @@ object TimetableLayoutEngine {
                 
                 // 智能冲突处理：如果簇中包含本周课程，则过滤掉所有非本周课程
                 // 避免 subList 修改引发异常，创建新列表处理
-                val cluster = if (rawCluster.any { it.isCurrentWeek }) {
+                val activeCluster = if (rawCluster.any { it.isCurrentWeek }) {
                     rawCluster.filter { it.isCurrentWeek }
                 } else {
                     rawCluster
                 }
 
-                // 2) 对重叠簇做横向分栏：同一簇内的课程会被分配到不同 lane，避免覆盖显示
+                // 2) 分离“背景课程”与“前景课程”
+                // 背景课程定义：时长超过 5 节，且簇中存在短课程（时长 <= 5 节）
+                // 目的：避免全天/半天的长周期事件（如实习、实训）挤压正常课程的显示宽度
+                val hasShortCourse = activeCluster.any { (it.safeEndSection - it.safeStartSection + 1) <= 5 }
+                
+                val (foreground, background) = if (hasShortCourse) {
+                    activeCluster.partition { (it.safeEndSection - it.safeStartSection + 1) <= 5 }
+                } else {
+                    // 如果都是长课程，或者都是短课程，则全部视为前景，参与常规分栏
+                    activeCluster to emptyList()
+                }
+
+                // 3) 对前景课程做常规横向分栏
                 val laneEnds = mutableListOf<Int>()
                 val assigned = mutableListOf<Pair<Tmp, Int>>()
 
-                cluster.forEach { item ->
+                foreground.forEach { item ->
                     // 注意：节次区间是闭区间 [start, end]，所以 lane 可复用条件为 laneEnd < start
                     val laneIndex = laneEnds.indexOfFirst { laneEnd -> laneEnd < item.safeStartSection }
                     val finalLaneIndex = if (laneIndex >= 0) {
@@ -155,6 +167,23 @@ object TimetableLayoutEngine {
                 }
 
                 val laneCount = laneEnds.size.coerceAtLeast(1)
+                
+                // 4) 输出结果：先添加背景课程（层级在下，全宽），再添加前景课程
+                // 背景课程强制 laneIndex=0, laneCount=1，使其铺满宽度且位于底层
+                background.forEach { item ->
+                    result.add(
+                        TimetableLayoutItem(
+                            course = item.course,
+                            isCurrentWeek = item.isCurrentWeek,
+                            safeDayOfWeek = day,
+                            safeStartSection = item.safeStartSection,
+                            safeEndSection = item.safeEndSection,
+                            laneIndex = 0,
+                            laneCount = 1
+                        )
+                    )
+                }
+
                 assigned.forEach { (item, laneIndex) ->
                     result.add(
                         TimetableLayoutItem(
