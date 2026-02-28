@@ -542,13 +542,21 @@ private fun calculateSectionRange(
     start: java.time.LocalDateTime,
     end: java.time.LocalDateTime?
 ): SectionRange {
-    val baseMinutes = 8 * 60
     val startMinutes = start.hour * 60 + start.minute
-    val sectionIndex = ((startMinutes - baseMinutes) / 60).coerceAtLeast(0) + 1
+    val (baseMinutes, baseSlot) = when {
+        start.hour < 12 -> (8 * 60) to 1
+        start.hour < 18 -> (14 * 60) to 5
+        else -> (19 * 60) to 9
+    }
+
+    val diff = startMinutes - baseMinutes
+    val offset = (diff / 45).coerceAtLeast(0)
+    val sectionIndex = baseSlot + offset
+
     val duration = if (end != null) {
         val endMinutes = end.hour * 60 + end.minute + if (end.toLocalDate().isAfter(start.toLocalDate())) 24 * 60 else 0
-        val minutes = (endMinutes - startMinutes).coerceAtLeast(1)
-        kotlin.math.ceil(minutes / 60.0).toInt().coerceAtLeast(1)
+        val durationMinutes = (endMinutes - startMinutes).coerceAtLeast(1)
+        kotlin.math.ceil(durationMinutes / 45.0).toInt().coerceAtLeast(1)
     } else {
         1
     }
@@ -562,7 +570,18 @@ private fun extractTeacher(description: String): String {
     for (line in lines) {
         val trimmed = line.trim()
         if (keywords.any { trimmed.contains(it) }) {
-            return trimmed.replace("老师", "").replace("教师", "").replace("授课", "").replace("任课", "").trim()
+            var name = trimmed.replace("老师", "")
+                .replace("教师", "")
+                .replace("授课", "")
+                .replace("任课", "")
+                .replace(":", "")
+                .replace("：", "")
+            
+            // 使用正则去除 (xxx)、[xxx]、(xxx) 等后缀
+            val regex = Regex("[\\(\\[（].*?[\\)\\]）]")
+            name = regex.replace(name, "")
+            
+            return name.trim()
         }
     }
     return ""
