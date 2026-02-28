@@ -3,7 +3,9 @@ package com.dawncourse.feature.timetable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -513,7 +515,15 @@ fun TimetableGrid(
                     j++
                 }
 
-                val cluster = dayCourses.subList(i, j)
+                val rawCluster = dayCourses.subList(i, j)
+                
+                // 智能冲突处理：如果簇中包含本周课程，则过滤掉所有非本周课程
+                // 避免 subList 修改引发异常，创建新列表处理
+                val cluster = if (rawCluster.any { it.isCurrentWeek }) {
+                    rawCluster.filter { it.isCurrentWeek }
+                } else {
+                    rawCluster
+                }
 
                 // 2) 对重叠簇做横向分栏：同一簇内的课程会被分配到不同 lane，避免覆盖显示
                 val laneEnds = mutableListOf<Int>()
@@ -611,7 +621,7 @@ fun TimetableGrid(
             ) { measurables, constraints ->
                 // 1. 计算基础尺寸
                 val width = constraints.maxWidth
-                val cellWidth = width / 7
+                val cellWidth = width / 7f
                 val nodeHeightPx = nodeHeight.toPx()
                 
                 // 2. 测量所有子元素
@@ -621,9 +631,7 @@ fun TimetableGrid(
                     val height = (span * nodeHeightPx).roundToInt()
 
                     // 同一天列内，如果存在重叠课程，则按 laneCount 把列宽等分，避免覆盖
-                    val baseWidth = cellWidth / item.laneCount
-                    val remainder = cellWidth % item.laneCount
-                    val placeableWidth = baseWidth + if (item.laneIndex < remainder) 1 else 0
+                    val placeableWidth = (cellWidth / item.laneCount).roundToInt()
                     
                     measurable.measure(
                         constraints.copy(
@@ -641,11 +649,9 @@ fun TimetableGrid(
                         
                         // 计算位置
                         // X: (dayOfWeek - 1) * cellWidth + laneOffset
-                        val dayX = (item.safeDayOfWeek - 1) * cellWidth
-                        val baseWidth = cellWidth / item.laneCount
-                        val remainder = cellWidth % item.laneCount
-                        val laneExtraOffset = min(item.laneIndex, remainder)
-                        val x = dayX + (item.laneIndex * baseWidth) + laneExtraOffset
+                        val dayX = ((item.safeDayOfWeek - 1) * cellWidth).roundToInt()
+                        val laneWidth = cellWidth / item.laneCount
+                        val x = dayX + (item.laneIndex * laneWidth).roundToInt()
                         
                         // Y: (startSection - 1) * nodeHeight
                         val y = ((item.safeStartSection - 1) * nodeHeightPx).roundToInt()
@@ -677,28 +683,38 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course)).copy(alpha = 0.9f)
     } else {
-        // 非本周：统一灰色且半透明 (极淡的灰色，避免抢眼)
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        // 非本周：改为 Surface 背景
+        MaterialTheme.colorScheme.surface
     }
 
     // 2. 动态计算内容透明度
     val contentAlpha = if (isCurrentWeek) 1f else 0.6f
 
-    // 性能优化：使用 Box 替代 Card，移除阴影和不必要的 Surface 嵌套
-    // 仅使用 clip + background + clickable 实现相同视觉效果，大幅减少渲染开销
-    Box(
+    // 3. 边框样式（仅非本周显示）
+    val borderModifier = if (!isCurrentWeek) {
+        Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+    } else {
+        Modifier
+    }
+
+    // 性能优化：使用 BoxWithConstraints 替代 Box 以支持响应式布局
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(2.dp) // 卡片之间的空隙
             .clip(RoundedCornerShape(12.dp)) // 大圆角
             .background(baseColor)
+            .then(borderModifier) // 应用边框
             .clickable(onClick = onClick)
     ) {
+        // 宽度检测：如果宽度小于 30dp，则隐藏详细信息以避免拥挤
+        val showDetails = maxWidth >= 30.dp && isCurrentWeek
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
-            verticalArrangement = if (isCurrentWeek) Arrangement.SpaceBetween else Arrangement.Center // 非本周居中显示
+            verticalArrangement = if (showDetails) Arrangement.SpaceBetween else Arrangement.Center // 根据内容量决定对齐方式
         ) {
             // 1. 课程名
             Text(
@@ -709,12 +725,12 @@ fun CourseCard(
                     lineHeight = 14.sp, // 稍微紧凑一点
                     color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
-                maxLines = if (isCurrentWeek) 2 else 3, // 减少行数预留空间给详情
+                maxLines = if (showDetails) 2 else 3, // 减少行数预留空间给详情
                 overflow = TextOverflow.Ellipsis
             )
             
-            // 2. 底部信息块 (仅本周显示)
-            if (isCurrentWeek) {
+            // 2. 底部信息块 (仅本周且宽度足够时显示)
+            if (showDetails) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(1.dp) // 极小的间距
                 ) {
