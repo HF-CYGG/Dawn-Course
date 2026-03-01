@@ -72,6 +72,7 @@ fun QidiAutoSyncScreen(
     val scope = rememberCoroutineScope()
     var credsForAutoFill by remember { mutableStateOf<com.dawncourse.core.domain.model.SyncCredentials?>(null) }
     var needManualLogin by remember { mutableStateOf(false) }
+    var addressBar by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -96,6 +97,25 @@ fun QidiAutoSyncScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = subTitle, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = addressBar,
+                    onValueChange = { addressBar = it },
+                    label = { Text("网址") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedButton(onClick = {
+                    val wv = webView ?: return@OutlinedButton
+                    var url = addressBar.trim()
+                    if (url.isNotEmpty() && !(url.startsWith("http://") || url.startsWith("https://"))) {
+                        url = "https://$url"
+                    }
+                    if (url.isNotEmpty()) {
+                        wv.loadUrl(url)
+                    }
+                }) { Text("前往") }
+            }
             if (loading) {
                 LinearProgressIndicator()
             }
@@ -113,7 +133,7 @@ fun QidiAutoSyncScreen(
                         )
                         wv.evaluateJavascript(js, null)
                     }
-                    // 检测正方登录页的错误与验证码可见性，提示用户手动输入
+                    // 检测正方登录页的错误与验证码可见性，提示用户手动输入；并在首次进入登录页/课表页时自动记录入口
                     if (provider == SyncProviderType.ZF) {
                         scope.launch {
                             try {
@@ -131,8 +151,11 @@ fun QidiAutoSyncScreen(
                                           var cs=getComputedStyle(yzmDiv);
                                           yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
                                         }
-                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis});
-                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false}); }
+                                        var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl');
+                                        var isKebiao = !!document.querySelector('#ylkbTable') || !!document.querySelector('#ajaxForm');
+                                        var href = location.href;
+                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, isLogin:isLogin, isKebiao:isKebiao, href:href});
+                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false,isLogin:false,isKebiao:false,href:''}); }
                                     })();
                                     """.trimIndent()
                                 )
@@ -142,6 +165,14 @@ fun QidiAutoSyncScreen(
                                 needManualLogin = wrong || yzm
                                 if (needManualLogin) {
                                     subTitle = "检测到登录失败或需要验证码，请在页面中手动输入后点击“继续登录/提取”。"
+                                }
+                                val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
+                                val href = hrefMatch?.groups?.get(1)?.value ?: ""
+                                if (href.isNotBlank()) {
+                                    val updated = viewModel.updateEndpointIfNeeded(href, provider)
+                                    if (updated) {
+                                        subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"
+                                    }
                                 }
                             } catch (_: Throwable) {
                                 // ignore
@@ -166,15 +197,18 @@ fun QidiAutoSyncScreen(
                                 subTitle = "未绑定${providerName}凭据，请在设置中绑定"
                                 return@launch
                             }
-                            val endpoint = creds.endpointUrl ?: run {
-                                subTitle = "未设置入口地址"
-                                return@launch
-                            }
+                            val endpoint = creds.endpointUrl
                             credsForAutoFill = creds
                             loading = true
-                            subTitle = "正在打开${providerName}教务系统..."
+                            subTitle = if (endpoint.isNullOrBlank()) {
+                                "请在上方地址栏手动输入或通过门户进入${providerName}教务系统，系统将自动记录入口"
+                            } else {
+                                "正在打开${providerName}教务系统..."
+                            }
                             val wv = webView ?: return@launch
-                            wv.loadUrl(endpoint)
+                            if (!endpoint.isNullOrBlank()) {
+                                wv.loadUrl(endpoint)
+                            }
                         }
                     }
                 ) {
@@ -198,6 +232,20 @@ fun QidiAutoSyncScreen(
                             , null)
                         }
                     ) { Text("刷新验证码") }
+                    OutlinedButton(
+                        onClick = {
+                            val wv = webView ?: return@OutlinedButton
+                            scope.launch {
+                                val href = parseJsReturn(suspendEvaluateJs(wv, "location.href"))
+                                val updated = viewModel.updateEndpointIfNeeded(href, provider)
+                                if (updated) {
+                                    subTitle = "已记录当前为登录入口"
+                                } else {
+                                    subTitle = "入口已存在或记录失败"
+                                }
+                            }
+                        }
+                    ) { Text("记录当前为入口") }
                 }
             }
             Row {
@@ -481,6 +529,44 @@ class QidiSyncViewModel @Inject constructor(
      * 读取起迪凭据
      */
     suspend fun loadQidiCredentials() = credentialsRepository.getCredentials()
+
+    /**
+     * 若当前绑定与 provider 一致，且尚未记录入口或入口不同，则更新入口。
+     *
+     * @return 是否发生更新
+     */
+    suspend fun updateEndpointIfNeeded(href: String, provider: SyncProviderType): Boolean {
+        val creds = credentialsRepository.getCredentials() ?: return false
+        if (creds.provider != provider) return false
+        val normalized = normalizeEndpoint(href)
+        if (normalized.isBlank()) return false
+        if (creds.endpointUrl == normalized) return false
+        credentialsRepository.saveCredentials(
+            creds.copy(endpointUrl = normalized)
+        )
+        return true
+    }
+
+    /**
+     * 规范化入口地址：
+     * - 优先截断至 /jwglxt 根（若存在）
+     * - 否则保留 scheme://host[:port]
+     */
+    private fun normalizeEndpoint(href: String): String {
+        return try {
+            val uri = java.net.URI(href)
+            val base = "${uri.scheme}://${uri.host}" + (if (uri.port in 1..65535) ":${uri.port}" else "")
+            val path = uri.path ?: ""
+            if (path.contains("/jwglxt")) {
+                val idx = path.indexOf("/jwglxt")
+                base + path.substring(0, idx + "/jwglxt".length)
+            } else {
+                base
+            }
+        } catch (_: Exception) {
+            ""
+        }
+    }
 
     /**
      * 覆盖写入当前学期课程
