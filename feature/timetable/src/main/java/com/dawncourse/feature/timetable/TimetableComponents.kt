@@ -597,7 +597,7 @@ fun CourseCard(
                     lineHeight = 14.sp, // 稍微紧凑一点
                     color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
-                maxLines = if (showDetails) 2 else 3, // 减少行数预留空间给详情
+                maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis
             )
             
@@ -615,7 +615,7 @@ fun CourseCard(
                                 lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
                             ),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -629,7 +629,7 @@ fun CourseCard(
                                 lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
                             ),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
