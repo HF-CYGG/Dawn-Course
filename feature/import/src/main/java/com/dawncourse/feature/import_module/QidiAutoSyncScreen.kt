@@ -71,6 +71,7 @@ fun QidiAutoSyncScreen(
     var webView: WebView? by remember { mutableStateOf(null) }
     val scope = rememberCoroutineScope()
     var credsForAutoFill by remember { mutableStateOf<com.dawncourse.core.domain.model.SyncCredentials?>(null) }
+    var needManualLogin by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -112,6 +113,41 @@ fun QidiAutoSyncScreen(
                         )
                         wv.evaluateJavascript(js, null)
                     }
+                    // 检测正方登录页的错误与验证码可见性，提示用户手动输入
+                    if (provider == SyncProviderType.ZF) {
+                        scope.launch {
+                            try {
+                                val res = suspendEvaluateJs(
+                                    wv,
+                                    """
+                                    (function(){
+                                      try{
+                                        var tips=document.querySelector('#tips');
+                                        var tipTxt=tips? (tips.innerText||'') : '';
+                                        var hasWrong = tipTxt.indexOf('用户名或密码不正确')>=0;
+                                        var yzmDiv=document.querySelector('#yzmDiv');
+                                        var yzmVis=false;
+                                        if(yzmDiv){
+                                          var cs=getComputedStyle(yzmDiv);
+                                          yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
+                                        }
+                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis});
+                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false}); }
+                                    })();
+                                    """.trimIndent()
+                                )
+                                val txt = parseJsReturn(res)
+                                val wrong = txt.contains("\"wrong\":true")
+                                val yzm = txt.contains("\"yzm\":true")
+                                needManualLogin = wrong || yzm
+                                if (needManualLogin) {
+                                    subTitle = "检测到登录失败或需要验证码，请在页面中手动输入后点击“继续登录/提取”。"
+                                }
+                            } catch (_: Throwable) {
+                                // ignore
+                            }
+                        }
+                    }
                 }
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -144,6 +180,24 @@ fun QidiAutoSyncScreen(
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Text(" 开始同步（$providerName）")
+                }
+            }
+            if (provider == SyncProviderType.ZF && needManualLogin) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            webView?.evaluateJavascript(
+                                "var b=document.querySelector('#dl'); if(b){b.click();} void 0;"
+                            , null)
+                        }
+                    ) { Text("继续登录") }
+                    OutlinedButton(
+                        onClick = {
+                            webView?.evaluateJavascript(
+                                "var i=document.querySelector('#yzmPic'); if(i){ i.click(); } void 0;"
+                            , null)
+                        }
+                    ) { Text("刷新验证码") }
                 }
             }
             Row {
@@ -383,6 +437,18 @@ private fun buildAutoFillScript(username: String, password: String): String {
             if(passEl){ passEl.value = P; passEl.dispatchEvent(new Event('input',{bubbles:true})); passEl.dispatchEvent(new Event('change',{bubbles:true})); passEl.dispatchEvent(new Event('blur',{bubbles:true})); }
             var form = (passEl && passEl.form) || (userEl && userEl.form) || doc.querySelector('form');
             if(form){
+              // 若存在验证码输入区域，则暂停自动提交，等待用户手动输入
+              var yzmEl = doc.querySelector('#yzm') || doc.querySelector('input[name="yzm"]');
+              var yzmDiv = doc.querySelector('#yzmDiv');
+              var needCaptcha = false;
+              try{
+                if(yzmEl){ needCaptcha = true; }
+                if(yzmDiv){
+                  var cs = getComputedStyle(yzmDiv);
+                  if(!(cs.display==='none' || cs.visibility==='hidden')) needCaptcha = true;
+                }
+              }catch(e){}
+              if(needCaptcha){ return; }
               var btn = form.querySelector('button[type="submit"],input[type="submit"],button[id*="login"],button[name*="login"],button[class*="login"]');
               if(btn){ btn.click(); } else { try{ form.submit(); }catch(e){} }
             }
