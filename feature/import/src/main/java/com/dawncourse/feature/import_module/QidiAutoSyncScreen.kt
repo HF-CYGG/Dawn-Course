@@ -73,6 +73,8 @@ fun QidiAutoSyncScreen(
     var credsForAutoFill by remember { mutableStateOf<com.dawncourse.core.domain.model.SyncCredentials?>(null) }
     var needManualLogin by remember { mutableStateOf(false) }
     var addressBar by remember { mutableStateOf("") }
+    var targetYear by remember { mutableStateOf("") }
+    var targetTerm by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -115,6 +117,22 @@ fun QidiAutoSyncScreen(
                         wv.loadUrl(url)
                     }
                 }) { Text("前往") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = targetYear,
+                    onValueChange = { targetYear = it },
+                    label = { Text("学年(如 2025)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = targetTerm,
+                    onValueChange = { targetTerm = it },
+                    label = { Text("学期(1/2/3)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
             }
             if (loading) {
                 LinearProgressIndicator()
@@ -276,6 +294,15 @@ fun QidiAutoSyncScreen(
                                     append(courseUtils).append(";")
                                     if (qidiProvider != null) append(qidiProvider).append(";")
                                     if (provider == SyncProviderType.ZF) {
+                                        val y = targetYear.trim()
+                                        val q = targetTerm.trim()
+                                        val termCode = when (q) {
+                                            "1" -> "3"
+                                            "2" -> "12"
+                                            "3" -> "16"
+                                            "3","12","16" -> q
+                                            else -> ""
+                                        }
                                         append("""
                                           async function waitForSelector(sel, timeout){
                                             return new Promise((resolve,reject)=>{
@@ -305,21 +332,16 @@ fun QidiAutoSyncScreen(
                                             try{
                                               var xnm=document.querySelector('#xnm');
                                               var xqm=document.querySelector('#xqm');
+                                              var fixedYear='${y}';
+                                              var fixedTerm='${termCode}';
                                               if(xnm){
-                                                // 保持当前选中项；若为空则选择最后一个非空项
-                                                if(!xnm.value){
-                                                  for(var i=xnm.options.length-1;i>=0;i--){
-                                                    if(xnm.options[i].value){ xnm.value=xnm.options[i].value; break; }
-                                                  }
-                                                }
+                                                if(fixedYear && fixedYear.length===4){ xnm.value=fixedYear; }
+                                                if(!xnm.value){ for(var i=xnm.options.length-1;i>=0;i--){ if(xnm.options[i].value){ xnm.value=xnm.options[i].value; break; } } }
                                                 xnm.dispatchEvent(new Event('change',{bubbles:true}));
                                               }
                                               if(xqm){
-                                                if(!xqm.value){
-                                                  for(var j=xqm.options.length-1;j>=0;j--){
-                                                    if(xqm.options[j].value){ xqm.value=xqm.options[j].value; break; }
-                                                  }
-                                                }
+                                                if(fixedTerm){ xqm.value=fixedTerm; }
+                                                if(!xqm.value){ for(var j=xqm.options.length-1;j>=0;j--){ if(xqm.options[j].value){ xqm.value=xqm.options[j].value; break; } } }
                                                 xqm.dispatchEvent(new Event('change',{bubbles:true}));
                                               }
                                             }catch(e){}
