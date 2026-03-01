@@ -502,8 +502,13 @@ fun TimetableGrid(
                     val span = (item.safeEndSection - item.safeStartSection + 1).coerceAtLeast(1)
                     val height = (span * nodeHeightPx).roundToInt()
 
-                    // 同一天列内，如果存在重叠课程，则按 laneCount 把列宽等分，避免覆盖
-                    val placeableWidth = (cellWidth / item.laneCount).roundToInt()
+                    // 同一天列内，使用边界切片法分配列宽，避免舍入误差导致的缝隙或重叠
+                    val safeLaneCount = item.laneCount.coerceAtLeast(1).coerceAtMost(12)
+                    val safeLaneIndex = item.laneIndex.coerceIn(0, safeLaneCount - 1)
+                    val laneWidthF = cellWidth / safeLaneCount
+                    val leftF = safeLaneIndex * laneWidthF
+                    val rightF = (safeLaneIndex + 1) * laneWidthF
+                    val placeableWidth = (rightF.roundToInt() - leftF.roundToInt()).coerceAtLeast(1)
                     
                     measurable.measure(
                         constraints.copy(
@@ -522,8 +527,11 @@ fun TimetableGrid(
                         // 计算位置
                         // X: (dayOfWeek - 1) * cellWidth + laneOffset
                         val dayX = ((item.safeDayOfWeek - 1) * cellWidth).roundToInt()
-                        val laneWidth = cellWidth / item.laneCount
-                        val x = dayX + (item.laneIndex * laneWidth).roundToInt()
+                        val safeLaneCount = item.laneCount.coerceAtLeast(1).coerceAtMost(12)
+                        val safeLaneIndex = item.laneIndex.coerceIn(0, safeLaneCount - 1)
+                        val laneWidthF = cellWidth / safeLaneCount
+                        val leftF = safeLaneIndex * laneWidthF
+                        val x = dayX + leftF.roundToInt()
                         
                         // Y: (startSection - 1) * nodeHeight
                         val y = ((item.safeStartSection - 1) * nodeHeightPx).roundToInt()
@@ -597,7 +605,7 @@ fun CourseCard(
                     lineHeight = 14.sp, // 稍微紧凑一点
                     color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
-                maxLines = if (showDetails) 2 else 3, // 减少行数预留空间给详情
+                maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis
             )
             
@@ -615,7 +623,7 @@ fun CourseCard(
                                 lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
                             ),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -629,7 +637,7 @@ fun CourseCard(
                                 lineHeight = 11.sp,
                                 color = Color(0xFF49454F)
                             ),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
