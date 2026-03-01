@@ -81,6 +81,7 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
 quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+security-crypto = { group = "androidx.security", name = "security-crypto-ktx", version = "1.1.0-alpha06" }
 
 # Security Fixes (Dependabot)
 netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }

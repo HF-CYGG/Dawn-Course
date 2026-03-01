@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
 import androidx.compose.material3.DropdownMenu
@@ -95,7 +96,8 @@ fun TimetableTopBar(
     onWeekSelected: (Int) -> Unit,
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
-    onImportClick: () -> Unit
+    onImportClick: () -> Unit,
+    onSyncClick: () -> Unit
 ) {
     var showWeekMenu by remember { mutableStateOf(false) }
     val weekMenuScrollState = rememberScrollState()
@@ -225,6 +227,9 @@ fun TimetableTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onSyncClick) {
+                Icon(Icons.Default.Refresh, contentDescription = "一键更新")
+            }
             IconButton(onClick = onImportClick) {
                 Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")
             }

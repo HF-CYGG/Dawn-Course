@@ -82,4 +82,11 @@ interface CourseRepository {
      * @return 最大周次，默认为 0
      */
     suspend fun getMaxWeekInSemester(semesterId: Long): Int
+
+    /**
+     * 删除指定学期下的全部课程
+     *
+     * @param semesterId 学期 ID
+     */
+    suspend fun deleteCoursesBySemester(semesterId: Long)
 }

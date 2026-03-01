@@ -8,6 +8,11 @@ import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.CredentialsRepository
+import com.dawncourse.core.domain.repository.SyncStateRepository
+import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.model.SyncCredentialType
+import com.dawncourse.core.domain.model.SyncCredentials
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +22,10 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.content.Context
 import android.content.Intent
+import kotlinx.coroutines.flow.map
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 设置页面的 ViewModel
@@ -31,6 +40,8 @@ class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
+    private val credentialsRepository: CredentialsRepository,
+    private val syncStateRepository: SyncStateRepository,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -45,6 +56,33 @@ class SettingsViewModel @Inject constructor(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = AppSettings()
+        )
+
+    /**
+     * 已绑定的一键更新来源（例如 WakeUp）
+     */
+    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
+    /**
+     * 最近一次同步信息（格式化描述）
+     */
+    val lastSyncDescription: StateFlow<String> = syncStateRepository.lastSyncInfo
+        .map { info ->
+            if (info.timestamp <= 0L) return@map "尚未同步"
+            val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                .format(Date(info.timestamp))
+            val status = if (info.success) "成功" else "失败"
+            "$dateStr · $status · ${info.message.ifBlank { "" }}"
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = "尚未同步"
         )
 
     init {
@@ -74,6 +112,72 @@ class SettingsViewModel @Inject constructor(
                 //
                 // 因此这里选择“安全忽略”，避免打印堆栈造成噪音与潜在隐私风险。
             }
+        }
+    }
+
+    /**
+     * 绑定 WakeUp 口令作为一键更新凭据
+     *
+     * @param token WakeUp 分享口令
+     */
+    fun bindWakeUpToken(token: String) {
+        viewModelScope.launch {
+            // 仅保存口令，用户名留空
+            val creds = SyncCredentials(
+                provider = SyncProviderType.WAKEUP,
+                type = SyncCredentialType.TOKEN,
+                username = null,
+                secret = token,
+                endpointUrl = null
+            )
+            credentialsRepository.saveCredentials(creds)
+        }
+    }
+
+    /**
+     * 清除已绑定凭据
+     */
+    fun clearSyncCredentials() {
+        viewModelScope.launch {
+            credentialsRepository.clearCredentials()
+        }
+    }
+
+    /**
+     * 绑定起迪教务账号（用户名+密码+入口地址）
+     *
+     * @param endpoint 教务系统入口地址（形如 https://jw.example.edu.cn）
+     * @param username 用户名
+     * @param password 密码
+     */
+    fun bindQidiCredentials(endpoint: String, username: String, password: String) {
+        viewModelScope.launch {
+            val normalized = endpoint.trim().removeSuffix("/")
+            val creds = SyncCredentials(
+                provider = SyncProviderType.QIDI,
+                type = SyncCredentialType.PASSWORD,
+                username = username.trim(),
+                secret = password,
+                endpointUrl = normalized
+            )
+            credentialsRepository.saveCredentials(creds)
+        }
+    }
+
+    /**
+     * 绑定正方教务账号（用户名+密码+入口地址）
+     */
+    fun bindZfCredentials(endpoint: String, username: String, password: String) {
+        viewModelScope.launch {
+            val normalized = endpoint.trim().removeSuffix("/")
+            val creds = SyncCredentials(
+                provider = SyncProviderType.ZF,
+                type = SyncCredentialType.PASSWORD,
+                username = username.trim(),
+                secret = password,
+                endpointUrl = normalized
+            )
+            credentialsRepository.saveCredentials(creds)
         }
     }
 

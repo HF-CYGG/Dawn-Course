@@ -28,6 +28,8 @@ import coil.compose.AsyncImage
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.domain.model.WallpaperMode
+import com.dawncourse.core.domain.model.SyncProviderType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 
 /**
  * 设置主页面
@@ -47,12 +49,25 @@ fun SettingsScreen(
     onBackClick: () -> Unit,
     onNavigateToTimetableSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
+    onNavigateToQidiSync: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
     var showSemesterDialog by remember { mutableStateOf(false) }
     var maxCourseWeek by remember { mutableIntStateOf(0) }
+    val boundProvider by viewModel.boundProvider.collectAsState()
+    val lastSyncDesc by viewModel.lastSyncDescription.collectAsState()
+    var showBindWakeUpDialog by remember { mutableStateOf(false) }
+    var wakeUpToken by remember { mutableStateOf("") }
+    var showBindQidiDialog by remember { mutableStateOf(false) }
+    var qidiEndpoint by remember { mutableStateOf("") }
+    var qidiUsername by remember { mutableStateOf("") }
+    var qidiPassword by remember { mutableStateOf("") }
+    var showBindZfDialog by remember { mutableStateOf(false) }
+    var zfEndpoint by remember { mutableStateOf("") }
+    var zfUsername by remember { mutableStateOf("") }
+    var zfPassword by remember { mutableStateOf("") }
 
     if (showSemesterDialog) {
         SemesterSettingsDialog(
@@ -71,6 +86,35 @@ fun SettingsScreen(
     }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
+
+    if (showBindWakeUpDialog) {
+        AlertDialog(
+            onDismissRequest = { showBindWakeUpDialog = false },
+            title = { Text("绑定 WakeUp 口令") },
+            text = {
+                OutlinedTextField(
+                    value = wakeUpToken,
+                    onValueChange = { wakeUpToken = it },
+                    label = { Text("口令") },
+                    placeholder = { Text("例如：ABCD") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (wakeUpToken.isNotBlank()) {
+                        viewModel.bindWakeUpToken(wakeUpToken.trim())
+                        showBindWakeUpDialog = false
+                        wakeUpToken = ""
+                        android.widget.Toast.makeText(context, "已绑定 WakeUp 口令", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("绑定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBindWakeUpDialog = false }) { Text("取消") }
+            }
+        )
+    }
 
     if (showPermissionDialog) {
         AlertDialog(
@@ -413,6 +457,154 @@ fun SettingsScreen(
 
             // 5. 数据与同步 (Data & Backup)
             PreferenceCategory(title = "数据与同步") {
+                // 起迪绑定
+                if (showBindQidiDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showBindQidiDialog = false },
+                        title = { Text("绑定起迪教务") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = qidiEndpoint,
+                                    onValueChange = { qidiEndpoint = it },
+                                    label = { Text("入口地址（含 http/https）") },
+                                    placeholder = { Text("例如：https://jw.example.edu.cn") },
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = qidiUsername,
+                                    onValueChange = { qidiUsername = it },
+                                    label = { Text("用户名") },
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = qidiPassword,
+                                    onValueChange = { qidiPassword = it },
+                                    label = { Text("密码") },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val ok = qidiEndpoint.startsWith("http") && qidiUsername.isNotBlank() && qidiPassword.isNotBlank()
+                                if (ok) {
+                                    viewModel.bindQidiCredentials(qidiEndpoint.trim(), qidiUsername.trim(), qidiPassword)
+                                    showBindQidiDialog = false
+                                    android.widget.Toast.makeText(context, "已绑定起迪账号", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }) { Text("绑定") }
+                        },
+                        dismissButton = { TextButton(onClick = { showBindQidiDialog = false }) { Text("取消") } }
+                    )
+                }
+                
+                // 正方绑定
+                if (showBindZfDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showBindZfDialog = false },
+                        title = { Text("绑定正方教务") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = zfEndpoint,
+                                    onValueChange = { zfEndpoint = it },
+                                    label = { Text("入口地址（含 http/https）") },
+                                    placeholder = { Text("例如：https://jwgl.example.edu.cn") },
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = zfUsername,
+                                    onValueChange = { zfUsername = it },
+                                    label = { Text("用户名") },
+                                    singleLine = true
+                                )
+                                OutlinedTextField(
+                                    value = zfPassword,
+                                    onValueChange = { zfPassword = it },
+                                    label = { Text("密码") },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation()
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                val ok = zfEndpoint.startsWith("http") && zfUsername.isNotBlank() && zfPassword.isNotBlank()
+                                if (ok) {
+                                    viewModel.bindZfCredentials(zfEndpoint.trim(), zfUsername.trim(), zfPassword)
+                                    showBindZfDialog = false
+                                    android.widget.Toast.makeText(context, "已绑定正方账号", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }) { Text("绑定") }
+                        },
+                        dismissButton = { TextButton(onClick = { showBindZfDialog = false }) { Text("取消") } }
+                    )
+                }
+
+                // 账号与同步
+                SettingRow(
+                    title = "一键更新来源",
+                    description = when (boundProvider) {
+                        SyncProviderType.WAKEUP -> "WakeUp 课程表"
+                        SyncProviderType.QIDI -> "起迪教务（用户名+密码）"
+                        SyncProviderType.ZF -> "正方教务（用户名+密码）"
+                        null -> "未绑定"
+                    },
+                    icon = { Icon(Icons.Default.AccountCircle, null) },
+                    onClick = { /* 查看详情 */ },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "上次更新",
+                    description = lastSyncDesc,
+                    icon = { Icon(Icons.Default.History, null) },
+                    onClick = { },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "绑定 WakeUp 口令",
+                    description = "保存口令以支持一键更新",
+                    icon = { Icon(Icons.Default.Link, null) },
+                    onClick = { showBindWakeUpDialog = true },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "绑定起迪账号",
+                    description = "保存入口地址、用户名和密码",
+                    icon = { Icon(Icons.Default.Link, null) },
+                    onClick = { showBindQidiDialog = true },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "绑定正方账号",
+                    description = "保存入口地址、用户名和密码",
+                    icon = { Icon(Icons.Default.Link, null) },
+                    onClick = { showBindZfDialog = true },
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "起迪一键更新（实验）",
+                    description = "自动登录并提取课程",
+                    icon = { Icon(Icons.Default.Refresh, null) },
+                    onClick = onNavigateToQidiSync,
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "正方一键更新（实验）",
+                    description = "自动登录并提取课程",
+                    icon = { Icon(Icons.Default.Refresh, null) },
+                    onClick = onNavigateToQidiSync,
+                    showDivider = true
+                )
+                SettingRow(
+                    title = "清除凭据",
+                    description = "移除本机保存的账号/口令",
+                    icon = { Icon(Icons.Default.Delete, null) },
+                    onClick = { viewModel.clearSyncCredentials() }
+                )
+                
                 SettingRow(
                     title = "WebDAV 同步",
                     description = "同步到坚果云/Nextcloud",

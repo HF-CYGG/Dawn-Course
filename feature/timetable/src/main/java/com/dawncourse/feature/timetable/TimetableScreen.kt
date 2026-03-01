@@ -65,6 +65,7 @@ fun TimetableRoute(
         onUserMessageShown = { viewModel.userMessageShown() },
         onAddClick = onAddClick,
         onImportClick = onImportClick,
+        onSyncClick = { viewModel.syncNow() },
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },
@@ -102,6 +103,7 @@ internal fun TimetableScreen(
     onUserMessageShown: () -> Unit = {},
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
+    onSyncClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
     onUndoReschedule: (Course) -> Unit,
@@ -204,7 +206,8 @@ internal fun TimetableScreen(
                     },
                     onSettingsClick = onSettingsClick,
                     onAddClick = onAddClick,
-                    onImportClick = onImportClick
+                    onImportClick = onImportClick,
+                    onSyncClick = onSyncClick
                 )
             },
             contentColor = MaterialTheme.colorScheme.onBackground

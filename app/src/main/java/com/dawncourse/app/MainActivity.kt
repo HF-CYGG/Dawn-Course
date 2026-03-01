@@ -22,6 +22,7 @@ import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
+import com.dawncourse.feature.import_module.QidiAutoSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
 import android.net.Uri
@@ -188,6 +189,9 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onCheckUpdate = {
                                         updateViewModel.checkUpdate(isManual = true)
+                                    },
+                                    onNavigateToQidiSync = {
+                                        navController.navigate("qidi_sync")
                                     }
                                 )
                             }
@@ -198,6 +202,22 @@ class MainActivity : ComponentActivity() {
                                     onBackClick = {
                                         navController.popBackStack()
                                     }
+                                )
+                            }
+                            
+                            // 起迪自动同步页面
+                            composable("qidi_sync") {
+                                QidiAutoSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onFinish = { navController.popBackStack() }
+                                )
+                            }
+                            
+                            // 正方自动同步页面（复用同一实现）
+                            composable("zf_sync") {
+                                QidiAutoSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onFinish = { navController.popBackStack() }
                                 )
                             }
                             
