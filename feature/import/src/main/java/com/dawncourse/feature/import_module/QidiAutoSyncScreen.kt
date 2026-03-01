@@ -173,15 +173,74 @@ fun QidiAutoSyncScreen(
                                     append(outputConsole).append(";")
                                     append(courseUtils).append(";")
                                     if (qidiProvider != null) append(qidiProvider).append(";")
+                                    if (provider == SyncProviderType.ZF) {
+                                        append("""
+                                          async function waitForSelector(sel, timeout){
+                                            return new Promise((resolve,reject)=>{
+                                              var t=0; var it=setInterval(function(){
+                                                var el=document.querySelector(sel);
+                                                if(el){ clearInterval(it); resolve(el); }
+                                                t+=200; if(t>=timeout){ clearInterval(it); resolve(null); }
+                                              },200);
+                                            });
+                                          }
+                                          async function openZfTimetableAndQuery(){
+                                            // 1) 若当前已在课表页，直接进行查询
+                                            if(document.querySelector('#ylkbTable') || document.querySelector('#ajaxForm')){
+                                              // 继续走查询按钮，提高成功率
+                                            }else{
+                                              // 2) 导航到“信息查询 -> 个人课表查询”
+                                              var link = Array.from(document.querySelectorAll('a')).find(a=>{
+                                                var href=(a.getAttribute('href')||'').toLowerCase();
+                                                var txt=(a.textContent||'').trim();
+                                                return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
+                                              });
+                                              if(link){ link.click(); }
+                                              await waitForSelector('#ajaxForm, #ylkbTable', 8000);
+                                            }
+                                            
+                                            // 3) 设置学年/学期: 若 select 存在，优先选择已选；否则保持默认
+                                            try{
+                                              var xnm=document.querySelector('#xnm');
+                                              var xqm=document.querySelector('#xqm');
+                                              if(xnm){
+                                                // 保持当前选中项；若为空则选择最后一个非空项
+                                                if(!xnm.value){
+                                                  for(var i=xnm.options.length-1;i>=0;i--){
+                                                    if(xnm.options[i].value){ xnm.value=xnm.options[i].value; break; }
+                                                  }
+                                                }
+                                                xnm.dispatchEvent(new Event('change',{bubbles:true}));
+                                              }
+                                              if(xqm){
+                                                if(!xqm.value){
+                                                  for(var j=xqm.options.length-1;j>=0;j--){
+                                                    if(xqm.options[j].value){ xqm.value=xqm.options[j].value; break; }
+                                                  }
+                                                }
+                                                xqm.dispatchEvent(new Event('change',{bubbles:true}));
+                                              }
+                                            }catch(e){}
+                                            
+                                            // 4) 点击查询按钮
+                                            var btn=document.querySelector('#search_go') || Array.from(document.querySelectorAll('button')).find(b=>(b.textContent||'').indexOf('查询')>=0);
+                                            if(btn){ btn.click(); }
+                                            
+                                            // 5) 等待表格渲染
+                                            await waitForSelector('#ylkbTable, #kblist_table, #kbgrid_table_0', 8000);
+                                          }
+                                        """.trimIndent())
+                                    }
                                     append("""
                                         (async function(){
                                           try{
-                                            if(typeof scheduleHtmlProvider==='function'){
+                                            if(typeof scheduleHtmlProvider==='function' && ${if (provider == SyncProviderType.ZF) "false" else "true"}){
                                               var result=await scheduleHtmlProvider();
                                               if(result!=="do not continue"){
                                                 window.__dawnResult=result;window.__dawnReady=true;return;
                                               }
                                             }
+                                            ${if (provider == SyncProviderType.ZF) "await openZfTimetableAndQuery();" else ""}
                                           }catch(e){}
                                           window.__dawnResult=document.documentElement.outerHTML;window.__dawnReady=true;
                                         })();
