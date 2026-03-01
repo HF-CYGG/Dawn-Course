@@ -56,11 +56,17 @@ import javax.inject.Inject
 fun QidiAutoSyncScreen(
     onBackClick: () -> Unit,
     onFinish: () -> Unit,
+    provider: SyncProviderType = SyncProviderType.QIDI,
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
-    var title by remember { mutableStateOf("起迪一键更新（实验）") }
-    var subTitle by remember { mutableStateOf("请确认已在设置中绑定起迪账号") }
+    val providerName = when (provider) {
+        SyncProviderType.QIDI -> "起迪"
+        SyncProviderType.ZF -> "正方"
+        else -> "教务"
+    }
+    var title by remember { mutableStateOf("$providerName 一键更新（实验）") }
+    var subTitle by remember { mutableStateOf("请确认已在设置中绑定${providerName}账号") }
     var loading by remember { mutableStateOf(false) }
     var webView: WebView? by remember { mutableStateOf(null) }
     val scope = rememberCoroutineScope()
@@ -100,25 +106,10 @@ fun QidiAutoSyncScreen(
                 onPageFinished = { wv, url ->
                     val creds = credsForAutoFill
                     if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
-                        // 基础自动填充与提交：尽量不依赖特定 DOM 结构
-                        val userEsc = (creds.username ?: "").replace("'", "\\'")
-                        val passEsc = creds.secret.replace("'", "\\'")
-                        val js = """
-                            (function(){
-                              try{
-                                var U='$userEsc'; var P='$passEsc';
-                                var userEl = document.querySelector('input[type="text"], input[name*="user"], input[id*="user"], input[name*="account"], input[id*="account"]');
-                                var passEl = document.querySelector('input[type="password"]');
-                                if(userEl){ userEl.value = U; userEl.dispatchEvent(new Event('input', {bubbles:true})); }
-                                if(passEl){ passEl.value = P; passEl.dispatchEvent(new Event('input', {bubbles:true})); }
-                                var form = (passEl && passEl.form) || (userEl && userEl.form) || document.querySelector('form');
-                                if(form){
-                                  var btn = form.querySelector('button[type="submit"], input[type="submit"]');
-                                  if(btn){ btn.click(); } else { form.submit(); }
-                                }
-                              }catch(e){}
-                            })();
-                        """.trimIndent()
+                        val js = buildAutoFillScript(
+                            username = creds.username ?: "",
+                            password = creds.secret
+                        )
                         wv.evaluateJavascript(js, null)
                     }
                 }
@@ -134,8 +125,9 @@ fun QidiAutoSyncScreen(
                     onClick = {
                         scope.launch {
                             val creds = viewModel.loadQidiCredentials()
-                            if (creds == null || creds.provider != SyncProviderType.QIDI || creds.type != SyncCredentialType.PASSWORD) {
-                                subTitle = "未绑定起迪凭据，请在设置中绑定"
+                            val needProvider = provider
+                            if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
+                                subTitle = "未绑定${providerName}凭据，请在设置中绑定"
                                 return@launch
                             }
                             val endpoint = creds.endpointUrl ?: run {
@@ -144,14 +136,14 @@ fun QidiAutoSyncScreen(
                             }
                             credsForAutoFill = creds
                             loading = true
-                            subTitle = "正在打开教务系统..."
+                            subTitle = "正在打开${providerName}教务系统..."
                             val wv = webView ?: return@launch
                             wv.loadUrl(endpoint)
                         }
                     }
                 ) {
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Text(" 开始同步")
+                    Text(" 开始同步（$providerName）")
                 }
             }
             Row {
@@ -171,13 +163,16 @@ fun QidiAutoSyncScreen(
                                 val assets = context.assets
                                 val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
                                 val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
-                                val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
+                                val qidiProvider = if (provider == SyncProviderType.QIDI) {
+                                    // 起迪：尝试使用 provider 脚本
+                                    runCatching { assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() } }.getOrNull()
+                                } else null
                                 val js = buildString {
                                     append("(function(){try{")
                                     append("window.__dawnResult=null;window.__dawnReady=false;")
                                     append(outputConsole).append(";")
                                     append(courseUtils).append(";")
-                                    append(qidiProvider).append(";")
+                                    if (qidiProvider != null) append(qidiProvider).append(";")
                                     append("""
                                         (async function(){
                                           try{
@@ -305,6 +300,42 @@ private fun parseJsReturn(value: String?): String {
         v = v.replace("\\n", "\n").replace("\\\"", "\"")
     }
     return v
+}
+
+/**
+ * 生成更健壮的自动填充脚本：
+ * - 针对常见字段名：yhm/xh/username/account 等，密码：mm/pwd/password
+ * - 触发 input/change/blur 事件
+ * - 尝试在同域 iframe 中执行相同逻辑
+ */
+private fun buildAutoFillScript(username: String, password: String): String {
+    val userEsc = username.replace("'", "\\'")
+    val passEsc = password.replace("'", "\\'")
+    return """
+      (function(){
+        function tryFill(doc){
+          try{
+            var U='$userEsc', P='$passEsc';
+            var userSel = 'input[name="yhm"],input[name*="user"],input[name*="account"],input[id*="user"],input[id*="account"],input[name="xh"],input[id*="xh"],input[type="text"]';
+            var passSel = 'input[name="mm"],input[name*="pwd"],input[id*="pwd"],input[type="password"]';
+            var userEl = doc.querySelector(userSel);
+            var passEl = doc.querySelector(passSel);
+            if(userEl){ userEl.value = U; userEl.dispatchEvent(new Event('input',{bubbles:true})); userEl.dispatchEvent(new Event('change',{bubbles:true})); userEl.dispatchEvent(new Event('blur',{bubbles:true})); }
+            if(passEl){ passEl.value = P; passEl.dispatchEvent(new Event('input',{bubbles:true})); passEl.dispatchEvent(new Event('change',{bubbles:true})); passEl.dispatchEvent(new Event('blur',{bubbles:true})); }
+            var form = (passEl && passEl.form) || (userEl && userEl.form) || doc.querySelector('form');
+            if(form){
+              var btn = form.querySelector('button[type="submit"],input[type="submit"],button[id*="login"],button[name*="login"],button[class*="login"]');
+              if(btn){ btn.click(); } else { try{ form.submit(); }catch(e){} }
+            }
+          }catch(e){}
+        }
+        tryFill(document);
+        var iframes = document.querySelectorAll('iframe');
+        for(var i=0;i<iframes.length;i++){
+          try{ var idoc = iframes[i].contentDocument; if(idoc) tryFill(idoc); }catch(e){}
+        }
+      })();
+    """.trimIndent()
 }
 
 /**

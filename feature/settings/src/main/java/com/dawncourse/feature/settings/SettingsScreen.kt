@@ -50,6 +50,7 @@ fun SettingsScreen(
     onNavigateToTimetableSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
     onNavigateToQidiSync: () -> Unit = {},
+    onNavigateToZfSync: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -595,7 +596,7 @@ fun SettingsScreen(
                     title = "正方一键更新（实验）",
                     description = "自动登录并提取课程",
                     icon = { Icon(Icons.Default.Refresh, null) },
-                    onClick = onNavigateToQidiSync,
+                    onClick = onNavigateToZfSync,
                     showDivider = true
                 )
                 SettingRow(

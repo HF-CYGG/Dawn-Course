@@ -192,6 +192,9 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onNavigateToQidiSync = {
                                         navController.navigate("qidi_sync")
+                                    },
+                                    onNavigateToZfSync = {
+                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }
@@ -209,7 +212,8 @@ class MainActivity : ComponentActivity() {
                             composable("qidi_sync") {
                                 QidiAutoSyncScreen(
                                     onBackClick = { navController.popBackStack() },
-                                    onFinish = { navController.popBackStack() }
+                                    onFinish = { navController.popBackStack() },
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.QIDI
                                 )
                             }
                             
@@ -217,7 +221,8 @@ class MainActivity : ComponentActivity() {
                             composable("zf_sync") {
                                 QidiAutoSyncScreen(
                                     onBackClick = { navController.popBackStack() },
-                                    onFinish = { navController.popBackStack() }
+                                    onFinish = { navController.popBackStack() },
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.ZF
                                 )
                             }
                             
