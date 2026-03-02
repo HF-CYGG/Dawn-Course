@@ -335,11 +335,22 @@ function extractName(blockHtml) {
 }
 
 function extractTextByTitle(blockHtml, titleText) {
-    var pattern = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
-    var match = new RegExp(pattern, "i").exec(blockHtml);
-    if (match) {
-        return stripTags(match[1]).trim();
+    // 1. 尝试匹配 title 在 span 标签内，并提取 span 的内容 (新版结构)
+    // 结构: <span ... title="titleText"> ... content ... </span>
+    var patternInside = '<span[^>]*title=["\']?' + titleText + '["\']?[^>]*>([\\s\\S]*?)<\\/span>';
+    var matchInside = new RegExp(patternInside, "i").exec(blockHtml);
+    if (matchInside) {
+        return stripTags(matchInside[1]).trim();
     }
+
+    // 2. 尝试旧逻辑：title 在某个标签内，后面紧跟着 font (部分旧版结构)
+    // 结构: <span title="titleText">...</span> <font> ... content ... </font>
+    var patternAfter = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
+    var matchAfter = new RegExp(patternAfter, "i").exec(blockHtml);
+    if (matchAfter) {
+        return stripTags(matchAfter[1]).trim();
+    }
+    
     return "";
 }
 

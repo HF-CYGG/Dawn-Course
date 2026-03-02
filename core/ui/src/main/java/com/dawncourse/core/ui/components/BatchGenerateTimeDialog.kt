@@ -1,4 +1,4 @@
-package com.dawncourse.feature.settings
+package com.dawncourse.core.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,19 +39,26 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun BatchGenerateTimeDialog(
     maxDailySections: Int,
+    initialDuration: Int = 45,
+    initialBreakDuration: Int = 10,
+    initialAmStart: LocalTime = LocalTime.of(8, 0),
+    initialPmStartSec: Int = 5,
+    initialPmStart: LocalTime = LocalTime.of(14, 0),
+    initialEveStartSec: Int = 9,
+    initialEveStart: LocalTime = LocalTime.of(19, 0),
     onDismissRequest: () -> Unit,
     onConfirm: (List<SectionTime>) -> Unit
 ) {
-    var sectionDuration by remember { mutableStateOf("45") }
-    var breakDuration by remember { mutableStateOf("10") }
+    var sectionDuration by remember { mutableStateOf(initialDuration.toString()) }
+    var breakDuration by remember { mutableStateOf(initialBreakDuration.toString()) }
     
-    var morningStartTime by remember { mutableStateOf(LocalTime.of(8, 0)) }
+    var morningStartTime by remember { mutableStateOf(initialAmStart) }
     
-    var afternoonStartSection by remember { mutableStateOf("5") }
-    var afternoonStartTime by remember { mutableStateOf(LocalTime.of(14, 0)) }
+    var afternoonStartSection by remember { mutableStateOf(initialPmStartSec.toString()) }
+    var afternoonStartTime by remember { mutableStateOf(initialPmStart) }
     
-    var eveningStartSection by remember { mutableStateOf("9") }
-    var eveningStartTime by remember { mutableStateOf(LocalTime.of(19, 0)) }
+    var eveningStartSection by remember { mutableStateOf(initialEveStartSec.toString()) }
+    var eveningStartTime by remember { mutableStateOf(initialEveStart) }
     
     var showTimePickerFor by remember { mutableStateOf<String?>(null) } // "morning", "afternoon", "evening"
 

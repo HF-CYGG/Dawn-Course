@@ -80,6 +80,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
 import kotlinx.coroutines.Job
@@ -1059,6 +1060,7 @@ private fun ReviewStep(
     val scrollState = rememberScrollState()
 
     var showDatePicker by remember { mutableStateOf(false) }
+    var showTimeSettingDialog by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = uiState.semesterStartDate
     )
@@ -1072,6 +1074,32 @@ private fun ReviewStep(
                     viewModel.updateSemesterSettings(timestamp, uiState.weekCount)
                 }
                 showDatePicker = false
+            }
+        )
+    }
+
+    if (showTimeSettingDialog) {
+        BatchGenerateTimeDialog(
+            maxDailySections = uiState.detectedMaxSection,
+            initialDuration = uiState.courseDuration,
+            initialBreakDuration = uiState.breakDuration,
+            initialAmStart = uiState.amStartTime,
+            initialPmStartSec = uiState.pmStartSection,
+            initialPmStart = uiState.pmStartTime,
+            initialEveStartSec = uiState.eveStartSection,
+            initialEveStart = uiState.eveStartTime,
+            onDismissRequest = { showTimeSettingDialog = false },
+            onConfirm = { times ->
+                viewModel.updateSectionTimes(times)
+                // 同时更新最大节次，保持一致
+                viewModel.updateTimeSettings(
+                    maxSection = times.size,
+                    duration = uiState.courseDuration, // 这些值在 dialog 中可能已变，但这里主要更新 sectionTimes
+                    breakDuration = uiState.breakDuration,
+                    bigBreakDuration = uiState.bigBreakDuration,
+                    sectionsPerBigSection = uiState.sectionsPerBigSection
+                )
+                showTimeSettingDialog = false
             }
         )
     }
@@ -1173,87 +1201,51 @@ private fun ReviewStep(
 
         // 3. 作息时间设置
         ImportSettingsSection(title = "作息时间") {
-            // 单节时长
             ListItem(
-                headlineContent = { Text("单节时长") },
+                headlineContent = { Text("作息时间表") },
+                supportingContent = {
+                    val count = if (uiState.sectionTimes.isNotEmpty()) uiState.sectionTimes.size else uiState.detectedMaxSection
+                    Text("共 $count 节课")
+                },
                 leadingContent = { Icon(Icons.Outlined.Timer, null) },
                 trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration - 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            enabled = uiState.courseDuration > 5,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.courseDuration}分钟", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration + 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
+                    Button(onClick = { showTimeSettingDialog = true }) {
+                        Text("设置")
                     }
                 }
             )
 
             HorizontalDivider()
             
-            // 课间时长
-             ListItem(
-                headlineContent = { Text("小课间") },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration - 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            enabled = uiState.breakDuration > 0,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.breakDuration}分钟", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration + 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
+            // 预览列表
+            if (uiState.sectionTimes.isNotEmpty()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    uiState.sectionTimes.forEachIndexed { index, time ->
+                        if (index < 4 || index >= uiState.sectionTimes.size - 2) { // 只显示前4节和最后2节，避免过长
+                             Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("第 ${index + 1} 节", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${time.startTime} - ${time.endTime}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else if (index == 4) {
+                             Text(
+                                "...", 
+                                modifier = Modifier.fillMaxWidth(), 
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
-            )
-
-             HorizontalDivider()
-            
-            // 大节包含小节数 (用于大课间逻辑)
-             ListItem(
-                headlineContent = { Text("大节包含小节数") },
-                supportingContent = { Text("每隔几节课休息一次大课间") },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection - 1) },
-                            enabled = uiState.sectionsPerBigSection > 1,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.sectionsPerBigSection}节", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection + 1) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
-                    }
-                }
-            )
-        }
-
-        // 4. 时间表预览
-        ImportSettingsSection(title = "时间表预览") {
-             // 简单的预览列表
-             Column(modifier = Modifier.padding(16.dp)) {
-                 // 上午
-                 SectionTimePreviewRow("上午", 1, uiState.amStartTime)
-                 // 下午
-                 SectionTimePreviewRow("下午", uiState.pmStartSection, uiState.pmStartTime)
-                 // 晚上
-                 SectionTimePreviewRow("晚上", uiState.eveStartSection, uiState.eveStartTime)
-             }
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1294,28 +1286,6 @@ private fun ImportSettingsSection(
                 content()
             }
         }
-    }
-}
-
-@Composable
-private fun SectionTimePreviewRow(
-    label: String,
-    startSection: Int,
-    startTime: LocalTime
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-        Text(
-            text = "第 $startSection 节 ${startTime.format(DateTimeFormatter.ofPattern("HH:mm"))} 开始",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 

@@ -346,12 +346,14 @@ class ImportViewModel @Inject constructor(
                     _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
                 } else {
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         )
                     }
@@ -406,13 +408,15 @@ class ImportViewModel @Inject constructor(
                 } else {
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
                     _uiState.update { 
                         it.copy(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek, // 自动设置学期总周数
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         ) 
                     }
@@ -436,6 +440,47 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
+     * 根据当前设置生成默认作息时间表
+     */
+    private fun generateDefaultSectionTimes(state: ImportUiState, maxSection: Int): List<SectionTime> {
+        val generatedTimes = mutableListOf<SectionTime>()
+        val formatter = DateTimeFormatter.ofPattern("HH:mm")
+
+        for (i in 1..maxSection) {
+            val startTime = when (i) {
+                1 -> state.amStartTime
+                state.pmStartSection -> state.pmStartTime
+                state.eveStartSection -> state.eveStartTime
+                else -> {
+                    // 计算当前节次的开始时间：上一节结束时间 + 课间休息
+                    val prevEnd = if (generatedTimes.isNotEmpty()) {
+                        LocalTime.parse(generatedTimes.last().endTime, formatter)
+                    } else {
+                        // 防御性代码，理论上不应发生（除非 maxSection < 1 但循环进来了，或者 i=1 没匹配到）
+                        // 如果 i != 1 但 generatedTimes 为空，说明 pmStartSection/eveStartSection 设置有问题导致跳过了前面的节次？
+                        // 简单起见，如果为空则回退到 amStartTime
+                        state.amStartTime
+                    }
+                    
+                    val prevSectionIndex = i - 1
+                    // 判断是否为大课间 (例如第2节后、第4节后)
+                    val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
+                    val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
+                    prevEnd.plusMinutes(gap.toLong())
+                }
+            }
+            val endTime = startTime.plusMinutes(state.courseDuration.toLong())
+            generatedTimes.add(
+                SectionTime(
+                    startTime = startTime.format(formatter),
+                    endTime = endTime.format(formatter)
+                )
+            )
+        }
+        return generatedTimes
+    }
+
+    /**
      * 确认导入
      *
      * 将解析后的课程数据、学期设置和时间表设置保存到数据库。
@@ -455,41 +500,11 @@ class ImportViewModel @Inject constructor(
                 // 1. 更新全局时间设置
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
                 
-                // 1.1 自动生成作息时间表
-                val generatedTimes = mutableListOf<SectionTime>()
-                val formatter = DateTimeFormatter.ofPattern("HH:mm")
-                
-                for (i in 1..state.detectedMaxSection) {
-                    val startTime = when (i) {
-                        1 -> state.amStartTime
-                        state.pmStartSection -> state.pmStartTime
-                        state.eveStartSection -> state.eveStartTime
-                        else -> {
-                            // 计算当前节次的开始时间：上一节结束时间 + 课间休息
-                            val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
-                            val prevSectionIndex = i - 1
-                            // 判断是否为大课间 (例如第2节后、第4节后)
-                            val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
-                            val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
-                            prevEnd.plusMinutes(gap.toLong())
-                        }
-                    }
-                    val endTime = startTime.plusMinutes(state.courseDuration.toLong())
-                    generatedTimes.add(
-                        SectionTime(
-                            startTime = startTime.format(formatter),
-                            endTime = endTime.format(formatter)
-                        )
-                    )
-                }
-
-                // 合并用户手动修改的时间和自动生成的时间
+                // 1.1 使用当前状态中的作息时间表（如果为空则重新生成默认值作为兜底）
                 val finalTimes = if (state.sectionTimes.isNotEmpty()) {
-                    (1..state.detectedMaxSection).map { index ->
-                        state.sectionTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
-                    }
+                    state.sectionTimes
                 } else {
-                    generatedTimes
+                    generateDefaultSectionTimes(state, state.detectedMaxSection)
                 }
                 settingsRepository.setSectionTimes(finalTimes)
                 
@@ -627,13 +642,15 @@ class ImportViewModel @Inject constructor(
                 } else {
                     val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
                     val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsedCourses,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "强智 API 导入成功: ${parsedCourses.size} 个课程段"
                         )
                     }
@@ -744,13 +761,15 @@ class ImportViewModel @Inject constructor(
                 } else {
                      val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                      val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
+                     val safeMaxSection = maxSection.coerceAtLeast(4)
                      _uiState.update { 
                         it.copy(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "WakeUp 导入成功: ${parsed.size} 个课程段"
                         ) 
                     }
