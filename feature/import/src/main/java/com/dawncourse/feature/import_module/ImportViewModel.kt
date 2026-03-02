@@ -10,6 +10,8 @@ import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
+import com.dawncourse.feature.import_module.model.SectionRange
+import com.dawncourse.feature.import_module.model.XiaoaiCourse
 import com.dawncourse.feature.import_module.model.convertXiaoaiCoursesToParsedCourses
 import com.dawncourse.feature.import_module.model.parseIcsToParsedCourses
 import com.dawncourse.feature.import_module.model.parseParsedCoursesFromRaw
@@ -24,6 +26,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URI
+import java.net.URLEncoder
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -559,6 +563,76 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
+     * 运行强智 API 导入
+     *
+     * 使用学号与密码获取 token，再根据学年与周次拉取课表。
+     *
+     * @param baseUrl 教务系统基础地址，例如 https://jwxt.xxx.edu.cn
+     * @param studentId 学号
+     * @param password 密码
+     * @param totalWeeks 学期总周数
+     */
+    fun runQiangZhiApiImport(
+        baseUrl: String,
+        studentId: String,
+        password: String,
+        totalWeeks: Int
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, resultText = "正在连接强智教务系统...") }
+            try {
+                val parsedCourses = withContext(Dispatchers.IO) {
+                    val normalizedBaseUrl = normalizeQiangZhiBaseUrl(baseUrl)
+                    if (normalizedBaseUrl.isBlank()) {
+                        throw Exception("教务系统地址不正确")
+                    }
+                    if (studentId.isBlank() || password.isBlank()) {
+                        throw Exception("学号或密码不能为空")
+                    }
+                    val token = qiangZhiAuthUser(normalizedBaseUrl, studentId, password)
+                    val currentInfo = qiangZhiGetCurrentTime(normalizedBaseUrl, token)
+                    val xnxqh = currentInfo.optString("xnxqh")
+                    if (xnxqh.isBlank()) {
+                        throw Exception("无法获取学年学期信息")
+                    }
+                    val targetWeeks = totalWeeks.coerceIn(1, 30)
+                    val allCourses = mutableListOf<XiaoaiCourse>()
+                    for (week in 1..targetWeeks) {
+                        val weekArray = qiangZhiGetCourseArray(
+                            baseUrl = normalizedBaseUrl,
+                            token = token,
+                            studentId = studentId,
+                            xnxqh = xnxqh,
+                            week = week
+                        )
+                        allCourses.addAll(parseQiangZhiApiCourses(weekArray))
+                    }
+                    val merged = mergeQiangZhiCourses(allCourses)
+                    convertXiaoaiCoursesToParsedCourses(merged)
+                }
+                if (parsedCourses.isEmpty()) {
+                    _uiState.update { it.copy(isLoading = false, resultText = "未找到课程数据") }
+                } else {
+                    val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
+                    val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = parsedCourses,
+                            step = ImportStep.Review,
+                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            weekCount = maxWeek,
+                            resultText = "强智 API 导入成功: ${parsedCourses.size} 个课程段"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = "强智 API 导入失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
      * 运行 WakeUp 课程表口令导入
      *
      * 通过 WakeUp 官方 API 获取分享的课程数据。
@@ -673,6 +747,301 @@ class ImportViewModel @Inject constructor(
             } catch (e: Exception) {
                  _uiState.update { it.copy(isLoading = false, resultText = "WakeUp 导入失败: ${e.message}") }
             }
+        }
+    }
+
+    /**
+     * 强智 API 登录并获取 token
+     */
+    private fun qiangZhiAuthUser(baseUrl: String, studentId: String, password: String): String {
+        val url = buildQiangZhiUrl(
+            baseUrl,
+            mapOf(
+                "method" to "authUser",
+                "xh" to studentId,
+                "pwd" to password
+            )
+        )
+        val responseText = requestQiangZhiJson(url, null)
+        val json = org.json.JSONObject(responseText)
+        val token = json.optString("token")
+        if (token.isBlank() || token == "-1") {
+            val msg = json.optString("msg").ifBlank { "登录失败" }
+            throw Exception(msg)
+        }
+        return token
+    }
+
+    /**
+     * 强智 API 获取当前学年学期信息
+     */
+    private fun qiangZhiGetCurrentTime(baseUrl: String, token: String): org.json.JSONObject {
+        val today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        val url = buildQiangZhiUrl(
+            baseUrl,
+            mapOf(
+                "method" to "getCurrentTime",
+                "currDate" to today
+            )
+        )
+        val responseText = requestQiangZhiJson(url, token)
+        return org.json.JSONObject(responseText)
+    }
+
+    /**
+     * 强智 API 获取指定周课程表
+     */
+    private fun qiangZhiGetCourseArray(
+        baseUrl: String,
+        token: String,
+        studentId: String,
+        xnxqh: String,
+        week: Int
+    ): org.json.JSONArray {
+        val url = buildQiangZhiUrl(
+            baseUrl,
+            mapOf(
+                "method" to "getKbcxAzc",
+                "xh" to studentId,
+                "xnxqid" to xnxqh,
+                "zc" to week.toString()
+            )
+        )
+        val responseText = requestQiangZhiJson(url, token)
+        return org.json.JSONArray(responseText)
+    }
+
+    /**
+     * 解析强智 API 返回的课程数组
+     */
+    private fun parseQiangZhiApiCourses(array: org.json.JSONArray): List<XiaoaiCourse> {
+        val courses = mutableListOf<XiaoaiCourse>()
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val name = item.optString("kcmc").trim()
+            if (name.isBlank()) continue
+            val teacher = item.optString("jsxm").trim()
+            val location = item.optString("jsmc").trim()
+            val weekText = item.optString("kkzc").trim()
+            val weeks = parseWeekString(weekText)
+            val filteredWeeks = when {
+                weekText.contains("单") -> weeks.filter { it % 2 == 1 }
+                weekText.contains("双") -> weeks.filter { it % 2 == 0 }
+                else -> weeks
+            }
+            val sectionText = item.optString("jcs")
+                .ifBlank { item.optString("jc") }
+                .ifBlank { item.optString("jcsj") }
+            val sections = parseSectionListFromText(sectionText)
+            val day = parseQiangZhiDay(item)
+            val resolvedSections = if (sections.isNotEmpty()) {
+                sections
+            } else {
+                val range = calculateSectionRangeByTime(
+                    startTime = item.optString("kssj"),
+                    endTime = item.optString("jssj")
+                )
+                if (range == null) {
+                    emptyList()
+                } else {
+                    val endSection = range.startSection + range.duration - 1
+                    (range.startSection..endSection).toList()
+                }
+            }
+            if (day <= 0 || filteredWeeks.isEmpty() || resolvedSections.isEmpty()) continue
+            courses.add(
+                XiaoaiCourse(
+                    name = name,
+                    teacher = teacher,
+                    position = location,
+                    day = day,
+                    weeks = filteredWeeks,
+                    sections = resolvedSections
+                )
+            )
+        }
+        return courses
+    }
+
+    /**
+     * 合并强智 API 课程中的周次信息，避免重复课程段
+     */
+    private fun mergeQiangZhiCourses(courses: List<XiaoaiCourse>): List<XiaoaiCourse> {
+        val merged = LinkedHashMap<String, XiaoaiCourse>()
+        courses.forEach { course ->
+            val key = buildString {
+                append(course.name)
+                append("|")
+                append(course.teacher)
+                append("|")
+                append(course.position)
+                append("|")
+                append(course.day)
+                append("|")
+                append(course.sections.joinToString(","))
+            }
+            val existing = merged[key]
+            if (existing == null) {
+                merged[key] = course
+            } else {
+                val mergedWeeks = (existing.weeks + course.weeks).distinct().sorted()
+                merged[key] = existing.copy(weeks = mergedWeeks)
+            }
+        }
+        return merged.values.toList()
+    }
+
+    /**
+     * 解析强智 API 返回的星期字段
+     */
+    private fun parseQiangZhiDay(item: org.json.JSONObject): Int {
+        val day = item.optInt("xqj", item.optInt("day", 0))
+        if (day in 1..7) return day
+        val dayText = item.optString("xqjmc").ifBlank { item.optString("xq") }
+        return parseDayFromText(dayText)
+    }
+
+    /**
+     * 将文本解析为节次列表
+     */
+    private fun parseSectionListFromText(text: String): List<Int> {
+        if (text.isBlank()) return emptyList()
+        val normalized = text.replace("第", "")
+            .replace("节", "")
+            .replace("—", "-")
+            .replace("－", "-")
+            .replace("～", "-")
+            .replace("至", "-")
+        val parts = normalized.split(",", "，", "、")
+        val sections = mutableListOf<Int>()
+        parts.forEach { part ->
+            val trimmed = part.trim()
+            if (trimmed.isBlank()) return@forEach
+            if (trimmed.contains("-")) {
+                val range = trimmed.split("-")
+                    .mapNotNull { it.trim().toIntOrNull() }
+                if (range.size >= 2) {
+                    val start = range.first()
+                    val end = range.last()
+                    if (start > 0 && end >= start) {
+                        for (s in start..end) sections.add(s)
+                    }
+                }
+            } else if (trimmed.length >= 4 && trimmed.all { it.isDigit() }) {
+                val chunked = trimmed.chunked(2)
+                chunked.forEach { chunk ->
+                    val value = chunk.toIntOrNull()
+                    if (value != null && value > 0) sections.add(value)
+                }
+            } else {
+                val value = trimmed.toIntOrNull()
+                if (value != null && value > 0) sections.add(value)
+            }
+        }
+        return sections.distinct().sorted()
+    }
+
+    /**
+     * 通过时间段推断节次范围
+     */
+    private fun calculateSectionRangeByTime(
+        startTime: String,
+        endTime: String?
+    ): SectionRange? {
+        if (startTime.isBlank()) return null
+        return try {
+            val formatter = DateTimeFormatter.ofPattern("HH:mm")
+            val start = LocalTime.parse(startTime, formatter)
+            val end = if (!endTime.isNullOrBlank()) LocalTime.parse(endTime, formatter) else null
+            val startSection = when {
+                start >= LocalTime.of(19, 0) -> 9
+                start >= LocalTime.of(14, 0) -> 5
+                else -> 1
+            }
+            val durationMinutes = if (end != null && end.isAfter(start)) {
+                java.time.Duration.between(start, end).toMinutes().toInt()
+            } else {
+                45
+            }
+            val sectionCount = kotlin.math.ceil(durationMinutes / 45.0).toInt().coerceAtLeast(1)
+            val endSection = (startSection + sectionCount - 1).coerceAtLeast(startSection)
+            SectionRange(startSection, endSection)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 将星期文本转换为数字
+     */
+    private fun parseDayFromText(text: String): Int {
+        if (text.isBlank()) return 0
+        return when {
+            text.contains("一") -> 1
+            text.contains("二") -> 2
+            text.contains("三") -> 3
+            text.contains("四") -> 4
+            text.contains("五") -> 5
+            text.contains("六") -> 6
+            text.contains("日") || text.contains("天") || text.contains("七") -> 7
+            else -> 0
+        }
+    }
+
+    /**
+     * 构建强智 API 请求地址
+     */
+    private fun buildQiangZhiUrl(baseUrl: String, params: Map<String, String>): String {
+        val query = params.entries.joinToString("&") { (key, value) ->
+            val encoded = URLEncoder.encode(value, "UTF-8")
+            "$key=$encoded"
+        }
+        return "$baseUrl?$query"
+    }
+
+    /**
+     * 发送强智 API 请求
+     */
+    private fun requestQiangZhiJson(url: String, token: String?): String {
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10000
+        connection.readTimeout = 10000
+        if (!token.isNullOrBlank()) {
+            connection.setRequestProperty("token", token)
+        }
+        val responseCode = connection.responseCode
+        val stream = if (responseCode in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream ?: connection.inputStream
+        }
+        val responseText = stream.bufferedReader().use { it.readText() }
+        if (responseCode !in 200..299) {
+            throw Exception("HTTP Error $responseCode")
+        }
+        return responseText
+    }
+
+    /**
+     * 标准化强智 API 基础地址
+     */
+    private fun normalizeQiangZhiBaseUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isBlank()) return ""
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+        return try {
+            val uri = URI(withScheme)
+            val host = uri.host ?: return ""
+            val scheme = uri.scheme ?: "https"
+            val port = if (uri.port > 0) ":${uri.port}" else ""
+            "$scheme://$host$port/app.do"
+        } catch (_: Exception) {
+            ""
         }
     }
 

@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.WbTwilight
@@ -60,6 +62,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -116,6 +120,10 @@ fun ImportScreen(
     viewModel: ImportViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showQiangZhiDialog by remember { mutableStateOf(false) }
+    var qiangZhiBaseUrl by remember { mutableStateOf("") }
+    var qiangZhiStudentId by remember { mutableStateOf("") }
+    var qiangZhiPassword by remember { mutableStateOf("") }
 
     // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
@@ -125,6 +133,33 @@ fun ImportScreen(
             }
 
         }
+    }
+
+    if (showQiangZhiDialog) {
+        QiangZhiApiImportDialog(
+            baseUrl = qiangZhiBaseUrl,
+            studentId = qiangZhiStudentId,
+            password = qiangZhiPassword,
+            onBaseUrlChange = { qiangZhiBaseUrl = it },
+            onStudentIdChange = { qiangZhiStudentId = it },
+            onPasswordChange = { qiangZhiPassword = it },
+            onDismiss = { showQiangZhiDialog = false },
+            onConfirm = {
+                val fallbackBaseUrl = deriveQiangZhiBaseUrl(uiState.webUrl)
+                val baseUrl = if (qiangZhiBaseUrl.isBlank()) fallbackBaseUrl else qiangZhiBaseUrl
+                showQiangZhiDialog = false
+                if (baseUrl.isBlank() || qiangZhiStudentId.isBlank() || qiangZhiPassword.isBlank()) {
+                    viewModel.updateResultText("强智 API 导入失败：请填写教务系统地址、学号和密码")
+                    return@QiangZhiApiImportDialog
+                }
+                viewModel.runQiangZhiApiImport(
+                    baseUrl = baseUrl,
+                    studentId = qiangZhiStudentId,
+                    password = qiangZhiPassword,
+                    totalWeeks = uiState.weekCount
+                )
+            }
+        )
     }
 
     Scaffold(
@@ -169,11 +204,23 @@ fun ImportScreen(
             when (uiState.step) {
                 ImportStep.Input -> SelectionStep(
                     viewModel = viewModel,
-                    uiState = uiState
+                    uiState = uiState,
+                    onOpenQiangZhiDialog = { defaultUrl ->
+                        if (defaultUrl.isNotBlank()) {
+                            qiangZhiBaseUrl = defaultUrl
+                        }
+                        showQiangZhiDialog = true
+                    }
                 )
                 ImportStep.WebView -> WebViewStep(
                     viewModel = viewModel,
-                    uiState = uiState
+                    uiState = uiState,
+                    onOpenQiangZhiDialog = { defaultUrl ->
+                        if (defaultUrl.isNotBlank()) {
+                            qiangZhiBaseUrl = defaultUrl
+                        }
+                        showQiangZhiDialog = true
+                    }
                 )
                 ImportStep.Review -> ReviewStep(
                     viewModel = viewModel,
@@ -311,16 +358,86 @@ private fun ParsedCourseItem(
 }
 
 /**
+ * 强智 API 导入弹窗
+ *
+ * 提供教务系统地址、学号、密码输入，用于通过强智 API 拉取课表。
+ */
+@Composable
+private fun QiangZhiApiImportDialog(
+    baseUrl: String,
+    studentId: String,
+    password: String,
+    onBaseUrlChange: (String) -> Unit,
+    onStudentIdChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("强智 API 导入") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = onBaseUrlChange,
+                    label = { Text("教务系统地址") },
+                    placeholder = { Text("例如：https://jwxt.xxx.edu.cn") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = studentId,
+                    onValueChange = onStudentIdChange,
+                    label = { Text("学号") },
+                    placeholder = { Text("请输入学号") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("密码") },
+                    placeholder = { Text("请输入密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "仅用于本次导入，不会保存账号与密码",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("开始导入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+/**
  * 步骤一：选择导入方式
  *
- * 提供两种入口：
+ * 提供三种入口：
  * 1. 网页导入：跳转到 WebViewStep
- * 2. 文件导入：调用系统文件选择器读取 .ics 文件
+ * 2. 强智 API 导入：使用学号密码拉取课表
+ * 3. 文件导入：调用系统文件选择器读取 .ics 文件
  */
 @Composable
 private fun SelectionStep(
     viewModel: ImportViewModel,
-    uiState: ImportUiState
+    uiState: ImportUiState,
+    onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = LocalContext.current
     // 注册文件选择器 ActivityResultLauncher
@@ -367,6 +484,14 @@ private fun SelectionStep(
             description = "内置浏览器访问教务系统，自动解析课程表（支持新旧正方、青果、强智、起迪教务系统）",
             icon = Icons.Default.Search,
             onClick = { viewModel.setStep(ImportStep.WebView) }
+        )
+
+        // 选项卡：强智 API 导入
+        ImportOptionCard(
+            title = "强智 API 导入（学号/密码）",
+            description = "适用于强智教务系统，账号密码换取 token 后拉取课表",
+            icon = Icons.Default.Security,
+            onClick = { onOpenQiangZhiDialog(deriveQiangZhiBaseUrl(uiState.webUrl)) }
         )
 
         // 选项卡：ICS 文件导入
@@ -505,7 +630,8 @@ private fun ImportOptionCard(
 @Composable
 private fun WebViewStep(
     viewModel: ImportViewModel,
-    uiState: ImportUiState
+    uiState: ImportUiState,
+    onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -539,7 +665,10 @@ private fun WebViewStep(
             }
         }
     }
-    
+
+    val qiangZhiBaseUrl = deriveQiangZhiBaseUrl(uiState.webUrl)
+    val showQiangZhiHint = remember(uiState.webUrl) { isQiangZhiHost(uiState.webUrl) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部地址栏
         Surface(
@@ -610,6 +739,35 @@ private fun WebViewStep(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
+        }
+
+        if (showQiangZhiHint) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "检测到可能为强智教务系统，抓取失败可改用 API 导入",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                SuggestionChip(
+                    onClick = { onOpenQiangZhiDialog(qiangZhiBaseUrl) },
+                    label = { Text("改用强智 API") },
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                )
+            }
         }
         
         // WebView 容器
@@ -1158,5 +1316,37 @@ private fun SectionTimePreviewRow(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * 推导强智 API 使用的基础地址
+ *
+ * 只保留协议、域名、端口三部分，避免把路径误当成接口地址。
+ */
+private fun deriveQiangZhiBaseUrl(url: String): String {
+    return try {
+        if (url.isBlank()) return ""
+        val parsed = Uri.parse(url)
+        val host = parsed.host.orEmpty()
+        if (host.isBlank()) return ""
+        val scheme = parsed.scheme ?: "https"
+        val port = if (parsed.port > 0) ":${parsed.port}" else ""
+        "$scheme://$host$port"
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+/**
+ * 判断当前地址是否可能为强智教务系统
+ */
+private fun isQiangZhiHost(url: String): Boolean {
+    return try {
+        val parsed = Uri.parse(url)
+        val host = parsed.host?.lowercase().orEmpty()
+        host.contains("qzdatasoft") || url.contains("app.do?method=", ignoreCase = true)
+    } catch (_: Exception) {
+        false
     }
 }
