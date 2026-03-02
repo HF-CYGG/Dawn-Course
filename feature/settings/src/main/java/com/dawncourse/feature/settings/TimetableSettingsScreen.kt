@@ -21,6 +21,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import androidx.compose.ui.graphics.Color
@@ -379,6 +380,7 @@ fun TimetableSettingsScreen(
     if (showBatchGenerateDialog) {
         BatchGenerateTimeDialog(
             maxDailySections = settings.maxDailySections,
+            initialDuration = settings.defaultCourseDuration,
             onDismissRequest = { showBatchGenerateDialog = false },
             onConfirm = { newTimes ->
                 viewModel.setSectionTimes(newTimes)

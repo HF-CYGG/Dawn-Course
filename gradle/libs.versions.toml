@@ -33,6 +33,7 @@ protobuf = "4.34.0"
 jdom = "2.0.6.1"
 guava = "33.5.0-android"
 gson = "2.13.2"
+jsoup = "1.18.1"
 
 # 库依赖定义 (Libraries)
 [libraries]
@@ -95,6 +96,7 @@ protobuf-java = { group = "com.google.protobuf", name = "protobuf-java", version
 jdom = { group = "org.jdom", name = "jdom2", version.ref = "jdom" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 
 # Networking
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version = "2.11.0" }
