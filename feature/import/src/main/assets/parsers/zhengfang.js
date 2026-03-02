@@ -45,12 +45,14 @@ function parseNewZhengfang(html) {
             name = extractName(blockHtml);
 
             teacher = extractTextByTitle(blockHtml, "教师");
+            if (!teacher) teacher = extractTextByTitle(blockHtml, "任课教师");
             if (teacher) {
-                teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+                teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").replace(/任课教师\s*[:：]?\s*/g, "").trim();
             }
             location = extractTextByTitle(blockHtml, "上课地点");
+            if (!location) location = extractTextByTitle(blockHtml, "教室");
             if (location) {
-                location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+                location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
             }
 
             var timeText = extractTextByTitle(blockHtml, "节/周");
@@ -72,11 +74,23 @@ function parseNewZhengfang(html) {
                     if (teacherTextMatch) {
                         teacher = teacherTextMatch[1].trim();
                     }
+                    if (!teacher) {
+                        var teacherTextMatch2 = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(text);
+                        if (teacherTextMatch2) {
+                            teacher = teacherTextMatch2[2].trim();
+                        }
+                    }
                 }
                 if (!location) {
                     var locTextMatch = /上课地点\s*[:：]?\s*([^教师周数节次校区]+)/.exec(text);
                     if (locTextMatch) {
                         location = locTextMatch[1].trim().replace('泰山科技学院', '').trim();
+                    }
+                    if (!location) {
+                        var locTextMatch2 = /(上课地点|教室)\s*[:：]?\s*([\s\S]*?)(?=教师|周数|节次|校区|$)/.exec(text);
+                        if (locTextMatch2) {
+                            location = locTextMatch2[2].trim().replace('泰山科技学院', '').trim();
+                        }
                     }
                 }
                 if (!weeksStr) {
@@ -115,12 +129,26 @@ function parseNewZhengfang(html) {
         var listName = extractName(listBlockHtml);
         var listText = normalizeText(listBlockHtml);
         var listTeacher = extractTextByTitle(listBlockHtml, "教师");
+        if (!listTeacher) listTeacher = extractTextByTitle(listBlockHtml, "任课教师");
         if (listTeacher) {
-            listTeacher = listTeacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+            listTeacher = listTeacher.replace(/教师\s*[:：]?\s*/g, "").replace(/任课教师\s*[:：]?\s*/g, "").trim();
         }
         var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
+        if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "教室");
         if (listLocation) {
-            listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+            listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+        }
+        if (!listTeacher) {
+            var listTeacherTextMatch = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(listText);
+            if (listTeacherTextMatch) {
+                listTeacher = listTeacherTextMatch[2].trim();
+            }
+        }
+        if (!listLocation) {
+            var listLocTextMatch = /(上课地点|教室)\s*[:：]?\s*([\s\S]*?)(?=教师|周数|节次|校区|$)/.exec(listText);
+            if (listLocTextMatch) {
+                listLocation = listLocTextMatch[2].trim().replace('泰山科技学院', '').trim();
+            }
         }
         var listWeeksStr = extractWeeksStr(listText);
         var listSectionsStr = sectionStart ? (sectionStart + "-" + (sectionEnd || sectionStart) + "节") : extractSectionsStr(listText);

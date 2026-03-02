@@ -228,10 +228,12 @@ function parseZhengfangStyleCell(cellContent, day) {
         // Use common helpers
         var name = extractName(blockHtml);
         var teacher = extractTextByTitle(blockHtml, "教师");
-        if (teacher) teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+        if (!teacher) teacher = extractTextByTitle(blockHtml, "任课教师");
+        if (teacher) teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").replace(/任课教师\s*[:：]?\s*/g, "").trim();
         
         var location = extractTextByTitle(blockHtml, "上课地点");
-        if (location) location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+        if (!location) location = extractTextByTitle(blockHtml, "教室");
+        if (location) location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
         
         var weeksStr = "";
         var sectionsStr = "";
@@ -249,10 +251,18 @@ function parseZhengfangStyleCell(cellContent, day) {
             if (!teacher) {
                 var tm = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(text);
                 if (tm) teacher = tm[1].trim();
+                if (!teacher) {
+                    var tm2 = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(text);
+                    if (tm2) teacher = tm2[2].trim();
+                }
             }
             if (!location) {
                 var lm = /上课地点\s*[:：]?\s*([^教师周数节次校区]+)/.exec(text);
                 if (lm) location = lm[1].trim();
+                if (!location) {
+                    var lm2 = /(上课地点|教室)\s*[:：]?\s*([\s\S]*?)(?=教师|周数|节次|校区|$)/.exec(text);
+                    if (lm2) location = lm2[2].trim();
+                }
             }
             if (!weeksStr) weeksStr = extractWeeksStr(text);
             if (!sectionsStr) sectionsStr = extractSectionsStr(text);

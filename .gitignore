@@ -63,3 +63,4 @@ replay_pid*.log
 /CrawlerCourseTable-master/
 /QZAPI_Archive-master/
 /scripts/git-smart-proxy.ps1
+docs/releases/
