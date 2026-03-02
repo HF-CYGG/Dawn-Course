@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
 import java.net.URI
 import java.net.URLEncoder
 import java.time.DayOfWeek
@@ -279,7 +280,18 @@ class ImportViewModel @Inject constructor(
                     var hasParserCrash = false
                     var hasAnyParserAttempt = false
 
-                    // 0. 特殊处理：检测是否为强智直连数据
+                    // 当前 WebView URL，用于判断是否为强智教务系统
+                    val currentUrl = _uiState.value.webUrl
+
+                    // 0.1 优先尝试：若为强智教务系统，使用 Kotlin + Jsoup 解析 HTML
+                    if (isQiangZhiHostForViewModel(currentUrl)) {
+                        val qiangZhiCourses = parseQiangZhiHtmlWithJsoup(raw)
+                        if (qiangZhiCourses.isNotEmpty()) {
+                            return@withContext qiangZhiCourses
+                        }
+                    }
+
+                    // 0.2 特殊处理：检测是否为强智直连 JSON 数据
                     if (raw.contains("qiangzhi_direct")) {
                         return@withContext parseQiangZhiJson(raw)
                     }
@@ -1021,6 +1033,143 @@ class ImportViewModel @Inject constructor(
             throw Exception("HTTP Error $responseCode")
         }
         return responseText
+    }
+
+    /**
+     * ViewModel 内部使用的强智教务系统域名判断工具
+     *
+     * 仅根据 host / 路径简单判断，避免依赖 UI 层工具方法。
+     */
+    private fun isQiangZhiHostForViewModel(url: String): Boolean {
+        if (url.isBlank()) return false
+        return try {
+            val uri = URI(url)
+            val host = (uri.host ?: "").lowercase()
+            host.contains("qzdatasoft") ||
+                url.contains("/jsxsd/xskb/", ignoreCase = true) ||
+                url.contains("xskb_list.do", ignoreCase = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 使用 Jsoup 解析强智教务系统课表 HTML
+     *
+     * 对应参考实现中的 scheduleHtmlParser，但在 Kotlin 端完成 DOM 解析：
+     * - 定位 class="kbcontent" 的 div 元素
+     * - 通过 id 解析星期几 (td12 -> 周一第 2 节)
+     * - 按 “---------------------” 分割同一单元格内的多门课程
+     * - 提取课程名、教师、教室、周次与节次
+     */
+    private fun parseQiangZhiHtmlWithJsoup(html: String): List<ParsedCourse> {
+        if (html.isBlank()) return emptyList()
+        return try {
+            val doc = Jsoup.parse(html)
+            val kbContents = doc.select(".kbcontent")
+            if (kbContents.isEmpty()) return emptyList()
+
+            val xiaoaiCourses = mutableListOf<XiaoaiCourse>()
+
+            for (element in kbContents) {
+                val id = element.id()
+                if (id.isBlank()) continue
+                // id 一般形如 td12，取第一个数字作为星期几
+                val digits = id.filter { it.isDigit() }
+                if (digits.isEmpty()) continue
+                val day = digits.first().digitToIntOrNull() ?: continue
+                if (day !in 1..7) continue
+
+                // 按分隔线拆分同一单元格中的多门课程
+                val blocks = element.html().split("---------------------")
+                for (block in blocks) {
+                    val blockHtml = block.trim()
+                    if (blockHtml.isEmpty()) continue
+
+                    val tempDoc = Jsoup.parseBodyFragment(blockHtml)
+                    val body = tempDoc.body()
+
+                    // 课程名称：取第一个非空文本节点
+                    var name = ""
+                    val childNodes = body.childNodes()
+                    for (node in childNodes) {
+                        val text = node.outerHtml()
+                        val plain = Jsoup.parse(text).text().trim()
+                        if (plain.isNotEmpty()) {
+                            name = plain
+                            break
+                        }
+                    }
+                    if (name.isBlank() || name == "&nbsp;") continue
+
+                    // 教师、教室、周次信息
+                    val teacher = body.selectFirst("[title=老师]")?.text()?.trim().orEmpty()
+                    val room = body.selectFirst("[title=教室]")?.text()?.trim().orEmpty()
+                    val weekNode = body.selectFirst("[title=周次(节次)]") ?: continue
+                    val weekRaw = weekNode.text().trim()
+                    if (weekRaw.isBlank()) continue
+
+                    // 解析节次 [03-04节]
+                    val sections = mutableListOf<Int>()
+                    val sectionRegex = "\\[(\\d+)-(\\d+)节]".toRegex()
+                    val sectionMatch = sectionRegex.find(weekRaw)
+                    if (sectionMatch != null) {
+                        val start = sectionMatch.groupValues[1].toIntOrNull() ?: 0
+                        val end = sectionMatch.groupValues[2].toIntOrNull() ?: 0
+                        if (start > 0 && end >= start) {
+                            for (s in start..end) {
+                                sections.add(s)
+                            }
+                        }
+                    }
+
+                    // 解析周次 1-16 或 1-8,10-16
+                    val weeks = mutableListOf<Int>()
+                    val weekStr = weekRaw.substringBefore("(").trim()
+                    if (weekStr.isNotEmpty()) {
+                        val parts = weekStr.split(",", "，")
+                        for (part in parts) {
+                            val token = part.trim()
+                            if (token.isEmpty()) continue
+                            if (token.contains("-")) {
+                                val rangeParts = token.split("-")
+                                val startWeek = rangeParts.getOrNull(0)?.trim()?.toIntOrNull() ?: continue
+                                val endWeek = rangeParts.getOrNull(1)?.trim()?.toIntOrNull() ?: continue
+                                if (startWeek > 0 && endWeek >= startWeek) {
+                                    for (w in startWeek..endWeek) {
+                                        weeks.add(w)
+                                    }
+                                }
+                            } else {
+                                val week = token.toIntOrNull()
+                                if (week != null && week > 0) weeks.add(week)
+                            }
+                        }
+                    }
+
+                    if (weeks.isEmpty() || sections.isEmpty()) continue
+
+                    xiaoaiCourses.add(
+                        XiaoaiCourse(
+                            name = name,
+                            teacher = if (teacher.isNotBlank()) teacher else "未知教师",
+                            position = if (room.isNotBlank()) room else "未知教室",
+                            day = day,
+                            weeks = weeks.distinct().sorted(),
+                            sections = sections.distinct().sorted()
+                        )
+                    )
+                }
+            }
+
+            if (xiaoaiCourses.isEmpty()) {
+                emptyList()
+            } else {
+                convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /**

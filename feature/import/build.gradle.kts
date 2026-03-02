@@ -60,4 +60,7 @@ dependencies {
     
     // Lifecycle
     implementation(libs.lifecycle.runtime.ktx)
+
+    // HTML 解析 (Jsoup)
+    implementation(libs.jsoup)
 }

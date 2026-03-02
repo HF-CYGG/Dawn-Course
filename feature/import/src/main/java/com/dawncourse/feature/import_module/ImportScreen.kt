@@ -899,115 +899,115 @@ private fun WebViewStep(
                 Button(
                     onClick = {
                         try {
-                            // 读取并拼接通用工具函数和适配脚本
-                            val assets = context.assets
-                            val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
-                            val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
-                            val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
-
-                            // 构建注入脚本
-                            val js = StringBuilder()
-                            js.append("(function() {\n")
-                            js.append("try {\n")
-                            js.append("window.__dawnResult = null;\n")
-                            js.append("window.__dawnReady = false;\n")
-                            js.append(outputConsole).append("\n;\n")
-                            js.append(courseUtils).append("\n;\n")
-                            js.append(qidiProvider).append("\n;\n")
-                            
-                            js.append("""
-                                // 尝试运行 scheduleHtmlProvider
-                                (async function() {
-                                    try {
-                                        if (typeof scheduleHtmlProvider === 'function') {
-                                            console.log("Found scheduleHtmlProvider, running...");
-                                            var result = await scheduleHtmlProvider();
-                                            if (result !== "do not continue") {
-                                                window.__dawnResult = result;
-                                                window.__dawnReady = true;
-                                                return;
-                                            }
-                                        }
-                                    } catch(e) {
-                                        console.error("Provider execution failed:", e);
-                                    }
-                                    
-                                    // 降级策略：使用原有的 HTML 提取逻辑
-                                    function findScheduleHtml(doc) {
-                                        if (!doc) return null;
-                                        
-                                        // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
-                                        // 强智系统课程表通常使用 ID 格式 "节次-周次-2" (例如 "1-1-2")
-                                        try {
-                                            var qiangzhiData = [];
-                                            var hasQiangzhi = false;
-                                            // 遍历 1-5 节次 (对应强智系统的 5 个大节)
-                                            for (var c = 1; c <= 5; c++) {
-                                                // 遍历 1-7 周次 (对应周一到周日)
-                                                for (var w = 1; w <= 7; w++) {
-                                                    var id = c + "-" + w + "-2";
-                                                    var el = doc.getElementById(id);
-                                                    if (el) {
-                                                        hasQiangzhi = true;
-                                                        var text = el.innerText || el.textContent;
-                                                        // 仅提取非空单元格
-                                                        if (text && text.trim().length > 0) {
-                                                            qiangzhiData.push({
-                                                                "row": c,
-                                                                "col": w,
-                                                                "text": text.trim()
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // 如果检测到强智格式且包含数据，则直接返回特定 JSON
-                                            if (hasQiangzhi && qiangzhiData.length > 0) {
-                                                return JSON.stringify({
-                                                    "type": "qiangzhi_direct",
-                                                    "data": qiangzhiData
-                                                });
-                                            }
-                                        } catch (e) { console.error("Qiangzhi extract failed", e); }
-                                        
-                                        var html = doc.body ? doc.body.innerHTML : "";
-                                        if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
-                                            return html;
-                                        }
-                                        var frames = doc.getElementsByTagName('frame');
-                                        for (var i = 0; i < frames.length; i++) {
-                                            try {
-                                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                                var result = findScheduleHtml(frameDoc);
-                                                if (result) return result;
-                                            } catch(e) {}
-                                        }
-                                        var iframes = doc.getElementsByTagName('iframe');
-                                        for (var i = 0; i < iframes.length; i++) {
-                                            try {
-                                                var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                                var result = findScheduleHtml(frameDoc);
-                                                if (result) return result;
-                                            } catch(e) {}
-                                        }
-                                        return null;
-                                    }
-                                    window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
-                                    window.__dawnReady = true;
-                                })();
-                            } catch(e) {
-                                console.error("Provider execution failed:", e);
-                                window.__dawnReady = true;
-                            }
-                            })();
-                            """.trimIndent())
-
                             val currentWebView = webView
                             if (currentWebView == null) {
                                 viewModel.updateResultText("未能提取到有效 HTML 内容")
                                 return@Button
                             }
-                            currentWebView.evaluateJavascript(js.toString(), null)
+
+                            // 如果检测到为强智教务系统，使用专用 Provider 直接请求课表页面 HTML
+                            val js: String = if (isQiangZhiHost(uiState.webUrl)) {
+                                """
+                                (function() {
+                                    try {
+                                        window.__dawnResult = null;
+                                        window.__dawnReady = false;
+                                        (function() {
+                                            try {
+                                                var xhr = new XMLHttpRequest();
+                                                xhr.open('GET', '/jsxsd/xskb/xskb_list.do?Ves632DSdyV=NEW_XSD_PYGL', false);
+                                                xhr.send();
+                                                if (xhr.status === 200) {
+                                                    window.__dawnResult = xhr.responseText;
+                                                } else {
+                                                    window.__dawnResult = "";
+                                                }
+                                            } catch (e) {
+                                                try {
+                                                    var iframes = document.getElementsByTagName('iframe');
+                                                    if (iframes.length > 0) {
+                                                        window.__dawnResult = iframes[0].contentWindow.document.body.innerHTML;
+                                                    } else {
+                                                        window.__dawnResult = document.body ? document.body.innerHTML : "";
+                                                    }
+                                                } catch (e2) {
+                                                    window.__dawnResult = document.body ? document.body.innerHTML : "";
+                                                }
+                                            }
+                                            window.__dawnReady = true;
+                                        })();
+                                    } catch (e) {
+                                        window.__dawnReady = true;
+                                    }
+                                })();
+                                """.trimIndent()
+                            } else {
+                                // 非强智教务系统，继续使用通用 Provider + 降级逻辑
+                                val assets = context.assets
+                                val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
+                                val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
+                                val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
+
+                                buildString {
+                                    append("(function(){\n")
+                                    append("try {\n")
+                                    append("window.__dawnResult = null;\n")
+                                    append("window.__dawnReady = false;\n")
+                                    append(outputConsole).append("\n;\n")
+                                    append(courseUtils).append("\n;\n")
+                                    append(qidiProvider).append("\n;\n")
+                                    append(
+                                        """
+                                        (async function() {
+                                            try {
+                                                if (typeof scheduleHtmlProvider === 'function') {
+                                                    console.log("Found scheduleHtmlProvider, running...");
+                                                    var result = await scheduleHtmlProvider();
+                                                    if (result !== "do not continue") {
+                                                        window.__dawnResult = result;
+                                                        window.__dawnReady = true;
+                                                        return;
+                                                    }
+                                                }
+                                            } catch(e) {
+                                                console.error("Provider execution failed:", e);
+                                            }
+                                            
+                                            function findScheduleHtml(doc) {
+                                                if (!doc) return null;
+                                                var html = doc.body ? doc.body.innerHTML : "";
+                                                if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                                    return html;
+                                                }
+                                                var frames = doc.getElementsByTagName('frame');
+                                                for (var i = 0; i < frames.length; i++) {
+                                                    try {
+                                                        var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                                        var result = findScheduleHtml(frameDoc);
+                                                        if (result) return result;
+                                                    } catch(e) {}
+                                                }
+                                                var iframes = doc.getElementsByTagName('iframe');
+                                                for (var i = 0; i < iframes.length; i++) {
+                                                    try {
+                                                        var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                                                        var result = findScheduleHtml(frameDoc);
+                                                        if (result) return result;
+                                                    } catch(e) {}
+                                                }
+                                                return null;
+                                            }
+                                            window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
+                                            window.__dawnReady = true;
+                                        })();
+                                        """.trimIndent()
+                                    )
+                                    append("\n} catch(e) { window.__dawnReady = true; }\n")
+                                    append("})();")
+                                }
+                            }
+
+                            currentWebView.evaluateJavascript(js, null)
                             viewModel.updateResultText("正在提取...")
                             pollJob?.cancel()
                             pollJob = coroutineScope.launch {
