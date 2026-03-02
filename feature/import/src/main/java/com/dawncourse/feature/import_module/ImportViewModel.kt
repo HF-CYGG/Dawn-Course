@@ -303,9 +303,9 @@ class ImportViewModel @Inject constructor(
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
                     
-                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试正方、青果等脚本)
+                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试强智、正方、青果等脚本)
                     if (courses.isEmpty()) {
-                        val parsers = listOf("parsers/zhengfang.js", "parsers/kingosoft.js")
+                        val parsers = listOf("parsers/qiangzhi.js", "parsers/zhengfang.js", "parsers/kingosoft.js")
                         for (parserPath in parsers) {
                             hasAnyParserAttempt = true
                             try {
