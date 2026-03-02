@@ -2,10 +2,7 @@
  * 泰山科技学院/强智教务系统 解析脚本 (Regex 实现版)
  * 对应 docs/泰山科技学院教务系统脚本开发文档.md 的逻辑
  * 
- * 注：由于 QuickJS 环境默认不包含 Cheerio 库，此处使用 Regex 实现文档中描述的相同解析逻辑。
- * 效果与文档提供的 cheerio 版本一致。
- * 
- * 更新：集成“旧正方”教务系统解析逻辑，兼容更多正方系统版本。
+ * 依赖: common_parser_utils.js
  */
 
 function scheduleHtmlParser(html) {
@@ -168,8 +165,6 @@ function parseOldZhengfang(html) {
         // 即跳过 index 0 和 1 (Header 和 早晨/标签行)
         // 有效数据从 i=2 开始
         // 默认节次 defaultSection = index - 1 (因为 index 0 是 header, index 1 是空/标签, index 2 是第一节)
-        // 实际上正方表格通常: Row 0=Header, Row 1=MorningSpan+Section1? 或者 Row 1=MorningSpan, Row 2=Section1?
-        // 这里的逻辑主要依赖内容识别，但兜底需要 defaultSection
         
         var rowHtml = rows[i];
         var cells = [];
@@ -186,7 +181,8 @@ function parseOldZhengfang(html) {
             // Filter empty and clean
             var rawInfo = [];
             for(var k=0; k<parts.length; k++) {
-                var p = sanitizePlainText(parts[k]);
+                // 使用通用工具库的 stripTags
+                var p = stripTags(parts[k]);
                 if (p) rawInfo.push(p);
             }
             
@@ -203,7 +199,6 @@ function parseOldZhengfang(html) {
                 // 找到时间行 idx
                 // 结构通常为: Name, Time, Teacher, Location
                 // provider.js: Name=index, Time=index+1, Teacher=index+2, Location=index+3
-                // 这里的 idx 是 Time 的位置
                 
                 if (idx - 1 < 0) { idx++; continue; }
                 
@@ -264,7 +259,6 @@ function parseOldTimeRanges(rawTime) {
     var regex = /(\d+)[-,]?(\d*)/g;
     var match;
     // 限制只匹配前面的数字部分，避免匹配到无关内容
-    // 但正方格式通常比较规范，如 "周二第1,2节{第1-16周}"
     while ((match = regex.exec(rawTime)) !== null) {
         var start = parseInt(match[1]);
         var end = match[2] ? parseInt(match[2]) : start;
@@ -273,180 +267,4 @@ function parseOldTimeRanges(rawTime) {
         result.push(range);
     }
     return result;
-}
-
-function sanitizePlainText(rawHtml) {
-    if (!rawHtml) return "";
-    var text = String(rawHtml);
-    text = removeHtmlTags(text);
-    text = decodeHtmlEntities(text);
-    // Decode后再次清洗，防止实体解码产生新标签
-    text = removeHtmlTags(text);
-    return text.replace(/\s+/g, " ").trim();
-}
-
-/**
- * 移除HTML标签（循环移除防止嵌套绕过）
- */
-function removeHtmlTags(rawText) {
-    var result = String(rawText);
-    var previous;
-    do {
-        previous = result;
-        result = result.replace(/<[^>]*>/g, "");
-    } while (result !== previous);
-    return result.replace(/[<>]/g, "");
-}
-
-/**
- * 解码HTML实体
- */
-function decodeHtmlEntities(text) {
-    if (!text) return "";
-    var entities = {
-        '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>',
-        '&quot;': '"', '&apos;': "'", '&#039;': "'"
-    };
-    return text.replace(/&[a-zA-Z0-9#]+;/g, function(match) {
-        return entities[match] || match;
-    });
-}
-
-function stripTags(html) {
-    var text = removeHtmlTags(html);
-    text = decodeHtmlEntities(text);
-    return removeHtmlTags(text).replace(/\s+/g, " ").trim();
-}
-
-function normalizeText(html) {
-    return stripTags(html).replace(/\s+/g, " ").replace(/：/g, ":").trim();
-}
-
-function extractName(blockHtml) {
-    var titleMatch = /<([a-zA-Z]+)[^>]*class=["']?title[^>]*>([\s\S]*?)<\/\1>/i.exec(blockHtml);
-    if (titleMatch) {
-        return stripTags(titleMatch[2]).trim();
-    }
-    var altMatch = /<u[^>]*class=["']?title[^>]*>([\s\S]*?)<\/u>/i.exec(blockHtml);
-    if (altMatch) {
-        return stripTags(altMatch[1]).trim();
-    }
-    return "";
-}
-
-function extractTextByTitle(blockHtml, titleText) {
-    // 1. 尝试匹配 title 在 span 标签内，并提取 span 的内容 (新版结构)
-    // 结构: <span ... title="titleText"> ... content ... </span>
-    var patternInside = '<span[^>]*title=["\']?' + titleText + '["\']?[^>]*>([\\s\\S]*?)<\\/span>';
-    var matchInside = new RegExp(patternInside, "i").exec(blockHtml);
-    if (matchInside) {
-        return stripTags(matchInside[1]).trim();
-    }
-
-    // 2. 尝试旧逻辑：title 在某个标签内，后面紧跟着 font (部分旧版结构)
-    // 结构: <span title="titleText">...</span> <font> ... content ... </font>
-    var patternAfter = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
-    var matchAfter = new RegExp(patternAfter, "i").exec(blockHtml);
-    if (matchAfter) {
-        return stripTags(matchAfter[1]).trim();
-    }
-    
-    return "";
-}
-
-function extractWeeksStr(text) {
-    var weeksMatch = /周数\s*[:：]?\s*([^教师节次校区]+?周[^教师节次校区]*)/i.exec(text);
-    if (weeksMatch) return weeksMatch[1].trim();
-    var rangeMatch = /(\d+\s*[-至~～—－]\s*\d+\s*周[^\s]*)/i.exec(text);
-    if (rangeMatch) return rangeMatch[1].trim();
-    var singleMatch = /(\d+\s*周[^\s]*)/i.exec(text);
-    if (singleMatch) return singleMatch[1].trim();
-    return "";
-}
-
-function extractSectionsStr(text) {
-    var sectionMatch = /节次\s*[:：]?\s*(\d+)\s*[-至~～—－]\s*(\d+)/i.exec(text);
-    if (sectionMatch) return sectionMatch[1] + "-" + sectionMatch[2] + "节";
-    var rangeMatch = /第?\s*(\d+)\s*[-至~～—－]\s*(\d+)\s*节/i.exec(text);
-    if (rangeMatch) return rangeMatch[1] + "-" + rangeMatch[2] + "节";
-    var singleMatch = /第?\s*(\d+)\s*节/i.exec(text);
-    if (singleMatch) return singleMatch[1] + "节";
-    return "";
-}
-
-function dedupeCourses(courses) {
-    var map = {};
-    var result = [];
-    for (var i = 0; i < courses.length; i++) {
-        var course = courses[i];
-        var key = [
-            course.name || "",
-            course.teacher || "",
-            course.position || "",
-            course.day || "",
-            (course.weeks || []).join("_"),
-            (course.sections || []).join("_")
-        ].join("|");
-        if (!map[key]) {
-            map[key] = true;
-            result.push(course);
-        }
-    }
-    return result;
-}
-
-function parseWeeks(str) {
-    var weeks = [];
-    if (!str) return weeks;
-
-    var type = 0; // 0:全, 1:单, 2:双
-    if (str.indexOf("单") > -1) type = 1;
-    if (str.indexOf("双") > -1) type = 2;
-
-    str = str.replace(/周数[:：]/g, '');
-    str = str.replace(/共\d+周|共\d+次|共\d+节/g, '');
-    str = str.replace(/[至~～—－]/g, '-');
-    str = str.replace(/周|单|双|\(|\)|（|）/g, '');
-    
-    var parts = str.split(/[,，;、]/); 
-
-    for (var i = 0; i < parts.length; i++) {
-        var part = parts[i].trim();
-        if (part.indexOf('-') > -1) {
-            var range = part.split('-');
-            var start = parseInt(range[0]);
-            var end = parseInt(range[1]);
-            if (!isNaN(start) && !isNaN(end)) {
-                for (var w = start; w <= end; w++) {
-                    if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) {
-                        weeks.push(w);
-                    }
-                }
-            }
-        } else if (part !== '') {
-            var week = parseInt(part);
-            if (!isNaN(week)) {
-                 if (type === 0 || (type === 1 && week % 2 !== 0) || (type === 2 && week % 2 === 0)) {
-                    weeks.push(week);
-                }
-            }
-        }
-    }
-    return weeks;
-}
-
-function parseSections(sectionsString) {
-    var sections = [];
-    var str = sectionsString.replace(/第/g, "").replace(/节次[:：]/g, "").replace(/节/g, "").replace(/[\(（\)）]/g, "");
-    str = str.replace(/[至~～—－]/g, "-");
-    var parts = str.split("-");
-    var start = parseInt(parts[0]);
-    var end = parseInt(parts[1] || parts[0]);
-    
-    if (!isNaN(start)) {
-        for (var s = start; s <= end; s++) {
-            sections.push(s);
-        }
-    }
-    return sections;
 }
