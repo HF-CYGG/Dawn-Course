@@ -6,8 +6,22 @@ name: "CodeQL"
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'deps.txt'
+      - 'scripts/**'
   pull_request:
     branches: ["main"]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'deps.txt'
+      - 'scripts/**'
   schedule:
     - cron: "0 2 * * 1"   # 每周一 02:00 例行扫描
 
