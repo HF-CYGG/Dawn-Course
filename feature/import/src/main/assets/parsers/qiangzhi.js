@@ -71,6 +71,7 @@ function parseQiangZhi(html) {
             }
             location = extractTextByTitle(blockHtml, "上课地点");
             if (!location) location = extractTextByTitle(blockHtml, "教室");
+            if (!location) location = extractTextByTitle(blockHtml, "校区/上课地点");
             if (location) {
                 location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
             }
@@ -158,6 +159,7 @@ function parseQiangZhi(html) {
         }
         var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
         if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "教室");
+        if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "校区/上课地点");
         if (listLocation) {
             listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
         }

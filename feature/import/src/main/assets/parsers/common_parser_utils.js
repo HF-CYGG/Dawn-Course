@@ -171,14 +171,15 @@ function parseSections(sectionsString) {
  */
 function extractTextByTitle(blockHtml, titleText) {
     // 1. 尝试匹配 title 在 span 标签内，并提取 span 的内容 (新版结构)
-    var patternInside = '<span[^>]*title=["\']?' + titleText + '["\']?[^>]*>([\\s\\S]*?)<\\/span>';
+    var patternInside = '<span[^>]*title=["\']?\\s*' + titleText + '\\s*["\']?[^>]*>([\\s\\S]*?)<\\/span>';
     var matchInside = new RegExp(patternInside, "i").exec(blockHtml);
     if (matchInside) {
-        return stripTags(matchInside[1]).trim();
+        var content = stripTags(matchInside[1]).trim();
+        if (content) return content;
     }
 
     // 2. 尝试旧逻辑：title 在某个标签内，后面紧跟着 font (部分旧版结构)
-    var patternAfter = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
+    var patternAfter = 'title=["\']?\\s*' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
     var matchAfter = new RegExp(patternAfter, "i").exec(blockHtml);
     if (matchAfter) {
         return stripTags(matchAfter[1]).trim();
