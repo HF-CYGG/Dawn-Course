@@ -564,8 +564,8 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         rawColor.copy(alpha = 0.9f)
     } else {
-        // 非本周：使用极淡的同色背景，无边框
-        rawColor.copy(alpha = 0.15f)
+        // 非本周：跟随主题色
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     }
 
     // 2. 动态计算内容透明度
