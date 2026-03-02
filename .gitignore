@@ -62,3 +62,4 @@ replay_pid*.log
 /UPC_ics-Public-Frontend/
 /CrawlerCourseTable-master/
 /QZAPI_Archive-master/
+/scripts/git-smart-proxy.ps1
