@@ -203,6 +203,16 @@ function parseWithLegacyLogic(html) {
  * @returns {Array} 解析出的课程对象列表
  */
 function parseCell(cellContent, day) {
+    // [Proactive Compatibility] 尝试使用新版正方/强智逻辑解析 (防止结构变更)
+    // Try parsing with Zhengfang-style logic first if indicators are present
+    if (cellContent.indexOf('class="timetable_con"') !== -1 || 
+        (cellContent.indexOf('title=') !== -1 && cellContent.indexOf('教师') !== -1)) {
+        var zfCourses = parseZhengfangStyleCell(cellContent, day);
+        if (zfCourses && zfCourses.length > 0) {
+            return zfCourses;
+        }
+    }
+
     var results = [];
     var contentBlocks = [];
     
@@ -332,4 +342,160 @@ function parseSections(str) {
         }
     }
     return sections;
+}
+
+/**
+ * [Proactive Compatibility] Zhengfang-style Parsing Logic
+ * Added to handle potential structure changes in Kingosoft systems
+ */
+function parseZhengfangStyleCell(cellContent, day) {
+    var courses = [];
+    var blocks = [];
+    
+    if (cellContent.indexOf('class="timetable_con"') !== -1) {
+        var parts = cellContent.split(/<div\s+class=["']?timetable_con/i);
+        for (var i = 1; i < parts.length; i++) {
+            blocks.push('<div class="timetable_con' + parts[i]);
+        }
+    } else {
+        blocks.push(cellContent);
+    }
+
+    for (var i = 0; i < blocks.length; i++) {
+        var blockHtml = blocks[i];
+        var name = extractNameZhengfang(blockHtml);
+        var teacher = extractTextByTitle(blockHtml, "教师");
+        if (teacher) teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+        
+        var location = extractTextByTitle(blockHtml, "上课地点");
+        if (location) location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+        
+        var weeksStr = "";
+        var sectionsStr = "";
+        var timeText = extractTextByTitle(blockHtml, "节/周");
+        if (timeText) {
+            sectionsStr = extractSectionsStr(timeText);
+            weeksStr = extractWeeksStr(timeText);
+        }
+        
+        if (!name && !teacher && !weeksStr) continue;
+
+        // Fallback extraction
+        if (!teacher || !location || !weeksStr || !sectionsStr) {
+            var text = normalizeTextZhengfang(blockHtml);
+            if (!teacher) {
+                var tm = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(text);
+                if (tm) teacher = tm[1].trim();
+            }
+            if (!location) {
+                var lm = /上课地点\s*[:：]?\s*([^教师周数节次校区]+)/.exec(text);
+                if (lm) location = lm[1].trim();
+            }
+            if (!weeksStr) weeksStr = extractWeeksStr(text);
+            if (!sectionsStr) sectionsStr = extractSectionsStr(text);
+        }
+
+        if (name && weeksStr && sectionsStr) {
+            var weeks = parseWeeksZhengfang(weeksStr);
+            var sections = parseSectionsZhengfang(sectionsStr);
+            if (weeks.length > 0 && sections.length > 0) {
+                courses.push({
+                    name: name,
+                    teacher: teacher,
+                    position: location,
+                    day: day,
+                    weeks: weeks,
+                    sections: sections
+                });
+            }
+        }
+    }
+    return courses;
+}
+
+function extractTextByTitle(blockHtml, titleText) {
+    // 1. Try matching inside span (New Structure)
+    var patternInside = '<span[^>]*title=["\']?' + titleText + '["\']?[^>]*>([\\s\\S]*?)<\\/span>';
+    var matchInside = new RegExp(patternInside, "i").exec(blockHtml);
+    if (matchInside) return stripTagsZhengfang(matchInside[1]).trim();
+
+    // 2. Try matching after span (Old Structure)
+    var patternAfter = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
+    var matchAfter = new RegExp(patternAfter, "i").exec(blockHtml);
+    if (matchAfter) return stripTagsZhengfang(matchAfter[1]).trim();
+    
+    return "";
+}
+
+function extractNameZhengfang(blockHtml) {
+    var titleMatch = /<([a-zA-Z]+)[^>]*class=["']?title[^>]*>([\s\S]*?)<\/\1>/i.exec(blockHtml);
+    if (titleMatch) return stripTagsZhengfang(titleMatch[2]).trim();
+    return "";
+}
+
+function extractWeeksStr(text) {
+    var weeksMatch = /周数\s*[:：]?\s*([^教师节次校区]+?周[^教师节次校区]*)/i.exec(text);
+    if (weeksMatch) return weeksMatch[1].trim();
+    var rangeMatch = /(\d+\s*[-至~～—－]\s*\d+\s*周[^\s]*)/i.exec(text);
+    if (rangeMatch) return rangeMatch[1].trim();
+    return "";
+}
+
+function extractSectionsStr(text) {
+    var sectionMatch = /节次\s*[:：]?\s*(\d+)\s*[-至~～—－]\s*(\d+)/i.exec(text);
+    if (sectionMatch) return sectionMatch[1] + "-" + sectionMatch[2] + "节";
+    var rangeMatch = /第?\s*(\d+)\s*[-至~～—－]\s*(\d+)\s*节/i.exec(text);
+    if (rangeMatch) return rangeMatch[1] + "-" + rangeMatch[2] + "节";
+    return "";
+}
+
+function parseWeeksZhengfang(str) {
+    var weeks = [];
+    if (!str) return weeks;
+    var type = 0; 
+    if (str.indexOf("单") > -1) type = 1;
+    if (str.indexOf("双") > -1) type = 2;
+    str = str.replace(/周数[:：]/g, '').replace(/共\d+周|共\d+次|共\d+节/g, '').replace(/[至~～—－]/g, '-').replace(/周|单|双|\(|\)|（|）/g, '');
+    var parts = str.split(/[,，;、]/);
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i].trim();
+        if (part.indexOf('-') > -1) {
+            var range = part.split('-');
+            var start = parseInt(range[0]);
+            var end = parseInt(range[1]);
+            if (!isNaN(start) && !isNaN(end)) {
+                for (var w = start; w <= end; w++) {
+                    if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) weeks.push(w);
+                }
+            }
+        } else if (part !== '') {
+            var week = parseInt(part);
+            if (!isNaN(week)) {
+                 if (type === 0 || (type === 1 && week % 2 !== 0) || (type === 2 && week % 2 === 0)) weeks.push(week);
+            }
+        }
+    }
+    return weeks;
+}
+
+function parseSectionsZhengfang(sectionsString) {
+    var sections = [];
+    var str = sectionsString.replace(/第/g, "").replace(/节次[:：]/g, "").replace(/节/g, "").replace(/[\(（\)）]/g, "").replace(/[至~～—－]/g, "-");
+    var parts = str.split("-");
+    var start = parseInt(parts[0]);
+    var end = parseInt(parts[1] || parts[0]);
+    if (!isNaN(start)) {
+        for (var s = start; s <= end; s++) sections.push(s);
+    }
+    return sections;
+}
+
+function normalizeTextZhengfang(html) {
+    return stripTagsZhengfang(html).replace(/\s+/g, " ").replace(/：/g, ":").trim();
+}
+
+function stripTagsZhengfang(html) {
+    var text = removeHtmlTags(html);
+    text = decodeHtmlEntities(text);
+    return removeHtmlTags(text).replace(/\s+/g, " ").trim();
 }
