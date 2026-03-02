@@ -102,6 +102,9 @@ DawnCourse/
     *   保持代码风格整洁，无 Lint 错误。
     *   提交信息请清晰描述变更内容。
 
+3.  **教务系统适配**：
+    *   如果你希望为你的学校适配课程表导入功能，请参考 [教务系统解析脚本开发指南](parser_contribution_guide.md)。
+
 ## 开源协议
 
 本项目采用 [GNU General Public License v3.0 (GPL-3.0)](LICENSE) 开源协议。
