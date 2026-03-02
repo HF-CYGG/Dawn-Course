@@ -560,22 +560,19 @@ fun CourseCard(
     onClick: () -> Unit
 ) {
     // 1. 动态计算背景颜色
+    val rawColor = CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course))
     val baseColor = if (isCurrentWeek) {
-        CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course)).copy(alpha = 0.9f)
+        rawColor.copy(alpha = 0.9f)
     } else {
-        // 非本周：改为 Surface 背景
-        MaterialTheme.colorScheme.surface
+        // 非本周：使用极淡的同色背景，无边框
+        rawColor.copy(alpha = 0.15f)
     }
 
     // 2. 动态计算内容透明度
     val contentAlpha = if (isCurrentWeek) 1f else 0.6f
 
-    // 3. 边框样式（仅非本周显示）
-    val borderModifier = if (!isCurrentWeek) {
-        Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-    } else {
-        Modifier
-    }
+    // 3. 边框样式（移除旧版本没有的边框）
+    val borderModifier = Modifier
 
     // 性能优化：使用 BoxWithConstraints 替代 Box 以支持响应式布局
     BoxWithConstraints(
