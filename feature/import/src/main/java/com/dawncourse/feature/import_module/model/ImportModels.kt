@@ -633,7 +633,6 @@ private fun expandIcsOccurrences(event: IcsEvent): List<LocalDateTime> {
     val weekStart = startDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     
     // 限制最大生成数量，防止死循环
-    val maxCount = count ?: 100 // 如果没有 COUNT 也没有 UNTIL，限制 100 次 (约 2 年)
     val maxWeeks = 52 // 限制最多扫描 52 周
     
     var generatedCount = 0 // 已生成的重复项数量 (不含初始项，因为初始项已经添加了)
