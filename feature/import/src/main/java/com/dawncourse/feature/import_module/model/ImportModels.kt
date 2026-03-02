@@ -635,10 +635,7 @@ private fun expandIcsOccurrences(event: IcsEvent): List<LocalDateTime> {
     // 限制最大生成数量，防止死循环
     val maxWeeks = 52 // 限制最多扫描 52 周
     
-    var generatedCount = 0 // 已生成的重复项数量 (不含初始项，因为初始项已经添加了)
-    // 修正：初始项是否算在 COUNT 里？RFC 5545 说 COUNT 包括初始项。
-    // 所以这里 generatedCount 应该从 1 开始算 (如果初始项符合规则)
-    // 简单起见，我们重新生成所有符合规则的项，然后去重
+    // 策略：RFC 5545 规定 COUNT 包括初始项。简单起见，我们重新生成所有符合规则的项，然后去重
     occurrences.clear() 
     // 重新添加 RDATE
     occurrences.addAll(event.rdates)
