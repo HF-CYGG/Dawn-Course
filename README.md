@@ -92,7 +92,7 @@ DawnCourse/
 
 ## 贡献指南
 
-欢迎提交 Issue 和 Pull Request！为了保证代码质量，本项目引入了严格的代码检查流程：
+欢迎提交 Issue 和 Pull Request！
 （代码不要太烂就行，需要包含必要的注释和测试）
 
 1.  **自动化检查**：
