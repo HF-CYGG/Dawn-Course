@@ -261,10 +261,16 @@ fun WeekHeader(
     displayedWeek: Int = 1,
     semesterStartDate: LocalDate? = null
 ) {
-    // 性能优化：将静态列表放入 remember 中，避免每次重组重复创建
-    val days = remember { listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日") }
-    val today = LocalDate.now().dayOfWeek.value // 1 (Mon) - 7 (Sun)
     val settings = LocalAppSettings.current
+    // 性能优化：将静态列表放入 remember 中，避免每次重组重复创建
+    val days = remember(settings.showWeekend) {
+        if (settings.showWeekend) {
+            listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+        } else {
+            listOf("周一", "周二", "周三", "周四", "周五")
+        }
+    }
+    val today = LocalDate.now().dayOfWeek.value // 1 (Mon) - 7 (Sun)
     
     Row(
         modifier = modifier
@@ -427,12 +433,13 @@ fun TimetableGrid(
     }
 
     // 1. 准备显示列表并生成布局项
-    val layoutItems = remember(courses, currentWeek, settings.hideNonThisWeek, maxNodes) {
+    val layoutItems = remember(courses, currentWeek, settings.hideNonThisWeek, settings.showWeekend, maxNodes) {
         TimetableLayoutEngine.calculateLayoutItems(
             courses = courses,
             currentWeek = currentWeek,
             maxNodes = maxNodes,
-            hideNonThisWeek = settings.hideNonThisWeek
+            hideNonThisWeek = settings.hideNonThisWeek,
+            showWeekend = settings.showWeekend
         )
     }
 
@@ -493,7 +500,8 @@ fun TimetableGrid(
             ) { measurables, constraints ->
                 // 1. 计算基础尺寸
                 val width = constraints.maxWidth
-                val cellWidth = width / 7f
+                val daysCount = if (settings.showWeekend) 7 else 5
+                val cellWidth = width / daysCount.toFloat()
                 val nodeHeightPx = nodeHeight.toPx()
                 
                 // 2. 测量所有子元素

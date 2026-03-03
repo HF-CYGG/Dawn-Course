@@ -63,4 +63,6 @@ replay_pid*.log
 docs/releases/
 
 /ios-app
+/classCrawl-main
+/e.g
 

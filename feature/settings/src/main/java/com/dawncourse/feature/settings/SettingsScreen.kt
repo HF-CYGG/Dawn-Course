@@ -98,8 +98,10 @@ fun SettingsScreen(
         )
     }
 
+    // 使用 OpenDocument 代替 GetContent 以获取持久化 URI 权限
+    // GetContent 返回的 URI 往往是临时的，重启后可能失效
     val wallpaperLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             try {
@@ -108,7 +110,7 @@ fun SettingsScreen(
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (e: Exception) {
-                // Ignore
+                e.printStackTrace()
             }
             viewModel.setWallpaperUri(it.toString())
         }
@@ -247,7 +249,7 @@ fun SettingsScreen(
                             }
                             Button(onClick = { 
                                 try {
-                                    wallpaperLauncher.launch("image/*")
+                                    wallpaperLauncher.launch(arrayOf("image/*"))
                                 } catch (e: Exception) {
                                     android.widget.Toast.makeText(context, "无法打开图片选择器", android.widget.Toast.LENGTH_SHORT).show()
                                 }

@@ -40,10 +40,11 @@ object TimetableLayoutEngine {
         courses: List<Course>,
         currentWeek: Int,
         maxNodes: Int,
-        hideNonThisWeek: Boolean
+        hideNonThisWeek: Boolean,
+        showWeekend: Boolean = true
     ): List<TimetableLayoutItem> {
         // 1. 准备显示列表（仅负责“本周/非本周”决策）
-        val rawDisplayList = prepareRawDisplayList(courses, currentWeek, hideNonThisWeek)
+        val rawDisplayList = prepareRawDisplayList(courses, currentWeek, hideNonThisWeek, showWeekend)
 
         // 2. 生成最终布局列表：补齐边界、防止异常数据导致堆叠，并对节次区间重叠的课程做横向分栏
         return generateLayoutItems(rawDisplayList, maxNodes)
@@ -52,9 +53,12 @@ object TimetableLayoutEngine {
     private fun prepareRawDisplayList(
         courses: List<Course>,
         currentWeek: Int,
-        hideNonThisWeek: Boolean
+        hideNonThisWeek: Boolean,
+        showWeekend: Boolean
     ): List<Pair<Course, Boolean>> {
-        val courseGroups = courses.groupBy { it.dayOfWeek to it.startSection }
+        val courseGroups = courses
+            .filter { showWeekend || it.dayOfWeek <= 5 } // 过滤周末课程
+            .groupBy { it.dayOfWeek to it.startSection }
         val list = mutableListOf<Pair<Course, Boolean>>() // 课程, 是否为本周
 
         courseGroups.forEach { (_, group) ->
