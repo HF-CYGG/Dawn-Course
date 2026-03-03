@@ -1093,6 +1093,7 @@ class ImportViewModel @Inject constructor(
      * - 通过 id 解析星期几 (td12 -> 周一第 2 节)
      * - 按 “---------------------” 分割同一单元格内的多门课程
      * - 提取课程名、教师、教室、周次与节次
+     * - 增强兼容性：支持无 title 属性的纯文本解析 (参考 MI_AI_Course_Schedule-main)
      */
     private fun parseQiangZhiHtmlWithJsoup(html: String): List<ParsedCourse> {
         if (html.isBlank()) return emptyList()
@@ -1121,76 +1122,85 @@ class ImportViewModel @Inject constructor(
                     val tempDoc = Jsoup.parseBodyFragment(blockHtml)
                     val body = tempDoc.body()
 
-                    // 课程名称：取第一个非空文本节点
+                    // 1. 尝试提取课程名 (第一个非空文本节点)
                     var name = ""
-                    val childNodes = body.childNodes()
-                    for (node in childNodes) {
-                        val text = node.outerHtml()
-                        val plain = Jsoup.parse(text).text().trim()
-                        if (plain.isNotEmpty()) {
-                            name = plain
-                            break
+                    val allTextNodes = body.textNodes().filter { it.text().trim().isNotBlank() }
+                    
+                    // 优先使用 font 标签解析，如果存在
+                    val fonts = body.select("font")
+                    if (fonts.isNotEmpty()) {
+                        // 策略 A: 有 title 属性 (标准强智)
+                        val teacherNode = fonts.firstOrNull { it.attr("title") == "老师" }
+                        val roomNode = fonts.firstOrNull { it.attr("title") == "教室" }
+                        val weekNode = fonts.firstOrNull { it.attr("title") == "周次(节次)" }
+
+                        if (teacherNode != null || roomNode != null || weekNode != null) {
+                            name = body.ownText().trim()
+                            if (name.isBlank() && allTextNodes.isNotEmpty()) {
+                                name = allTextNodes.first().text().trim()
+                            }
+                            
+                            val teacher = teacherNode?.text()?.trim().orEmpty()
+                            val room = roomNode?.text()?.trim().orEmpty()
+                            val weekRaw = weekNode?.text()?.trim().orEmpty()
+                            
+                            parseAndAddCourse(xiaoaiCourses, name, teacher, room, weekRaw, day)
+                            continue
                         }
-                    }
-                    if (name.isBlank() || name == "&nbsp;") continue
-
-                    // 教师、教室、周次信息
-                    val teacher = body.selectFirst("[title=老师]")?.text()?.trim().orEmpty()
-                    val room = body.selectFirst("[title=教室]")?.text()?.trim().orEmpty()
-                    val weekNode = body.selectFirst("[title=周次(节次)]") ?: continue
-                    val weekRaw = weekNode.text().trim()
-                    if (weekRaw.isBlank()) continue
-
-                    // 解析节次 [03-04节]
-                    val sections = mutableListOf<Int>()
-                    val sectionRegex = "\\[(\\d+)-(\\d+)节]".toRegex()
-                    val sectionMatch = sectionRegex.find(weekRaw)
-                    if (sectionMatch != null) {
-                        val start = sectionMatch.groupValues[1].toIntOrNull() ?: 0
-                        val end = sectionMatch.groupValues[2].toIntOrNull() ?: 0
-                        if (start > 0 && end >= start) {
-                            for (s in start..end) {
-                                sections.add(s)
+                        
+                        // 策略 B: 无 title 属性，按 font 顺序 (参考 MI_AI_Course_Schedule-main)
+                        // 通常顺序: 0:老师, 1:周次(节次), 2:教室
+                        // 课程名通常在 font 之前
+                        name = body.ownText().trim()
+                        if (name.isBlank()) {
+                            // 尝试获取第一个 font 之前的文本
+                            val firstFont = fonts.first()
+                            val prev = firstFont.previousSibling()
+                            if (prev is org.jsoup.nodes.TextNode) {
+                                name = prev.text().trim()
                             }
                         }
+                        if (name.isBlank() && allTextNodes.isNotEmpty()) {
+                            name = allTextNodes.first().text().trim()
+                        }
+
+                        val teacher = fonts.getOrNull(0)?.text()?.trim().orEmpty()
+                        val weekRaw = fonts.getOrNull(1)?.text()?.trim().orEmpty()
+                        val room = fonts.getOrNull(2)?.text()?.trim().orEmpty()
+
+                        parseAndAddCourse(xiaoaiCourses, name, teacher, room, weekRaw, day)
+                        continue
                     }
 
-                    // 解析周次 1-16 或 1-8,10-16
-                    val weeks = mutableListOf<Int>()
-                    val weekStr = weekRaw.substringBefore("(").trim()
-                    if (weekStr.isNotEmpty()) {
-                        val parts = weekStr.split(",", "，")
-                        for (part in parts) {
-                            val token = part.trim()
-                            if (token.isEmpty()) continue
-                            if (token.contains("-")) {
-                                val rangeParts = token.split("-")
-                                val startWeek = rangeParts.getOrNull(0)?.trim()?.toIntOrNull() ?: continue
-                                val endWeek = rangeParts.getOrNull(1)?.trim()?.toIntOrNull() ?: continue
-                                if (startWeek > 0 && endWeek >= startWeek) {
-                                    for (w in startWeek..endWeek) {
-                                        weeks.add(w)
-                                    }
-                                }
+                    // 策略 C: 纯文本解析 (无 font 标签)
+                    // 假设顺序: 课程名 -> 老师 -> 周次 -> 教室
+                    val lines = Jsoup.parse(blockHtml.replace("<br>", "\n")).text().split("\n").map { it.trim() }.filter { it.isNotBlank() }
+                    if (lines.isNotEmpty()) {
+                        name = lines[0]
+                        var teacher = ""
+                        var room = ""
+                        var weekRaw = ""
+                        
+                        // 简单的启发式匹配
+                        for (i in 1 until lines.size) {
+                            val line = lines[i]
+                            if (line.contains("周") || line.contains("节")) {
+                                weekRaw = line
+                            } else if (line.contains("室") || line.contains("楼") || line.contains("区")) {
+                                room = line
                             } else {
-                                val week = token.toIntOrNull()
-                                if (week != null && week > 0) weeks.add(week)
+                                if (teacher.isBlank()) teacher = line
                             }
                         }
+                        // 如果启发式匹配失败，回退到固定位置
+                        if (weekRaw.isBlank() && lines.size >= 3) {
+                             teacher = lines.getOrElse(1) { "" }
+                             weekRaw = lines.getOrElse(2) { "" }
+                             room = lines.getOrElse(3) { "" }
+                        }
+                        
+                        parseAndAddCourse(xiaoaiCourses, name, teacher, room, weekRaw, day)
                     }
-
-                    if (weeks.isEmpty() || sections.isEmpty()) continue
-
-                    xiaoaiCourses.add(
-                        XiaoaiCourse(
-                            name = name,
-                            teacher = if (teacher.isNotBlank()) teacher else "未知教师",
-                            position = if (room.isNotBlank()) room else "未知教室",
-                            day = day,
-                            weeks = weeks.distinct().sorted(),
-                            sections = sections.distinct().sorted()
-                        )
-                    )
                 }
             }
 
@@ -1201,6 +1211,69 @@ class ImportViewModel @Inject constructor(
             }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    private fun parseAndAddCourse(
+        list: MutableList<XiaoaiCourse>,
+        name: String,
+        teacher: String,
+        room: String,
+        weekRaw: String,
+        day: Int
+    ) {
+        if (name.isBlank() || name == "&nbsp;") return
+        if (weekRaw.isBlank()) return
+
+        // 解析节次 [03-04节]
+        val sections = mutableListOf<Int>()
+        val sectionRegex = "\\[(\\d+)-(\\d+)节]".toRegex()
+        val sectionMatch = sectionRegex.find(weekRaw)
+        if (sectionMatch != null) {
+            val start = sectionMatch.groupValues[1].toIntOrNull() ?: 0
+            val end = sectionMatch.groupValues[2].toIntOrNull() ?: 0
+            if (start > 0 && end >= start) {
+                for (s in start..end) {
+                    sections.add(s)
+                }
+            }
+        }
+
+        // 解析周次 1-16 或 1-8,10-16
+        val weeks = mutableListOf<Int>()
+        val weekStr = weekRaw.substringBefore("(").trim()
+        if (weekStr.isNotEmpty()) {
+            val parts = weekStr.split(",", "，")
+            for (part in parts) {
+                val token = part.trim()
+                if (token.isEmpty()) continue
+                if (token.contains("-")) {
+                    val rangeParts = token.split("-")
+                    val startWeek = rangeParts.getOrNull(0)?.trim()?.toIntOrNull() ?: continue
+                    val endWeek = rangeParts.getOrNull(1)?.trim()?.toIntOrNull() ?: continue
+                    if (startWeek > 0 && endWeek >= startWeek) {
+                        for (w in startWeek..endWeek) {
+                            weeks.add(w)
+                        }
+                    }
+                } else {
+                    val week = token.toIntOrNull()
+                    if (week != null && week > 0) weeks.add(week)
+                }
+            }
+        }
+
+        if (weeks.isNotEmpty() && sections.isNotEmpty()) {
+            list.add(
+                XiaoaiCourse(
+                    name = name,
+                    teacher = if (teacher.isNotBlank()) teacher else "未知教师",
+                    position = if (room.isNotBlank()) room else "未知教室",
+                    day = day,
+                    weeks = weeks.distinct().sorted(),
+                    sections = sections.distinct().sorted()
+                )
+            )
         }
     }
 
