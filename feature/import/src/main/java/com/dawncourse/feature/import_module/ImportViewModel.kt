@@ -623,6 +623,7 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "正在连接强智教务系统...") }
             try {
+                var importSource = "API"
                 val parsedCourses = withContext(Dispatchers.IO) {
                     val normalizedBaseUrl = qiangZhiApiEngine.normalizeBaseUrl(baseUrl)
                     if (normalizedBaseUrl.isBlank()) {
@@ -657,11 +658,19 @@ class ImportViewModel @Inject constructor(
                     } catch (apiError: Exception) {
                         // 2. API 失败时，尝试 Web 模拟登录兜底
                         val msg = apiError.message ?: ""
-                        if (msg.contains("登录状态已过期") || msg.contains("API 接口返回了网页")) {
+                        val shouldFallback = msg.contains("登录状态已过期") ||
+                            msg.contains("API 接口返回了网页") ||
+                            msg.contains("网页导入") ||
+                            msg.contains("未开放移动端") ||
+                            msg.contains("防火墙") ||
+                            msg.contains("HTTP Error 404") ||
+                            msg.contains("HTTP Error 500")
+                        if (shouldFallback) {
                              // 仅在明确是 API 不可用或返回 HTML 时尝试 Web 导入
                              val cookie = qiangZhiApiEngine.loginWeb(normalizedBaseUrl, studentId, password)
                              val html = qiangZhiApiEngine.fetchHtmlTimetable(normalizedBaseUrl, cookie)
                              // parseHtmlWithJsoup 直接返回 List<ParsedCourse>，无需转换
+                             importSource = "Web"
                              return@withContext qiangZhiApiEngine.parseHtmlWithJsoup(html)
                         }
                         throw apiError // 如果不是特定错误，或者 Web 导入也未执行，抛出原异常
@@ -681,7 +690,7 @@ class ImportViewModel @Inject constructor(
                             detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                            resultText = "强智 API 导入成功: ${parsedCourses.size} 个课程段"
+                            resultText = "强智 $importSource 导入成功: ${parsedCourses.size} 个课程段"
                         )
                     }
                 }

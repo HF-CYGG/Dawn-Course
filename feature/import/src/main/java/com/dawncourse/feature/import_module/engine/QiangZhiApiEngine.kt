@@ -82,28 +82,28 @@ class QiangZhiApiEngine @Inject constructor() {
      * 参考 JWSystemLib 实现，用于 API 不可用时的兜底方案
      */
     fun loginWeb(baseUrl: String, studentId: String, password: String): String {
-        val loginUrl = "$baseUrl/jsxsd/xk/LoginToXk"
-        // 构造 encoded 参数: Base64(账号) + "%%%" + Base64(密码)
+        val webBaseUrl = normalizeWebBaseUrl(baseUrl)
+        val loginUrl = "$webBaseUrl/jsxsd/xk/LoginToXk"
         val encoded = java.util.Base64.getEncoder().encodeToString(studentId.toByteArray()) + "%%%" +
                 java.util.Base64.getEncoder().encodeToString(password.toByteArray())
 
         val connection = java.net.URL(loginUrl).openConnection() as java.net.HttpURLConnection
         try {
-            connection.instanceFollowRedirects = false // 禁止自动重定向，以便获取 Set-Cookie
+            connection.instanceFollowRedirects = false
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.connectTimeout = 10000
             connection.readTimeout = 10000
+            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
 
             val params = "userAccount=&userPassword=&encoded=${URLEncoder.encode(encoded, "UTF-8")}"
             connection.outputStream.use { it.write(params.toByteArray()) }
 
-            val cookie = connection.getHeaderField("Set-Cookie")
-            if (cookie.isNullOrBlank()) {
+            val cookieHeaders = connection.headerFields["Set-Cookie"].orEmpty()
+            if (cookieHeaders.isEmpty()) {
                 throw Exception("Web 登录失败：未获取到 Cookie")
             }
-            // 提取 JSESSIONID
-            return cookie.split(";")[0]
+            return cookieHeaders.joinToString(";") { it.substringBefore(";") }
         } finally {
             connection.disconnect()
         }
@@ -113,14 +113,14 @@ class QiangZhiApiEngine @Inject constructor() {
      * 获取 Web 端课表 HTML
      */
     fun fetchHtmlTimetable(baseUrl: String, cookie: String): String {
-        val url = "$baseUrl/jsxsd/xskb/xskb_list.do"
+        val webBaseUrl = normalizeWebBaseUrl(baseUrl)
+        val url = "$webBaseUrl/jsxsd/xskb/xskb_list.do"
         val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         try {
             connection.requestMethod = "GET"
             connection.connectTimeout = 10000
             connection.readTimeout = 10000
             connection.setRequestProperty("Cookie", cookie)
-            // 伪装 User-Agent
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
             val responseCode = connection.responseCode
@@ -135,6 +135,14 @@ class QiangZhiApiEngine @Inject constructor() {
             return responseText
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun normalizeWebBaseUrl(baseUrl: String): String {
+        return if (baseUrl.endsWith("/app.do")) {
+            baseUrl.removeSuffix("/app.do")
+        } else {
+            baseUrl
         }
     }
 
