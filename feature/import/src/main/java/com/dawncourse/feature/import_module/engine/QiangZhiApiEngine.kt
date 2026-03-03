@@ -78,6 +78,67 @@ class QiangZhiApiEngine @Inject constructor() {
     }
 
     /**
+     * 强智 Web 模拟登录 (Base64 加密)
+     * 参考 JWSystemLib 实现，用于 API 不可用时的兜底方案
+     */
+    fun loginWeb(baseUrl: String, studentId: String, password: String): String {
+        val loginUrl = "$baseUrl/jsxsd/xk/LoginToXk"
+        // 构造 encoded 参数: Base64(账号) + "%%%" + Base64(密码)
+        val encoded = java.util.Base64.getEncoder().encodeToString(studentId.toByteArray()) + "%%%" +
+                java.util.Base64.getEncoder().encodeToString(password.toByteArray())
+
+        val connection = java.net.URL(loginUrl).openConnection() as java.net.HttpURLConnection
+        try {
+            connection.instanceFollowRedirects = false // 禁止自动重定向，以便获取 Set-Cookie
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+
+            val params = "userAccount=&userPassword=&encoded=${URLEncoder.encode(encoded, "UTF-8")}"
+            connection.outputStream.use { it.write(params.toByteArray()) }
+
+            val cookie = connection.getHeaderField("Set-Cookie")
+            if (cookie.isNullOrBlank()) {
+                throw Exception("Web 登录失败：未获取到 Cookie")
+            }
+            // 提取 JSESSIONID
+            return cookie.split(";")[0]
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * 获取 Web 端课表 HTML
+     */
+    fun fetchHtmlTimetable(baseUrl: String, cookie: String): String {
+        val url = "$baseUrl/jsxsd/xskb/xskb_list.do"
+        val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("Cookie", cookie)
+            // 伪装 User-Agent
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw Exception("HTTP Error $responseCode")
+            }
+
+            val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+            if (responseText.contains("登录") && responseText.contains("userAccount")) {
+                throw Exception("Web 会话已过期，请重试")
+            }
+            return responseText
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
      * 强智 API 获取指定周课程表
      */
     fun getCourseArray(

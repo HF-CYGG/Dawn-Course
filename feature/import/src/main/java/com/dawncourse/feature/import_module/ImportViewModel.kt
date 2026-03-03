@@ -631,26 +631,41 @@ class ImportViewModel @Inject constructor(
                     if (studentId.isBlank() || password.isBlank()) {
                         throw Exception("学号或密码不能为空")
                     }
-                    val token = qiangZhiApiEngine.authUser(normalizedBaseUrl, studentId, password)
-                    val currentInfo = qiangZhiApiEngine.getCurrentTime(normalizedBaseUrl, token)
-                    val xnxqh = currentInfo.optString("xnxqh")
-                    if (xnxqh.isBlank()) {
-                        throw Exception("无法获取学年学期信息")
+
+                    try {
+                        // 1. 尝试标准 API 导入
+                        val token = qiangZhiApiEngine.authUser(normalizedBaseUrl, studentId, password)
+                        val currentInfo = qiangZhiApiEngine.getCurrentTime(normalizedBaseUrl, token)
+                        val xnxqh = currentInfo.optString("xnxqh")
+                        if (xnxqh.isBlank()) {
+                            throw Exception("无法获取学年学期信息")
+                        }
+                        val targetWeeks = totalWeeks.coerceIn(1, 30)
+                        val allCourses = mutableListOf<XiaoaiCourse>()
+                        for (week in 1..targetWeeks) {
+                            val weekArray = qiangZhiApiEngine.getCourseArray(
+                                baseUrl = normalizedBaseUrl,
+                                token = token,
+                                studentId = studentId,
+                                xnxqh = xnxqh,
+                                week = week
+                            )
+                            allCourses.addAll(qiangZhiApiEngine.parseApiCourses(weekArray))
+                        }
+                        val merged = qiangZhiApiEngine.mergeCourses(allCourses)
+                        convertXiaoaiCoursesToParsedCourses(merged)
+                    } catch (apiError: Exception) {
+                        // 2. API 失败时，尝试 Web 模拟登录兜底
+                        val msg = apiError.message ?: ""
+                        if (msg.contains("登录状态已过期") || msg.contains("API 接口返回了网页")) {
+                             // 仅在明确是 API 不可用或返回 HTML 时尝试 Web 导入
+                             val cookie = qiangZhiApiEngine.loginWeb(normalizedBaseUrl, studentId, password)
+                             val html = qiangZhiApiEngine.fetchHtmlTimetable(normalizedBaseUrl, cookie)
+                             // parseHtmlWithJsoup 直接返回 List<ParsedCourse>，无需转换
+                             return@withContext qiangZhiApiEngine.parseHtmlWithJsoup(html)
+                        }
+                        throw apiError // 如果不是特定错误，或者 Web 导入也未执行，抛出原异常
                     }
-                    val targetWeeks = totalWeeks.coerceIn(1, 30)
-                    val allCourses = mutableListOf<XiaoaiCourse>()
-                    for (week in 1..targetWeeks) {
-                        val weekArray = qiangZhiApiEngine.getCourseArray(
-                            baseUrl = normalizedBaseUrl,
-                            token = token,
-                            studentId = studentId,
-                            xnxqh = xnxqh,
-                            week = week
-                        )
-                        allCourses.addAll(qiangZhiApiEngine.parseApiCourses(weekArray))
-                    }
-                    val merged = qiangZhiApiEngine.mergeCourses(allCourses)
-                    convertXiaoaiCoursesToParsedCourses(merged)
                 }
                 if (parsedCourses.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "未找到课程数据") }
