@@ -316,23 +316,54 @@ class QiangZhiApiEngine @Inject constructor() {
      */
     private fun requestJson(url: String, token: String?): String {
         val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        connection.requestMethod = "GET"
-        connection.connectTimeout = 10000
-        connection.readTimeout = 10000
-        if (!token.isNullOrBlank()) {
-            connection.setRequestProperty("token", token)
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            if (!token.isNullOrBlank()) {
+                connection.setRequestProperty("token", token)
+            }
+            
+            // 伪装 User-Agent 防止被简单的反爬虫拦截
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; SM-G9600 Build/QP1A.190711.020; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/86.0.4240.198 Mobile Safari/537.36")
+
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream ?: connection.inputStream
+            }
+            val responseText = stream.bufferedReader().use { it.readText() }
+            
+            // 检查响应内容是否为 HTML
+            if (responseText.trimStart().startsWith("<html", ignoreCase = true) || 
+                responseText.trimStart().startsWith("<!DOCTYPE html", ignoreCase = true)) {
+                
+                // 尝试提取网页标题或错误信息
+                val title = runCatching { 
+                    Jsoup.parse(responseText).title() 
+                }.getOrNull() ?: ""
+                
+                val errorMsg = when {
+                    title.contains("登录") -> "登录状态已过期，请重新登录"
+                    title.contains("验证") || responseText.contains("人机验证") -> "触发了防火墙验证，请使用网页导入"
+                    responseCode == 404 -> "该学校未开放移动端 API，请使用网页导入"
+                    responseCode == 500 -> "教务系统服务器内部错误，请稍后重试或使用网页导入"
+                    else -> "API 接口返回了网页而非数据，可能是接口已关闭或需要验证。建议使用网页导入。"
+                }
+                
+                throw Exception(errorMsg)
+            }
+            
+            if (responseCode !in 200..299) {
+                throw Exception("HTTP Error $responseCode: $responseText")
+            }
+            return responseText
+        } catch (e: Exception) {
+            throw e
+        } finally {
+            connection.disconnect()
         }
-        val responseCode = connection.responseCode
-        val stream = if (responseCode in 200..299) {
-            connection.inputStream
-        } else {
-            connection.errorStream ?: connection.inputStream
-        }
-        val responseText = stream.bufferedReader().use { it.readText() }
-        if (responseCode !in 200..299) {
-            throw Exception("HTTP Error $responseCode")
-        }
-        return responseText
     }
 
     /**
