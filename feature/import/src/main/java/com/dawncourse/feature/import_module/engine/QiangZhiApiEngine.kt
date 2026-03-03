@@ -444,7 +444,7 @@ class QiangZhiApiEngine @Inject constructor() {
                         name = body.ownText().trim()
                         if (name.isBlank()) {
                             // 尝试获取第一个 font 之前的文本
-                            val firstFont = fonts.first()
+                            val firstFont = fonts[0]
                             val prev = firstFont.previousSibling()
                             if (prev is TextNode) {
                                 name = prev.text().trim()
