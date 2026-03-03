@@ -64,3 +64,6 @@ replay_pid*.log
 /QZAPI_Archive-master/
 /scripts/git-smart-proxy.ps1
 docs/releases/
+
+/ios-app
+
