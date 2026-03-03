@@ -867,40 +867,63 @@ class ImportViewModel @Inject constructor(
             val teacher = item.optString("jsxm").trim()
             val location = item.optString("jsmc").trim()
             val weekText = item.optString("kkzc").trim()
-            val weeks = parseWeekString(weekText)
-            val filteredWeeks = when {
-                weekText.contains("单") -> weeks.filter { it % 2 == 1 }
-                weekText.contains("双") -> weeks.filter { it % 2 == 0 }
-                else -> weeks
+            var weeks = parseWeekString(weekText)
+            
+            // 处理单双周：结合 kkzc 文本和 sjbz 字段
+            val sjbz = item.optString("sjbz")
+            if (weekText.contains("单") || sjbz == "1") {
+                weeks = weeks.filter { it % 2 == 1 }
+            } else if (weekText.contains("双") || sjbz == "2") {
+                weeks = weeks.filter { it % 2 == 0 }
             }
+
+            // 解析节次
             val sectionText = item.optString("jcs")
                 .ifBlank { item.optString("jc") }
                 .ifBlank { item.optString("jcsj") }
-            val sections = parseSectionListFromText(sectionText)
-            val day = parseQiangZhiDay(item)
-            val resolvedSections = if (sections.isNotEmpty()) {
-                sections
-            } else {
+            var sections = parseSectionListFromText(sectionText)
+            
+            // 解析星期
+            var day = parseQiangZhiDay(item)
+
+            // 如果节次或星期未获取到，尝试解析 kcsj (格式 x0a0b: 星期x 第0a-0b节)
+            val kcsj = item.optString("kcsj")
+            if ((sections.isEmpty() || day == 0) && kcsj.length >= 5) {
+                // 解析星期
+                if (day == 0) {
+                    day = kcsj.substring(0, 1).toIntOrNull() ?: 0
+                }
+                // 解析节次
+                if (sections.isEmpty()) {
+                    val startNode = kcsj.substring(1, 3).toIntOrNull() ?: 0
+                    val endNode = kcsj.substring(3, 5).toIntOrNull() ?: 0
+                    if (startNode > 0 && endNode >= startNode) {
+                        sections = (startNode..endNode).toList()
+                    }
+                }
+            }
+
+            // 兜底：通过时间推断节次
+            if (sections.isEmpty()) {
                 val range = calculateSectionRangeByTime(
                     startTime = item.optString("kssj"),
                     endTime = item.optString("jssj")
                 )
-                if (range == null) {
-                    emptyList()
-                } else {
+                if (range != null) {
                     val endSection = range.startSection + range.duration - 1
-                    (range.startSection..endSection).toList()
+                    sections = (range.startSection..endSection).toList()
                 }
             }
-            if (day <= 0 || filteredWeeks.isEmpty() || resolvedSections.isEmpty()) continue
+
+            if (day <= 0 || weeks.isEmpty() || sections.isEmpty()) continue
             courses.add(
                 XiaoaiCourse(
                     name = name,
                     teacher = teacher,
                     position = location,
                     day = day,
-                    weeks = filteredWeeks,
-                    sections = resolvedSections
+                    weeks = weeks,
+                    sections = sections
                 )
             )
         }
