@@ -57,7 +57,5 @@ replay_pid*.log
 
 # Specific project ignores
 /docs/
-/xiaoai-schedule-parser-main/
 /server/
-/UPC_ics-Public-Frontend/
-/CrawlerCourseTable-master/
+/e.g/
