@@ -142,7 +142,7 @@ fun QidiAutoSyncScreen(
                     webView = wv
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
-                onPageFinished = { wv, url ->
+                onPageFinished = { wv, _ ->
                     val creds = credsForAutoFill
                     if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
                         val js = buildAutoFillScript(
@@ -300,7 +300,7 @@ fun QidiAutoSyncScreen(
                                             "1" -> "3"
                                             "2" -> "12"
                                             "3" -> "16"
-                                            "3","12","16" -> q
+                                            "12", "16" -> q
                                             else -> ""
                                         }
                                         append("""

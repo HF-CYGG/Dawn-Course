@@ -669,7 +669,9 @@ private fun WebViewStep(
                     // 安全配置：禁用文件与内容访问，避免通过 WebView 读取本地文件或 content://
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
+                    @Suppress("DEPRECATION")
                     settings.allowFileAccessFromFileURLs = false
+                    @Suppress("DEPRECATION")
                     settings.allowUniversalAccessFromFileURLs = false
                     // 禁止 JS 自动弹窗
                     settings.javaScriptCanOpenWindowsAutomatically = false
