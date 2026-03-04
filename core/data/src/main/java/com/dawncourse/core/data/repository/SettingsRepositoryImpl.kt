@@ -348,6 +348,13 @@ class SettingsRepositoryImpl @Inject constructor(
         dataStore.edit { it[PreferencesKeys.BACKGROUND_BRIGHTNESS] = brightness }
     }
 
+    /**
+     * 清空所有设置
+     */
+    override suspend fun clearAllSettings() {
+        dataStore.edit { it.clear() }
+    }
+
     override suspend fun generateBlurredWallpaper(uri: String?) {
         if (uri == null) {
             setBlurredWallpaperUri(null)

@@ -62,6 +62,13 @@ class SemesterRepositoryImpl @Inject constructor(
     override suspend fun deleteSemester(semester: Semester) {
         semesterDao.deleteSemester(semester.toEntity())
     }
+
+    /**
+     * 清空所有学期
+     */
+    override suspend fun clearAllSemesters() {
+        semesterDao.clearAllSemesters()
+    }
     
     override suspend fun setCurrentSemester(id: Long) {
         database.withTransaction {

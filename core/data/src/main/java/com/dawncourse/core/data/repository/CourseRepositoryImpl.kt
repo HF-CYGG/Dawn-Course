@@ -96,6 +96,13 @@ class CourseRepositoryImpl @Inject constructor(
         courseDao.updateAllCoursesDuration(duration)
     }
 
+    /**
+     * 清空所有课程
+     */
+    override suspend fun clearAllCourses() {
+        courseDao.clearAllCourses()
+    }
+
     override suspend fun getMaxWeekInSemester(semesterId: Long): Int {
         return courseDao.getMaxWeekInSemester(semesterId) ?: 0
     }

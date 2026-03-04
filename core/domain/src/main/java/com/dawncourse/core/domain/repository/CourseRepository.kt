@@ -76,6 +76,11 @@ interface CourseRepository {
     suspend fun updateAllCoursesDuration(duration: Int)
 
     /**
+     * 清空所有课程
+     */
+    suspend fun clearAllCourses()
+
+    /**
      * 获取指定学期中所有课程的最大周次
      *
      * @param semesterId 学期 ID

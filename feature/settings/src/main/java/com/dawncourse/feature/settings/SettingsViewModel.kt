@@ -8,15 +8,50 @@ import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.usecase.ExportBackupUseCase
+import com.dawncourse.core.domain.usecase.ImportBackupUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+
+/**
+ * 备份流程的事件
+ */
+sealed interface BackupEvent {
+    /**
+     * 展示提示信息
+     *
+     * @param message 提示文本
+     */
+    data class ShowToast(val message: String) : BackupEvent
+}
+
+/**
+ * 备份界面状态
+ */
+data class BackupUiState(
+    /** 是否处于加载中 */
+    val isLoading: Boolean = false
+)
+
+/**
+ * 清空数据界面状态
+ */
+data class ClearDataUiState(
+    /** 是否处于清理中 */
+    val isLoading: Boolean = false
+)
 
 /**
  * 设置页面的 ViewModel
@@ -31,8 +66,27 @@ class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
+    /** 导出备份用例 */
+    private val exportBackupUseCase: ExportBackupUseCase,
+    /** 导入备份用例 */
+    private val importBackupUseCase: ImportBackupUseCase,
+    /** 应用上下文 */
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
+    /** 备份事件流 */
+    private val _backupEvents = MutableSharedFlow<BackupEvent>()
+    /** 对外暴露的备份事件 */
+    val backupEvents = _backupEvents.asSharedFlow()
+
+    /** 备份界面状态 */
+    private val _backupUiState = MutableStateFlow(BackupUiState())
+    /** 对外暴露的备份界面状态 */
+    val backupUiState: StateFlow<BackupUiState> = _backupUiState.asStateFlow()
+
+    /** 清空数据界面状态 */
+    private val _clearDataUiState = MutableStateFlow(ClearDataUiState())
+    /** 对外暴露的清空数据界面状态 */
+    val clearDataUiState: StateFlow<ClearDataUiState> = _clearDataUiState.asStateFlow()
 
     /**
      * 当前的应用设置状态流
@@ -334,5 +388,87 @@ class SettingsViewModel @Inject constructor(
 
     fun setEnableAutoMute(enable: Boolean) {
         viewModelScope.launch { settingsRepository.setEnableAutoMute(enable) }
+    }
+
+    /**
+     * 执行导出备份
+     *
+     * @param uri 目标文件 URI
+     */
+    fun exportBackup(uri: Uri) {
+        viewModelScope.launch {
+            _backupUiState.value = BackupUiState(isLoading = true)
+            val outputStream = context.contentResolver.openOutputStream(uri)
+            if (outputStream == null) {
+                _backupUiState.value = BackupUiState(isLoading = false)
+                _backupEvents.emit(BackupEvent.ShowToast("无法打开导出文件"))
+                return@launch
+            }
+            val result = exportBackupUseCase(outputStream)
+            _backupUiState.value = BackupUiState(isLoading = false)
+            when (result) {
+                is com.dawncourse.core.domain.model.BackupResult.Success -> {
+                    _backupEvents.emit(
+                        BackupEvent.ShowToast(
+                            "备份完成：学期 ${result.summary.semesterCount} 个，课程 ${result.summary.courseCount} 门"
+                        )
+                    )
+                }
+                is com.dawncourse.core.domain.model.BackupResult.Failure -> {
+                    _backupEvents.emit(BackupEvent.ShowToast(result.message))
+                }
+            }
+        }
+    }
+
+    /**
+     * 执行导入备份
+     *
+     * @param uri 备份文件 URI
+     */
+    fun importBackup(uri: Uri) {
+        viewModelScope.launch {
+            _backupUiState.value = BackupUiState(isLoading = true)
+            val inputStream = context.contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                _backupUiState.value = BackupUiState(isLoading = false)
+                _backupEvents.emit(BackupEvent.ShowToast("无法打开备份文件"))
+                return@launch
+            }
+            val result = importBackupUseCase(inputStream)
+            _backupUiState.value = BackupUiState(isLoading = false)
+            when (result) {
+                is com.dawncourse.core.domain.model.RestoreResult.Success -> {
+                    sendWidgetUpdateBroadcast()
+                    _backupEvents.emit(
+                        BackupEvent.ShowToast(
+                            "还原完成：学期 ${result.summary.semesterCount} 个，课程 ${result.summary.courseCount} 门"
+                        )
+                    )
+                }
+                is com.dawncourse.core.domain.model.RestoreResult.Failure -> {
+                    _backupEvents.emit(BackupEvent.ShowToast(result.message))
+                }
+            }
+        }
+    }
+
+    /**
+     * 清空所有数据并重置设置
+     */
+    fun clearAllData() {
+        viewModelScope.launch {
+            _clearDataUiState.value = ClearDataUiState(isLoading = true)
+            runCatching {
+                courseRepository.clearAllCourses()
+                semesterRepository.clearAllSemesters()
+                settingsRepository.clearAllSettings()
+                sendWidgetUpdateBroadcast()
+                _backupEvents.emit(BackupEvent.ShowToast("已清空所有数据"))
+            }.onFailure { error ->
+                _backupEvents.emit(BackupEvent.ShowToast(error.message ?: "清空数据失败"))
+            }
+            _clearDataUiState.value = ClearDataUiState(isLoading = false)
+        }
     }
 }

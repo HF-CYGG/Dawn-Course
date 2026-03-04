@@ -39,6 +39,7 @@ dependencies {
     implementation(libs.coroutines.android)
     
     implementation(libs.datastore.preferences)
+    implementation(libs.gson)
 
     implementation(libs.javax.inject)
 }

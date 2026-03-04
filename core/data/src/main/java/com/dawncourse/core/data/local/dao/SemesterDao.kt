@@ -18,6 +18,12 @@ interface SemesterDao {
     fun getAllSemesters(): Flow<List<SemesterEntity>>
 
     /**
+     * 查询所有学期（一次性）
+     */
+    @Query("SELECT * FROM semesters")
+    suspend fun getAllSemestersOnce(): List<SemesterEntity>
+
+    /**
      * 查询当前学期
      */
     @Query("SELECT * FROM semesters WHERE isCurrent = 1 LIMIT 1")
@@ -54,4 +60,10 @@ interface SemesterDao {
      */
     @Delete
     suspend fun deleteSemester(semester: SemesterEntity)
+
+    /**
+     * 清空所有学期
+     */
+    @Query("DELETE FROM semesters")
+    suspend fun clearAllSemesters()
 }

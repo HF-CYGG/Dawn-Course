@@ -11,6 +11,8 @@ import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.data.repository.BackupRepositoryImpl
+import com.dawncourse.core.domain.repository.BackupRepository
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
@@ -76,6 +78,12 @@ object DatabaseModule {
         return database.courseDao()
     }
 
+    /**
+     * 提供 [SemesterDao] 实例
+     *
+     * @param database 数据库实例
+     * @return 从数据库中获取的 DAO 对象
+     */
     @Provides
     @Singleton
     fun provideSemesterDao(database: AppDatabase): SemesterDao {
@@ -114,4 +122,13 @@ abstract class RepositoryModule {
     abstract fun bindSemesterRepository(
         impl: SemesterRepositoryImpl
     ): SemesterRepository
+
+    /**
+     * 绑定 [BackupRepository] 接口到 [BackupRepositoryImpl] 实现
+     */
+    @Binds
+    @Singleton
+    abstract fun bindBackupRepository(
+        impl: BackupRepositoryImpl
+    ): BackupRepository
 }

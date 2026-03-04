@@ -52,6 +52,11 @@ interface SemesterRepository {
     suspend fun deleteSemester(semester: Semester)
 
     /**
+     * 清空所有学期
+     */
+    suspend fun clearAllSemesters()
+
+    /**
      * 设置当前学期
      *
      * 将指定 ID 的学期标记为当前学期，并自动取消其他学期的当前状态。

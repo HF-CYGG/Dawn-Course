@@ -254,4 +254,9 @@ interface SettingsRepository {
      * @param uri URI 字符串
      */
     suspend fun setBlurredWallpaperUri(uri: String?)
+
+    /**
+     * 清空所有设置（恢复默认）
+     */
+    suspend fun clearAllSettings()
 }

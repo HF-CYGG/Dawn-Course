@@ -28,6 +28,9 @@ import coil.compose.AsyncImage
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.domain.model.WallpaperMode
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 设置主页面
@@ -49,10 +52,43 @@ fun SettingsScreen(
     onCheckUpdate: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
+    /** 设置数据 */
     val settings by viewModel.settings.collectAsState()
+    /** 备份界面状态 */
+    val backupUiState by viewModel.backupUiState.collectAsState()
+    /** 清空数据界面状态 */
+    val clearDataUiState by viewModel.clearDataUiState.collectAsState()
+    /** 当前上下文 */
     val context = LocalContext.current
+    /** 学期弹窗显示状态 */
     var showSemesterDialog by remember { mutableStateOf(false) }
+    /** 当前最大周数 */
     var maxCourseWeek by remember { mutableIntStateOf(0) }
+    /** 备份弹窗显示状态 */
+    var showBackupDialog by remember { mutableStateOf(false) }
+    /** 清空数据弹窗显示状态 */
+    var showClearDataDialog by remember { mutableStateOf(false) }
+    /** 清空数据操作触发标记 */
+    var clearDataRequested by remember { mutableStateOf(false) }
+
+    /** 监听备份事件并提示 */
+    LaunchedEffect(Unit) {
+        viewModel.backupEvents.collect { event ->
+            when (event) {
+                is BackupEvent.ShowToast -> {
+                    android.widget.Toast.makeText(context, event.message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    /** 清空数据完成后自动关闭弹窗 */
+    LaunchedEffect(clearDataUiState.isLoading, clearDataRequested) {
+        if (clearDataRequested && !clearDataUiState.isLoading) {
+            showClearDataDialog = false
+            clearDataRequested = false
+        }
+    }
 
     if (showSemesterDialog) {
         SemesterSettingsDialog(
@@ -114,6 +150,115 @@ fun SettingsScreen(
             }
             viewModel.setWallpaperUri(it.toString())
         }
+    }
+
+    /** 导出备份文件选择器 */
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let { viewModel.exportBackup(it) }
+    }
+
+    /** 导入备份文件选择器 */
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    it,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            viewModel.importBackup(it)
+        }
+    }
+
+    /**
+     * 生成默认备份文件名
+     */
+    fun buildBackupFileName(): String {
+        val formatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+        return "DawnCourse_backup_${formatter.format(Date())}.json"
+    }
+
+    /** 备份与还原弹窗 */
+    if (showBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!backupUiState.isLoading) showBackupDialog = false },
+            title = { Text("备份与还原") },
+            text = {
+                Column {
+                    Text("将课表、学期与设置导出为 .json 文件，或从备份文件中还原。")
+                    if (backupUiState.isLoading) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            if (!backupUiState.isLoading) {
+                                exportBackupLauncher.launch(buildBackupFileName())
+                            }
+                        },
+                        enabled = !backupUiState.isLoading
+                    ) { Text("导出备份") }
+                    TextButton(
+                        onClick = {
+                            if (!backupUiState.isLoading) {
+                                importBackupLauncher.launch(arrayOf("application/json", "text/json", "text/plain"))
+                            }
+                        },
+                        enabled = !backupUiState.isLoading
+                    ) { Text("导入备份") }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showBackupDialog = false },
+                    enabled = !backupUiState.isLoading
+                ) { Text("取消") }
+            }
+        )
+    }
+
+    /** 清空所有数据弹窗 */
+    if (showClearDataDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!clearDataUiState.isLoading) showClearDataDialog = false },
+            title = { Text("清空所有数据") },
+            text = {
+                Column {
+                    Text("此操作将删除所有课程与学期，并重置所有设置，且无法恢复。")
+                    if (clearDataUiState.isLoading) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (!clearDataUiState.isLoading) {
+                            clearDataRequested = true
+                            viewModel.clearAllData()
+                        }
+                    },
+                    enabled = !clearDataUiState.isLoading
+                ) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearDataDialog = false },
+                    enabled = !clearDataUiState.isLoading
+                ) { Text("取消") }
+            }
+        )
     }
 
     // Notification Permission Handling
@@ -429,7 +574,7 @@ fun SettingsScreen(
                     description = "导出 .json 备份文件",
                     icon = { Icon(Icons.Default.Save, null) },
                     onClick = { 
-                        android.widget.Toast.makeText(context, "备份还原功能开发中", android.widget.Toast.LENGTH_SHORT).show()
+                        showBackupDialog = true
                     },
                     showDivider = true
                 )
@@ -437,7 +582,7 @@ fun SettingsScreen(
                     title = "清空所有数据",
                     icon = { Icon(Icons.Default.DeleteForever, null) },
                     onClick = { 
-                         android.widget.Toast.makeText(context, "清空数据功能开发中", android.widget.Toast.LENGTH_SHORT).show()
+                        showClearDataDialog = true
                     }
                 )
             }

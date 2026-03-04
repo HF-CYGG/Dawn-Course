@@ -21,6 +21,11 @@ interface CourseDao {
     @Query("SELECT * FROM courses")
     fun getAllCourses(): Flow<List<CourseEntity>>
 
+    /**
+     * 查询所有课程（一次性）
+     *
+     * @return 课程实体列表
+     */
     @Query("SELECT * FROM courses")
     suspend fun getAllCoursesOnce(): List<CourseEntity>
 
@@ -109,6 +114,12 @@ interface CourseDao {
      */
     @Query("DELETE FROM courses WHERE id = :id")
     suspend fun deleteCourseById(id: Long)
+
+    /**
+     * 清空所有课程
+     */
+    @Query("DELETE FROM courses")
+    suspend fun clearAllCourses()
 
     /**
      * 批量更新所有课程的时长
