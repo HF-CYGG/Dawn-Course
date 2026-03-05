@@ -97,12 +97,6 @@ import java.time.ZoneId
 import java.time.LocalDate
 import kotlin.coroutines.resume
 
-private fun configureImportWebViewSecurity(webView: WebView) {
-    val settings = webView.settings
-    // Disable access to content:// URLs to avoid exposing protected content
-    settings.allowContentAccess = false
-}
-
 /**
  * 导入功能主屏幕
  *
@@ -641,10 +635,36 @@ private fun WebViewStep(
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
 
-    fun configureWebViewSecurity(targetWebView: WebView) {
-        // Explicitly disallow access to content:// URLs to avoid exposing sensitive data
-        val settings = targetWebView.settings
-        settings.allowContentAccess = false
+    fun normalizeHttpUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "http://$trimmed"
+        }
+        val parsed = Uri.parse(withScheme)
+        val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
+        val host = parsed.host.orEmpty()
+        return if ((scheme == "http" || scheme == "https") && host.isNotBlank()) withScheme else null
+    }
+
+    fun isSafeHttpUrl(url: String): Boolean {
+        val parsed = Uri.parse(url)
+        val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
+        val host = parsed.host.orEmpty()
+        return (scheme == "http" || scheme == "https") && host.isNotBlank()
+    }
+
+    fun loadUrlIfValid(raw: String) {
+        val safeUrl = normalizeHttpUrl(raw)
+        if (safeUrl == null) {
+            viewModel.updateResultText("请输入有效网址")
+            return
+        }
+        inputUrl = safeUrl
+        viewModel.updateWebUrl(safeUrl)
+        webView?.loadUrl(safeUrl)
     }
 
     fun parseJavascriptResult(raw: String?): String {
@@ -694,17 +714,7 @@ private fun WebViewStep(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Go
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onGo = {
-                            if (inputUrl.isNotBlank()) {
-                                var url = inputUrl.trim()
-                                // 自动补全 http 协议头
-                                if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                                    url = "http://$url"
-                                }
-                                viewModel.updateWebUrl(url)
-                                webView?.loadUrl(url)
-                            }
-                        }
+                        onGo = { loadUrlIfValid(inputUrl) }
                     ),
                     trailingIcon = {
                         if (inputUrl.isNotEmpty()) {
@@ -716,16 +726,7 @@ private fun WebViewStep(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = {
-                        if (inputUrl.isNotBlank()) {
-                            var url = inputUrl.trim()
-                            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                                url = "http://$url"
-                            }
-                            viewModel.updateWebUrl(url)
-                            webView?.loadUrl(url)
-                        }
-                    },
+                    onClick = { loadUrlIfValid(inputUrl) },
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
                 ) {
                     Text("前往")
@@ -779,16 +780,12 @@ private fun WebViewStep(
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         settings.safeBrowsingEnabled = true
                     }
-                    // 安全配置：禁用文件与内容访问，避免通过 WebView 读取本地文件或 content://
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.allowFileAccessFromFileURLs = false
-                    settings.allowUniversalAccessFromFileURLs = false
-                    // 禁止 JS 自动弹窗
+                    settings.setAllowFileAccess(false)
+                    settings.setAllowContentAccess(false)
+                    settings.setAllowFileAccessFromFileURLs(false)
+                    settings.setAllowUniversalAccessFromFileURLs(false)
                     settings.javaScriptCanOpenWindowsAutomatically = false
-                    // 仅允许 HTTPS 混合内容策略为禁止（如有强需可下调）
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                    // 安全配置：禁用文件访问，防止本地文件泄露
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.useWideViewPort = true
@@ -803,7 +800,7 @@ private fun WebViewStep(
                             if (url == "about:blank") {
                                 return false
                             }
-                            return !url.startsWith("http://") && !url.startsWith("https://")
+                            return !isSafeHttpUrl(url)
                         }
 
                         @Deprecated("Deprecated in Java")
@@ -812,7 +809,7 @@ private fun WebViewStep(
                             if (targetUrl == "about:blank") {
                                 return false
                             }
-                            return !targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")
+                            return !isSafeHttpUrl(targetUrl)
                         }
 
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -829,7 +826,13 @@ private fun WebViewStep(
                         }
                     }
                     if (uiState.webUrl.isNotBlank()) {
-                        loadUrl(uiState.webUrl)
+                        val safeUrl = normalizeHttpUrl(uiState.webUrl)
+                        if (safeUrl != null) {
+                            inputUrl = safeUrl
+                            loadUrl(safeUrl)
+                        } else {
+                            viewModel.updateResultText("请输入有效网址")
+                        }
                     }
                     webView = this
                 }
