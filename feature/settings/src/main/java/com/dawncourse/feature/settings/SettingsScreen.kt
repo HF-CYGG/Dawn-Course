@@ -57,8 +57,8 @@ fun SettingsScreen(
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     val boundProvider by viewModel.boundProvider.collectAsState()
     val lastSyncDesc by viewModel.lastSyncDescription.collectAsState()
-    var showBindWakeUpDialog by remember { mutableStateOf(false) }
-    var wakeUpToken by remember { mutableStateOf("") }
+    var showSyncProviderDialog by remember { mutableStateOf(false) }
+    var showClearCredentialsDialog by remember { mutableStateOf(false) }
     var showBindQidiDialog by remember { mutableStateOf(false) }
     var qidiEndpoint by remember { mutableStateOf("") }
     var qidiUsername by remember { mutableStateOf("") }
@@ -85,35 +85,6 @@ fun SettingsScreen(
     }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
-
-    if (showBindWakeUpDialog) {
-        AlertDialog(
-            onDismissRequest = { showBindWakeUpDialog = false },
-            title = { Text("绑定 WakeUp 口令") },
-            text = {
-                OutlinedTextField(
-                    value = wakeUpToken,
-                    onValueChange = { wakeUpToken = it },
-                    label = { Text("口令") },
-                    placeholder = { Text("例如：ABCD") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (wakeUpToken.isNotBlank()) {
-                        viewModel.bindWakeUpToken(wakeUpToken.trim())
-                        showBindWakeUpDialog = false
-                        wakeUpToken = ""
-                        android.widget.Toast.makeText(context, "已绑定 WakeUp 口令", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }) { Text("绑定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBindWakeUpDialog = false }) { Text("取消") }
-            }
-        )
-    }
 
     if (showPermissionDialog) {
         AlertDialog(
@@ -544,15 +515,15 @@ fun SettingsScreen(
 
                 // 账号与同步
                 SettingRow(
-                    title = "一键更新来源",
+                    title = "一键更新账号",
                     description = when (boundProvider) {
-                        SyncProviderType.WAKEUP -> "WakeUp 课程表"
-                        SyncProviderType.QIDI -> "起迪教务（用户名+密码）"
-                        SyncProviderType.ZF -> "正方教务（用户名+密码）"
+                        SyncProviderType.QIDI -> "已绑定起迪账号"
+                        SyncProviderType.ZF -> "已绑定正方账号"
+                        SyncProviderType.WAKEUP -> "WakeUp 已下线"
                         null -> "未绑定"
                     },
                     icon = { Icon(Icons.Default.AccountCircle, null) },
-                    onClick = { /* 查看详情 */ },
+                    onClick = { showSyncProviderDialog = true },
                     showDivider = true
                 )
                 SettingRow(
@@ -563,31 +534,10 @@ fun SettingsScreen(
                     showDivider = true
                 )
                 SettingRow(
-                    title = "绑定 WakeUp 口令",
-                    description = "保存口令以支持一键更新",
-                    icon = { Icon(Icons.Default.Link, null) },
-                    onClick = { showBindWakeUpDialog = true },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "绑定起迪账号",
-                    description = "保存入口地址、用户名和密码",
-                    icon = { Icon(Icons.Default.Link, null) },
-                    onClick = { showBindQidiDialog = true },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "绑定正方账号",
-                    description = "保存入口地址、用户名和密码",
-                    icon = { Icon(Icons.Default.Link, null) },
-                    onClick = { showBindZfDialog = true },
-                    showDivider = true
-                )
-                SettingRow(
                     title = "清除凭据",
                     description = "移除本机保存的账号/口令",
                     icon = { Icon(Icons.Default.Delete, null) },
-                    onClick = { viewModel.clearSyncCredentials() }
+                    onClick = { showClearCredentialsDialog = true }
                 )
                 
                 SettingRow(
@@ -638,6 +588,66 @@ fun SettingsScreen(
             
             Spacer(modifier = Modifier.height(32.dp))
         }
+    }
+    
+    if (showSyncProviderDialog) {
+        AlertDialog(
+            onDismissRequest = { showSyncProviderDialog = false },
+            title = { Text("一键更新账号") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = {
+                            showSyncProviderDialog = false
+                            if (boundProvider == SyncProviderType.QIDI) {
+                                viewModel.clearSyncCredentials()
+                                android.widget.Toast.makeText(context, "已解绑起迪账号", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                showBindQidiDialog = true
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (boundProvider == SyncProviderType.QIDI) "解绑起迪账号" else "绑定起迪账号")
+                    }
+                    Button(
+                        onClick = {
+                            showSyncProviderDialog = false
+                            if (boundProvider == SyncProviderType.ZF) {
+                                viewModel.clearSyncCredentials()
+                                android.widget.Toast.makeText(context, "已解绑正方账号", android.widget.Toast.LENGTH_SHORT).show()
+                            } else {
+                                showBindZfDialog = true
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (boundProvider == SyncProviderType.ZF) "解绑正方账号" else "绑定正方账号")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSyncProviderDialog = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    if (showClearCredentialsDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearCredentialsDialog = false },
+            title = { Text("确认清除凭据") },
+            text = { Text("将移除已保存的账号/口令，且无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearCredentialsDialog = false
+                    viewModel.clearSyncCredentials()
+                    android.widget.Toast.makeText(context, "已清除凭据", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("清除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCredentialsDialog = false }) { Text("取消") }
+            }
+        )
     }
     
 

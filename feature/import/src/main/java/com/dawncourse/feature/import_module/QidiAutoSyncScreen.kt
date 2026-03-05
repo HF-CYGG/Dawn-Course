@@ -3,6 +3,8 @@ package com.dawncourse.feature.import_module
 
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
@@ -138,8 +140,14 @@ fun QidiAutoSyncScreen(
                 LinearProgressIndicator()
             }
             WebViewBox(
+                provider = provider,
                 onWebViewReady = { wv ->
                     webView = wv
+                },
+                onPageStarted = { url ->
+                    if (url.isNotBlank()) {
+                        addressBar = url
+                    }
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
                 onPageFinished = { wv, _ ->
@@ -196,6 +204,11 @@ fun QidiAutoSyncScreen(
                                 // ignore
                             }
                         }
+                    }
+                },
+                onPageError = { desc ->
+                    if (desc.isNotBlank()) {
+                        subTitle = "页面加载失败：$desc"
                     }
                 }
             )
@@ -434,9 +447,12 @@ fun QidiAutoSyncScreen(
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun WebViewBox(
+    provider: SyncProviderType,
     onWebViewReady: (WebView) -> Unit,
+    onPageStarted: (String) -> Unit = {},
     onPageTitle: (String) -> Unit,
-    onPageFinished: (WebView, String) -> Unit = {_, _ -> }
+    onPageFinished: (WebView, String) -> Unit = {_, _ -> },
+    onPageError: (String) -> Unit = {}
 ) {
     AndroidView(
         modifier = Modifier
@@ -448,12 +464,53 @@ private fun WebViewBox(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            settings.setSupportZoom(true)
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            if (provider == SyncProviderType.ZF) {
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                settings.userAgentString = settings.userAgentString.replace("wv", "")
+            }
             CookieManager.getInstance().setAcceptCookie(true)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+            }
+            wv.webChromeClient = WebChromeClient()
             wv.webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    onPageStarted(url)
+                }
+
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     onPageTitle(view.title ?: "")
                     onPageFinished(view, url)
+                }
+
+                override fun onReceivedError(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                    error: android.webkit.WebResourceError
+                ) {
+                    super.onReceivedError(view, request, error)
+                    if (request.isForMainFrame) {
+                        onPageError(error.description?.toString().orEmpty())
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                    errorResponse: android.webkit.WebResourceResponse
+                ) {
+                    super.onReceivedHttpError(view, request, errorResponse)
+                    if (request.isForMainFrame) {
+                        onPageError("HTTP ${errorResponse.statusCode}")
+                    }
                 }
             }
             onWebViewReady(wv)

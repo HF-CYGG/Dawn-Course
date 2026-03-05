@@ -16,7 +16,7 @@ android {
         applicationId = "com.dawncourse.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 104
+        versionCode = 109
         versionName = "1.0.3.00"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

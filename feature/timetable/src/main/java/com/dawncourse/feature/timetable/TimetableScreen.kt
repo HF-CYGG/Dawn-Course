@@ -141,12 +141,17 @@ internal fun TimetableScreen(
     // 显示 Snackbar
     LaunchedEffect(userMessage) {
         if (userMessage != null) {
-            val result = snackbarHostState.showSnackbar(
-                message = userMessage,
-                actionLabel = "撤销",
-                withDismissAction = true
-            )
-            if (result == SnackbarResult.ActionPerformed) {
+            val showUndo = userMessage.startsWith("课程已删除") || userMessage.startsWith("已删除")
+            val result = if (showUndo) {
+                snackbarHostState.showSnackbar(
+                    message = userMessage,
+                    actionLabel = "撤销",
+                    withDismissAction = true
+                )
+            } else {
+                snackbarHostState.showSnackbar(message = userMessage)
+            }
+            if (showUndo && result == SnackbarResult.ActionPerformed) {
                 onUndoDelete()
             }
             onUserMessageShown()
