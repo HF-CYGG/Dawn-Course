@@ -164,6 +164,12 @@ class MainActivity : ComponentActivity() {
                                     onCourseClick = { courseId ->
                                         // 传递 courseId 进行编辑，若为 0 或 null 则为新建
                                         navController.navigate("course_editor?courseId=$courseId")
+                                    },
+                                    onNavigateToQidiSync = {
+                                        navController.navigate("qidi_sync")
+                                    },
+                                    onNavigateToZfSync = {
+                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }

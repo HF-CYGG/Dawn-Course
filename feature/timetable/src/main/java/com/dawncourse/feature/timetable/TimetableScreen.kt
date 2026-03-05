@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -54,10 +55,13 @@ fun TimetableRoute(
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
-    onCourseClick: (Long) -> Unit
+    onCourseClick: (Long) -> Unit,
+    onNavigateToQidiSync: () -> Unit,
+    onNavigateToZfSync: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
+    val boundProvider by viewModel.boundProvider.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
@@ -65,7 +69,14 @@ fun TimetableRoute(
         onUserMessageShown = { viewModel.userMessageShown() },
         onAddClick = onAddClick,
         onImportClick = onImportClick,
-        onSyncClick = { viewModel.syncNow() },
+        onSyncClick = {
+            when (boundProvider) {
+                SyncProviderType.QIDI -> onNavigateToQidiSync()
+                SyncProviderType.ZF -> onNavigateToZfSync()
+                SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令一键更新已下线，请绑定起迪/正方账号")
+                null -> viewModel.showUserMessage("未绑定一键更新账号，请在设置→数据与同步绑定起迪/正方")
+            }
+        },
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },

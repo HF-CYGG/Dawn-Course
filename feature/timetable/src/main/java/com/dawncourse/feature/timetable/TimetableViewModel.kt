@@ -10,6 +10,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import com.dawncourse.core.domain.usecase.RunTimetableSyncUseCase
@@ -72,7 +74,8 @@ class TimetableViewModel @Inject constructor(
     private val repository: CourseRepository,
     private val semesterRepository: SemesterRepository,
     private val calculateWeekUseCase: CalculateWeekUseCase,
-    private val runTimetableSyncUseCase: RunTimetableSyncUseCase
+    private val runTimetableSyncUseCase: RunTimetableSyncUseCase,
+    private val credentialsRepository: CredentialsRepository
 ) : ViewModel() {
 
     /**
@@ -166,6 +169,13 @@ class TimetableViewModel @Inject constructor(
             initialValue = TimetableUiState.Loading
         )
 
+    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
     /**
      * 更新当前展示的周次
      *
@@ -203,6 +213,10 @@ class TimetableViewModel @Inject constructor(
      */
     fun userMessageShown() {
         _userMessage.value = null
+    }
+
+    fun showUserMessage(message: String) {
+        _userMessage.value = message
     }
 
     /**

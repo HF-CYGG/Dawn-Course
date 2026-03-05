@@ -36,11 +36,16 @@ class TimetableSyncRepositoryImpl @Inject constructor(
             )
 
         return when (creds.provider) {
-            SyncProviderType.WAKEUP -> syncWakeUp(creds)
+            SyncProviderType.WAKEUP -> {
+                TimetableSyncResult.Failure(
+                    code = SyncErrorCode.AUTH_FAILED,
+                    message = "WakeUp 口令一键更新已下线，请绑定起迪/正方账号后再更新"
+                )
+            }
             SyncProviderType.QIDI, SyncProviderType.ZF -> {
                 TimetableSyncResult.Failure(
                     code = SyncErrorCode.AUTH_FAILED,
-                    message = "当前绑定为教务账号（需网页自动登录）。请在 设置→数据与同步 执行“起迪一键更新（实验）”。"
+                    message = "当前绑定为教务账号，请在主界面使用“一键更新”进入同步页面"
                 )
             }
         }
