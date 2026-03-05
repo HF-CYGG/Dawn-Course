@@ -195,12 +195,6 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onCheckUpdate = {
                                         updateViewModel.checkUpdate(isManual = true)
-                                    },
-                                    onNavigateToQidiSync = {
-                                        navController.navigate("qidi_sync")
-                                    },
-                                    onNavigateToZfSync = {
-                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }

@@ -49,8 +49,6 @@ fun SettingsScreen(
     onBackClick: () -> Unit,
     onNavigateToTimetableSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
-    onNavigateToQidiSync: () -> Unit = {},
-    onNavigateToZfSync: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -583,20 +581,6 @@ fun SettingsScreen(
                     description = "保存入口地址、用户名和密码",
                     icon = { Icon(Icons.Default.Link, null) },
                     onClick = { showBindZfDialog = true },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "起迪一键更新（实验）",
-                    description = "自动登录并提取课程",
-                    icon = { Icon(Icons.Default.Refresh, null) },
-                    onClick = onNavigateToQidiSync,
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "正方一键更新（实验）",
-                    description = "自动登录并提取课程",
-                    icon = { Icon(Icons.Default.Refresh, null) },
-                    onClick = onNavigateToZfSync,
                     showDivider = true
                 )
                 SettingRow(
