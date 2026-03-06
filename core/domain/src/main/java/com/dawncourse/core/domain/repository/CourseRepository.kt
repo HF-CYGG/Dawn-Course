@@ -89,4 +89,8 @@ interface CourseRepository {
      * @param semesterId 学期 ID
      */
     suspend fun deleteCoursesBySemester(semesterId: Long)
+    /**
+     * 删除所有课程
+     */
+    suspend fun deleteAllCourses()
 }

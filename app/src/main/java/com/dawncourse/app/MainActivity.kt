@@ -190,20 +190,8 @@ class MainActivity : ComponentActivity() {
                                     onBackClick = {
                                         navController.popBackStack()
                                     },
-                                    onNavigateToTimetableSettings = {
-                                        navController.navigate("timetable_settings")
-                                    },
                                     onCheckUpdate = {
                                         updateViewModel.checkUpdate(isManual = true)
-                                    }
-                                )
-                            }
-                            
-                            // 课表设置页面
-                            composable("timetable_settings") {
-                                com.dawncourse.feature.settings.TimetableSettingsScreen(
-                                    onBackClick = {
-                                        navController.popBackStack()
                                     }
                                 )
                             }

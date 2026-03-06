@@ -145,4 +145,10 @@ interface CourseDao {
             }
         updateCourses(updated)
     }
+
+    /**
+     * 删除所有课程
+     */
+    @Query("DELETE FROM courses")
+    suspend fun deleteAllCourses()
 }

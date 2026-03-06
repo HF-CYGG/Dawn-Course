@@ -100,7 +100,12 @@ interface SettingsRepository {
      * @param duration 节数
      */
     suspend fun setDefaultCourseDuration(duration: Int)
-    
+
+    /**
+     * 清除所有设置
+     */
+    suspend fun clearAllSettings()
+
     /**
      * 设置每节课的具体时间
      *

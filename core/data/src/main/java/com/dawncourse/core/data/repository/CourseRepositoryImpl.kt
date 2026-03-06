@@ -103,4 +103,8 @@ class CourseRepositoryImpl @Inject constructor(
     override suspend fun deleteCoursesBySemester(semesterId: Long) {
         courseDao.deleteCoursesBySemester(semesterId)
     }
+
+    override suspend fun deleteAllCourses() {
+        courseDao.deleteAllCourses()
+    }
 }

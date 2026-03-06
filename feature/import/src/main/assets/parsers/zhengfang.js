@@ -49,7 +49,7 @@ function parseNewZhengfang(html) {
 
             teacher = extractTextByTitle(blockHtml, "教师");
             if (teacher) {
-                teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+                teacher = cleanTeacherName(teacher);
             }
             location = extractTextByTitle(blockHtml, "上课地点");
             if (location) {
@@ -73,7 +73,7 @@ function parseNewZhengfang(html) {
                 if (!teacher) {
                     var teacherTextMatch = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(text);
                     if (teacherTextMatch) {
-                        teacher = teacherTextMatch[1].trim();
+                        teacher = cleanTeacherName(teacherTextMatch[1].trim());
                     }
                 }
                 if (!location) {
@@ -119,7 +119,12 @@ function parseNewZhengfang(html) {
         var listText = normalizeText(listBlockHtml);
         var listTeacher = extractTextByTitle(listBlockHtml, "教师");
         if (listTeacher) {
-            listTeacher = listTeacher.replace(/教师\s*[:：]?\s*/g, "").trim();
+            listTeacher = cleanTeacherName(listTeacher);
+        } else {
+            var listTeacherMatch = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(listText);
+            if (listTeacherMatch) {
+                listTeacher = cleanTeacherName(listTeacherMatch[1].trim());
+            }
         }
         var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
         if (listLocation) {
@@ -209,7 +214,7 @@ function parseOldZhengfang(html) {
                 
                 var name = rawInfo[idx-1];
                 var timeStr = rawInfo[idx];
-                var teacher = (idx + 1 < rawInfo.length) ? rawInfo[idx+1] : "";
+                var teacher = (idx + 1 < rawInfo.length) ? cleanTeacherName(rawInfo[idx+1]) : "";
                 var location = (idx + 2 < rawInfo.length) ? rawInfo[idx+2] : "";
                 
                 // 解析 Day
@@ -320,6 +325,19 @@ function stripTags(html) {
 
 function normalizeText(html) {
     return stripTags(html).replace(/\s+/g, " ").replace(/：/g, ":").trim();
+}
+
+function cleanTeacherName(raw) {
+    if (!raw) return "";
+    var text = stripTags(raw);
+    text = text.replace(/教师\s*[:：]?\s*/g, "").trim();
+    var keywordRegex = /(教学班组成|教学班|选课备注|考核方式|课程学时组成|总学时|学时|学分|班级|课程性质|课程类别)\s*[:：]?/;
+    var match = keywordRegex.exec(text);
+    if (match) {
+        text = text.substring(0, match.index).trim();
+    }
+    text = text.replace(/[，,;；]\s*$/, "").trim();
+    return text;
 }
 
 function extractName(blockHtml) {

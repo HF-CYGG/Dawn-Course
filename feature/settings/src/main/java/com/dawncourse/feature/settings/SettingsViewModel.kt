@@ -439,4 +439,22 @@ class SettingsViewModel @Inject constructor(
     fun setEnableAutoMute(enable: Boolean) {
         viewModelScope.launch { settingsRepository.setEnableAutoMute(enable) }
     }
+
+    /**
+     * 清空所有数据
+     *
+     * 包括：
+     * 1. 删除所有课程
+     * 2. 删除所有学期
+     * 3. 清除所有绑定凭据
+     * 4. 恢复所有设置到默认值
+     */
+    fun clearAllData() {
+        viewModelScope.launch {
+            courseRepository.deleteAllCourses()
+            semesterRepository.deleteAllSemesters()
+            credentialsRepository.clearCredentials()
+            settingsRepository.clearAllSettings()
+        }
+    }
 }

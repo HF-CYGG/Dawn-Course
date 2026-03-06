@@ -54,4 +54,9 @@ interface SemesterDao {
      */
     @Delete
     suspend fun deleteSemester(semester: SemesterEntity)
+    /**
+     * 删除所有学期
+     */
+    @Query("DELETE FROM semesters")
+    suspend fun deleteAllSemesters()
 }

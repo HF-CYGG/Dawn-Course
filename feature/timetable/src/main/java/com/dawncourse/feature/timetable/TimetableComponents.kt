@@ -560,19 +560,15 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course)).copy(alpha = 0.9f)
     } else {
-        // 非本周：改为 Surface 背景
-        MaterialTheme.colorScheme.surface
+        // 非本周：使用课程色的浅色填充
+        CourseColorUtils.parseColor(CourseColorUtils.getCourseColor(course)).copy(alpha = 0.18f)
     }
 
     // 2. 动态计算内容透明度
-    val contentAlpha = if (isCurrentWeek) 1f else 0.6f
+    val contentAlpha = if (isCurrentWeek) 1f else 0.75f
 
-    // 3. 边框样式（仅非本周显示）
-    val borderModifier = if (!isCurrentWeek) {
-        Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-    } else {
-        Modifier
-    }
+    // 3. 非本周不再使用描边，保持卡片为纯色块
+    val borderModifier = Modifier
 
     // 性能优化：使用 BoxWithConstraints 替代 Box 以支持响应式布局
     BoxWithConstraints(
@@ -600,7 +596,7 @@ fun CourseCard(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 14.sp, // 稍微紧凑一点
-                    color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
+                    color = (if (isCurrentWeek) Color(0xFF333333) else Color(0xFF333333)).copy(alpha = contentAlpha)
                 ),
                 maxLines = if (showDetails) 2 else 3, // 减少行数预留空间给详情
                 overflow = TextOverflow.Ellipsis

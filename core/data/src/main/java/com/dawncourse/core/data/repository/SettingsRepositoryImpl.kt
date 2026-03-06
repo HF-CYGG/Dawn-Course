@@ -314,6 +314,10 @@ class SettingsRepositoryImpl @Inject constructor(
         dataStore.edit { it[PreferencesKeys.ENABLE_CLASS_REMINDER] = enable }
     }
 
+    override suspend fun clearAllSettings() {
+        dataStore.edit { it.clear() }
+    }
+
     override suspend fun setReminderMinutes(minutes: Int) {
         dataStore.edit { it[PreferencesKeys.REMINDER_MINUTES] = minutes }
     }

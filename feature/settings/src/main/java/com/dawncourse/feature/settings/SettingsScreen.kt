@@ -1,15 +1,18 @@
 package com.dawncourse.feature.settings
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,17 +22,35 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.domain.model.WallpaperMode
 import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.model.DividerType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import android.Manifest
+import android.os.Build
+import android.widget.Toast
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
+
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 
 /**
  * 设置主页面
@@ -47,13 +68,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 @Composable
 fun SettingsScreen(
     onBackClick: () -> Unit,
-    onNavigateToTimetableSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
     val context = LocalContext.current
     var showSemesterDialog by remember { mutableStateOf(false) }
+    var showSectionTimeSettingsDialog by remember { mutableStateOf(false) }
+
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     val boundProvider by viewModel.boundProvider.collectAsState()
     val lastSyncDesc by viewModel.lastSyncDescription.collectAsState()
@@ -67,6 +89,17 @@ fun SettingsScreen(
     var zfEndpoint by remember { mutableStateOf("") }
     var zfUsername by remember { mutableStateOf("") }
     var zfPassword by remember { mutableStateOf("") }
+    var showUnbindConfirmDialog by remember { mutableStateOf(false) }
+    var pendingUnbindProvider by remember { mutableStateOf<SyncProviderType?>(null) }
+    var showBatchUpdateDurationDialog by remember { mutableStateOf(false) }
+
+    if (showSectionTimeSettingsDialog) {
+        SectionTimeSettingsDialog(
+            settings = settings,
+            viewModel = viewModel,
+            onDismissRequest = { showSectionTimeSettingsDialog = false }
+        )
+    }
 
     if (showSemesterDialog) {
         SemesterSettingsDialog(
@@ -83,6 +116,29 @@ fun SettingsScreen(
             }
         )
     }
+    
+    if (showBatchUpdateDurationDialog) {
+        AlertDialog(
+            onDismissRequest = { showBatchUpdateDurationDialog = false },
+            title = { Text("批量更新课程时长") },
+            text = { Text("确定要将所有现有课程的时长都修改为 ${settings.defaultCourseDuration} 节吗？\n\n此操作将覆盖所有课程的当前时长，且不可撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.updateAllCoursesDuration(settings.defaultCourseDuration)
+                        showBatchUpdateDurationDialog = false
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchUpdateDurationDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     var showPermissionDialog by remember { mutableStateOf(false) }
 
@@ -94,11 +150,11 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showPermissionDialog = false
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                    val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
                     try {
                         context.startActivity(intent)
                     } catch (e: Exception) {
-                        android.widget.Toast.makeText(context, "无法打开设置页面", android.widget.Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "无法打开设置页面", Toast.LENGTH_SHORT).show()
                     }
                 }) {
                     Text("去授权")
@@ -119,7 +175,7 @@ fun SettingsScreen(
             try {
                 context.contentResolver.takePersistableUriPermission(
                     it,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (e: Exception) {
                 // Ignore
@@ -137,26 +193,22 @@ fun SettingsScreen(
         if (isGranted) {
             pendingNotificationAction?.invoke()
         } else {
-            android.widget.Toast.makeText(context, "开启通知失败：请授予通知权限", android.widget.Toast.LENGTH_SHORT).show()
-            // Turn off switches if permission denied? 
-            // Since we only call setEnable... inside onGranted, the switch state shouldn't change if we don't call it.
-            // But SwitchSetting might optimistically toggle if it wasn't tied to state source of truth correctly?
-            // SwitchSetting uses `checked = settings.enable...` which is from ViewModel flow. So it's safe.
+            Toast.makeText(context, "开启通知失败：请授予通知权限", Toast.LENGTH_SHORT).show()
         }
         pendingNotificationAction = null
     }
 
     fun checkAndRequestNotificationPermission(onGranted: () -> Unit) {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (androidx.core.content.ContextCompat.checkSelfPermission(
                     context,
-                    android.Manifest.permission.POST_NOTIFICATIONS
+                    Manifest.permission.POST_NOTIFICATIONS
                 ) == android.content.pm.PackageManager.PERMISSION_GRANTED
             ) {
                 onGranted()
             } else {
                 pendingNotificationAction = onGranted
-                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         } else {
             onGranted()
@@ -185,584 +237,682 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            // 1. 课表核心管理 (Schedule Core)
-            PreferenceCategory(title = "课表核心管理") {
-                SettingRow(
-                    title = "当前学期",
-                    description = "${settings.currentSemesterName} (第 1 周 / 共 ${settings.totalWeeks} 周)",
-                    icon = { Icon(Icons.Default.DateRange, null) },
-                    onClick = {
-                        viewModel.getMaxCourseWeek { max ->
-                            maxCourseWeek = max
-                            showSemesterDialog = true
-                        }
-                    },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "课表布局与网格",
-                    description = "调整每天节数、每节课时间及网格样式",
-                    icon = { Icon(Icons.Default.AccessTime, null) },
-                    onClick = onNavigateToTimetableSettings
-                )
-            }
+             // 1. 课表管理
+             PreferenceCategory(title = "课表管理") {
+                 SettingRow(
+                     title = "当前学期",
+                     description = "${settings.currentSemesterName} (第 1 周 / 共 ${settings.totalWeeks} 周)",
+                     icon = { Icon(Icons.Default.DateRange, null) },
+                     onClick = {
+                         viewModel.getMaxCourseWeek { max ->
+                             maxCourseWeek = max
+                             showSemesterDialog = true
+                         }
+                     },
+                     showDivider = true
+                 )
+                 SliderSetting(
+                     title = "每天总节数",
+                     value = settings.maxDailySections.toFloat(),
+                     onValueChange = { viewModel.setMaxDailySections(it.toInt()) },
+                     valueRange = 8f..16f,
+                     steps = 7,
+                     valueText = "${settings.maxDailySections} 节",
+                     showDivider = true
+                 )
+                 SliderSetting(
+                     title = "默认课程时长",
+                     value = settings.defaultCourseDuration.toFloat(),
+                     onValueChange = { viewModel.setDefaultCourseDuration(it.toInt()) },
+                     valueRange = 1f..4f,
+                     steps = 2,
+                     valueText = "${settings.defaultCourseDuration} 节",
+                     showDivider = true
+                 )
+                 Row(
+                     modifier = Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 8.dp),
+                     horizontalArrangement = Arrangement.End
+                 ) {
+                     TextButton(onClick = { showBatchUpdateDurationDialog = true }) {
+                         Text("应用到所有课程")
+                     }
+                 }
+                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                 
+                 SettingRow(
+                     title = "节次时间设置",
+                     description = "调整每一节课的上课与下课时间",
+                     icon = { Icon(Icons.Default.AccessTime, null) },
+                     onClick = { showSectionTimeSettingsDialog = true }
+                 )
+             }
+             Spacer(modifier = Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 2. 深度视觉定制 (Visual Customization)
-            PreferenceCategory(title = "深度视觉定制") {
-                // Preview
-                CourseCardPreview(settings = settings)
-                
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 主题模式
-                SettingRow(
-                    title = "主题模式",
-                    icon = { Icon(Icons.Default.BrightnessMedium, null) }
-                ) {
+             // 2. 外观与视觉
+             PreferenceCategory(title = "外观与视觉") {
+                 CourseCardPreview(settings = settings)
+                 Spacer(modifier = Modifier.height(16.dp))
+                 SettingRow(
+                     title = "主题模式",
+                     icon = { Icon(Icons.Default.BrightnessMedium, null) }
+                 ) {
                      Row(modifier = Modifier.padding(start = 56.dp, bottom = 8.dp)) {
-                        AppThemeMode.entries.forEach { mode ->
+                         AppThemeMode.entries.forEach { mode ->
+                             FilterChip(
+                                 selected = settings.themeMode == mode,
+                                 onClick = { viewModel.setThemeMode(mode) },
+                                 label = { Text(when (mode) {
+                                     AppThemeMode.SYSTEM -> "跟随系统"
+                                     AppThemeMode.LIGHT -> "浅色"
+                                     AppThemeMode.DARK -> "深色"
+                                 }) },
+                                 modifier = Modifier.padding(end = 8.dp)
+                             )
+                         }
+                     }
+                 }
+                 HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+                 SwitchSetting(
+                     title = "动态取色 (Material You)",
+                     description = "根据壁纸自动生成主题色",
+                     icon = { Icon(Icons.Default.Palette, null) },
+                     checked = settings.dynamicColor,
+                     onCheckedChange = { viewModel.setDynamicColor(it) },
+                     showDivider = true
+                 )
+                 SettingRow(
+                     title = "自定义壁纸",
+                     description = if (settings.wallpaperUri != null) "已设置自定义壁纸" else "未设置",
+                     icon = { Icon(Icons.Default.Wallpaper, null) },
+                     action = {
+                         Row {
+                             if (settings.wallpaperUri != null) {
+                                 TextButton(onClick = { viewModel.setWallpaperUri(null) }) { Text("清除") }
+                             }
+                             Button(onClick = {
+                                 try {
+                                     wallpaperLauncher.launch("image/*")
+                                 } catch (e: Exception) {
+                                     Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
+                                 }
+                             }) {
+                                 Text("选择")
+                             }
+                         }
+                     },
+                     showDivider = true
+                 )
+                 if (settings.wallpaperUri != null) {
+                     Row(modifier = Modifier.padding(start = 56.dp, bottom = 8.dp)) {
+                         WallpaperMode.entries.forEach { mode ->
+                             FilterChip(
+                                 selected = settings.wallpaperMode == mode,
+                                 onClick = { viewModel.setWallpaperMode(mode) },
+                                 label = { Text(when (mode) {
+                                     WallpaperMode.CROP -> "裁剪适应"
+                                     WallpaperMode.FILL -> "拉伸填充"
+                                 }) },
+                                 modifier = Modifier.padding(end = 8.dp)
+                             )
+                         }
+                     }
+                 }
+                 SmoothSliderSetting(
+                     title = "背景遮罩浓度",
+                     value = settings.transparency,
+                     onValueChangeFinished = { viewModel.setTransparency(it) },
+                     valueRange = 0f..1f,
+                     valueText = { "${(it * 100).toInt()}%" },
+                     description = "调节背景图上覆盖颜色的浓度",
+                     showDivider = true
+                 )
+                 SmoothSliderSetting(
+                     title = "背景模糊程度",
+                     value = settings.backgroundBlur,
+                     onValueChangeFinished = { viewModel.setBackgroundBlur(it) },
+                     valueRange = 0f..100f,
+                     valueText = { "${it.toInt()} dp" },
+                     description = "调节背景图的模糊程度",
+                     showDivider = true
+                 )
+                 SmoothSliderSetting(
+                     title = "背景亮度",
+                     value = settings.backgroundBrightness,
+                     onValueChangeFinished = { viewModel.setBackgroundBrightness(it) },
+                     valueRange = 0f..1f,
+                     valueText = { "${(it * 100).toInt()}%" },
+                     description = "调节背景图的亮度",
+                     showDivider = true
+                 )
+                 SliderSetting(
+                      title = "课程卡片高度",
+                      value = settings.courseItemHeightDp.toFloat(),
+                      onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
+                      valueRange = 40f..100f,
+                      steps = 12,
+                      valueText = "${settings.courseItemHeightDp} dp",
+                      showDivider = true
+                  )
+                  SliderSetting(
+                      title = "课程卡片圆角",
+                      value = settings.cardCornerRadius.toFloat(),
+                      onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
+                      valueRange = 0f..24f,
+                      steps = 24,
+                      valueText = "${settings.cardCornerRadius} dp",
+                      showDivider = true
+                  )
+                  SmoothSliderSetting(
+                      title = "课程卡片透明度",
+                      value = settings.cardAlpha,
+                      onValueChangeFinished = { viewModel.setCardAlpha(it) },
+                      valueRange = 0.1f..1f,
+                      valueText = { "${(it * 100).toInt()}%" },
+                      description = "调节课程卡片的不透明度",
+                      showDivider = true
+                  )
+                 SwitchSetting(
+                     title = "显示课程图标",
+                     description = "在课程卡片上显示课程图标",
+                     icon = { Icon(Icons.Default.Image, null) },
+                     checked = settings.showCourseIcons,
+                     onCheckedChange = { viewModel.setShowCourseIcons(it) }
+                 )
+             }
+             Spacer(modifier = Modifier.height(16.dp))
+
+             // 3. 显示与布局
+             PreferenceCategory(title = "显示与布局") {
+                 SwitchSetting(
+                     title = "显示周末",
+                     description = "隐藏周六周日，增加平日课程卡片宽度",
+                     icon = { Icon(Icons.Default.ViewWeek, null) },
+                     checked = settings.showWeekend,
+                     onCheckedChange = { viewModel.setShowWeekend(it) },
+                     showDivider = true
+                 )
+                 SwitchSetting(
+                     title = "显示侧边栏时间",
+                     icon = { Icon(Icons.Default.Schedule, null) },
+                     checked = settings.showSidebarTime,
+                     onCheckedChange = { viewModel.setShowSidebarTime(it) },
+                     showDivider = true
+                 )
+                 SwitchSetting(
+                     title = "显示侧边栏节数",
+                     icon = { Icon(Icons.Default.FormatListNumbered, null) },
+                     checked = settings.showSidebarIndex,
+                     onCheckedChange = { viewModel.setShowSidebarIndex(it) },
+                     showDivider = true
+                 )
+                 SwitchSetting(
+                     title = "显示日期",
+                     description = "在星期下方显示具体日期 (如 9.1)",
+                     icon = { Icon(Icons.Default.CalendarToday, null) },
+                     checked = settings.showDateInHeader,
+                     onCheckedChange = { viewModel.setShowDateInHeader(it) },
+                     showDivider = true
+                 )
+                 SwitchSetting(
+                     title = "隐藏非本周课程",
+                     description = "仅显示当前周有课的课程",
+                     icon = { Icon(Icons.Default.VisibilityOff, null) },
+                     checked = settings.hideNonThisWeek,
+                     onCheckedChange = { viewModel.setHideNonThisWeek(it) }
+                 )
+             }
+             Spacer(modifier = Modifier.height(16.dp))
+
+             // 4. 网格线设置
+             PreferenceCategory(title = "网格线设置") {
+                // 样式选择
+                SettingRow(title = "线样式") {
+                    Row(modifier = Modifier.padding(top = 8.dp, start = 16.dp, end = 16.dp)) {
+                        DividerType.entries.forEach { type ->
+                            val selected = settings.dividerType == type
                             FilterChip(
-                                selected = settings.themeMode == mode,
-                                onClick = { viewModel.setThemeMode(mode) },
-                                label = { Text(when(mode) {
-                                    AppThemeMode.SYSTEM -> "跟随系统"
-                                    AppThemeMode.LIGHT -> "浅色"
-                                    AppThemeMode.DARK -> "深色"
-                                }) },
+                                selected = selected,
+                                onClick = { viewModel.setDividerType(type) },
+                                label = { 
+                                    Text(when(type) {
+                                        DividerType.SOLID -> "实线"
+                                        DividerType.DASHED -> "虚线"
+                                        DividerType.DOTTED -> "点线"
+                                    }) 
+                                },
                                 modifier = Modifier.padding(end = 8.dp)
                             )
                         }
                     }
                 }
-                
-                HorizontalDivider(modifier = Modifier.padding(start = 56.dp, end = 16.dp))
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
 
-                // 动态取色
-                SwitchSetting(
-                    title = "动态取色 (Material You)",
-                    description = "根据壁纸自动生成主题色",
-                    icon = { Icon(Icons.Default.Palette, null) },
-                    checked = settings.dynamicColor,
-                    onCheckedChange = { viewModel.setDynamicColor(it) },
+                // 宽度
+                SliderSetting(
+                    title = "线宽",
+                    value = settings.dividerWidthDp,
+                    onValueChange = { viewModel.setDividerWidth(it) },
+                    valueRange = 0.5f..5f,
+                    steps = 9,
+                    valueText = "${String.format("%.1f", settings.dividerWidthDp)} dp",
                     showDivider = true
                 )
 
-                // 壁纸选择
+                // 不透明度
+                SliderSetting(
+                    title = "不透明度",
+                    value = settings.dividerAlpha,
+                    onValueChange = { viewModel.setDividerAlpha(it) },
+                    valueRange = 0f..1f,
+                    steps = 10,
+                    valueText = "${(settings.dividerAlpha * 100).toInt()}%",
+                    showDivider = true
+                )
+
+                // 颜色选择器
+                var showColorPicker by remember { mutableStateOf(false) }
+                val currentColor = try {
+                    Color(android.graphics.Color.parseColor(settings.dividerColor))
+                } catch (e: Exception) {
+                    MaterialTheme.colorScheme.outlineVariant
+                }
+
                 SettingRow(
-                    title = "自定义壁纸",
-                    description = if (settings.wallpaperUri != null) "已设置自定义壁纸" else "未设置",
-                    icon = { Icon(Icons.Default.Wallpaper, null) },
+                    title = "网格线颜色",
+                    showDivider = false,
                     action = {
-                        Row {
-                            if (settings.wallpaperUri != null) {
-                                TextButton(onClick = { viewModel.setWallpaperUri(null) }) { Text("清除") }
-                            }
-                            Button(onClick = { 
-                                try {
-                                    wallpaperLauncher.launch("image/*")
-                                } catch (e: Exception) {
-                                    android.widget.Toast.makeText(context, "无法打开图片选择器", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            }) {
-                                Text("选择")
-                            }
-                        }
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(currentColor)
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                        )
                     },
-                    showDivider = true
+                    onClick = { showColorPicker = true }
                 )
 
-                if (settings.wallpaperUri != null) {
-                    // 壁纸模式
-                    Row(modifier = Modifier.padding(start = 56.dp, bottom = 8.dp)) {
-                        WallpaperMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = settings.wallpaperMode == mode,
-                                onClick = { viewModel.setWallpaperMode(mode) },
-                                label = { Text(when(mode) {
-                                    WallpaperMode.CROP -> "裁剪适应"
-                                    WallpaperMode.FILL -> "拉伸填充"
-                                }) },
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
+                if (showColorPicker) {
+                    ColorPickerDialog(
+                        initialColor = currentColor,
+                        onDismiss = { showColorPicker = false },
+                        onConfirm = { color ->
+                            val hexColor = String.format("#%08X", color.toArgb())
+                            viewModel.setDividerColor(hexColor)
+                            showColorPicker = false
                         }
-                    }
-                }
-                SmoothSliderSetting(
-                    title = "背景遮罩浓度",
-                    value = settings.transparency,
-                    onValueChangeFinished = { viewModel.setTransparency(it) },
-                    valueRange = 0f..1f,
-                    valueText = { "${(it * 100).toInt()}%" },
-                    description = "调节背景图上覆盖颜色的浓度",
-                    showDivider = true
-                )
-
-                SmoothSliderSetting(
-                    title = "背景模糊程度",
-                    value = settings.backgroundBlur,
-                    onValueChangeFinished = { viewModel.setBackgroundBlur(it) },
-                    valueRange = 0f..100f,
-                    valueText = { "${it.toInt()} dp" },
-                    description = "调节背景图的模糊程度",
-                    showDivider = true
-                )
-
-                SmoothSliderSetting(
-                    title = "背景亮度",
-                    value = settings.backgroundBrightness,
-                    onValueChangeFinished = { viewModel.setBackgroundBrightness(it) },
-                    valueRange = 0f..1f,
-                    valueText = { "${(it * 100).toInt()}%" },
-                    description = "调节背景图的亮度",
-                    showDivider = false
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 3. 显示逻辑调整 (Display Logic)
-            PreferenceCategory(title = "显示逻辑调整") {
-                SwitchSetting(
-                    title = "显示周末",
-                    description = "隐藏周六周日，增加平日课程卡片宽度",
-                    icon = { Icon(Icons.Default.ViewWeek, null) },
-                    checked = settings.showWeekend,
-                    onCheckedChange = { viewModel.setShowWeekend(it) },
-                    showDivider = true
-                )
-                
-                SwitchSetting(
-                    title = "显示侧边栏时间",
-                    icon = { Icon(Icons.Default.Schedule, null) },
-                    checked = settings.showSidebarTime,
-                    onCheckedChange = { viewModel.setShowSidebarTime(it) },
-                    showDivider = true
-                )
-
-                SwitchSetting(
-                    title = "显示侧边栏节数",
-                    icon = { Icon(Icons.Default.FormatListNumbered, null) },
-                    checked = settings.showSidebarIndex,
-                    onCheckedChange = { viewModel.setShowSidebarIndex(it) },
-                    showDivider = true
-                )
-                
-                SwitchSetting(
-                    title = "隐藏非本周课程",
-                    description = "仅显示当前周有课的课程",
-                    icon = { Icon(Icons.Default.VisibilityOff, null) },
-                    checked = settings.hideNonThisWeek,
-                    onCheckedChange = { viewModel.setHideNonThisWeek(it) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 4. 通知与提醒 (Notifications)
-            PreferenceCategory(title = "通知与提醒") {
-                SwitchSetting(
-                    title = "上课提醒",
-                    description = "上课前 ${settings.reminderMinutes} 分钟发送通知",
-                    icon = { Icon(Icons.Default.Notifications, null) },
-                    checked = settings.enableClassReminder,
-                    onCheckedChange = { 
-                        if (it) {
-                            checkAndRequestNotificationPermission { viewModel.setEnableClassReminder(true) }
-                        } else {
-                            viewModel.setEnableClassReminder(false)
-                        }
-                    },
-                    showDivider = settings.enableClassReminder
-                )
-                
-                if (settings.enableClassReminder) {
-                    SliderSetting(
-                        title = "提前提醒时间",
-                        value = settings.reminderMinutes.toFloat(),
-                        onValueChange = { viewModel.setReminderMinutes(it.toInt()) },
-                        valueRange = 5f..60f,
-                        steps = 10, // 5, 10, 15, ..., 60
-                        valueText = "${settings.reminderMinutes} 分钟",
-                        showDivider = true
                     )
                 }
-                
-                SwitchSetting(
-                    title = "常驻通知栏",
-                    description = "在通知栏显示下一节课信息",
-                    icon = { Icon(Icons.AutoMirrored.Filled.StickyNote2, null) },
-                    checked = settings.enablePersistentNotification,
-                    onCheckedChange = { 
-                        if (it) {
-                            checkAndRequestNotificationPermission { viewModel.setEnablePersistentNotification(true) }
-                        } else {
-                            viewModel.setEnablePersistentNotification(false)
-                        }
-                    },
-                    showDivider = true
-                )
-                SwitchSetting(
-                    title = "课后自动静音",
-                    description = "上课期间自动将手机设为静音/震动",
-                    icon = { Icon(Icons.Default.DoNotDisturb, null) },
-                    checked = settings.enableAutoMute,
-                    onCheckedChange = { enabled ->
-                        if (enabled) {
-                            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && !notificationManager.isNotificationPolicyAccessGranted) {
-                                showPermissionDialog = true
-                            } else {
-                                viewModel.setEnableAutoMute(true)
-                            }
-                        } else {
-                            viewModel.setEnableAutoMute(false)
-                        }
-                    }
-                )
-            }
+             }
+             Spacer(modifier = Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(24.dp))
+             // 5. 通知与提醒
+             PreferenceCategory(title = "通知与提醒") {
+                 SwitchSetting(
+                     title = "上课提醒",
+                     description = "上课前 ${settings.reminderMinutes} 分钟发送通知",
+                     icon = { Icon(Icons.Default.Notifications, null) },
+                     checked = settings.enableClassReminder,
+                     onCheckedChange = {
+                         if (it) {
+                             checkAndRequestNotificationPermission { viewModel.setEnableClassReminder(true) }
+                         } else {
+                             viewModel.setEnableClassReminder(false)
+                         }
+                     },
+                     showDivider = settings.enableClassReminder
+                 )
+                 if (settings.enableClassReminder) {
+                     SliderSetting(
+                         title = "提前提醒时间",
+                         value = settings.reminderMinutes.toFloat(),
+                         onValueChange = { viewModel.setReminderMinutes(it.toInt()) },
+                         valueRange = 5f..60f,
+                         steps = 11,
+                         valueText = "${settings.reminderMinutes} 分钟",
+                         showDivider = true
+                     )
+                 }
+                 SwitchSetting(
+                     title = "自动静音",
+                     description = "上课期间自动开启免打扰模式",
+                     icon = { Icon(Icons.Default.DoNotDisturb, null) },
+                     checked = settings.enableAutoMute,
+                     onCheckedChange = {
+                         if (it) {
+                             // Check permission
+                             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !notificationManager.isNotificationPolicyAccessGranted) {
+                                 showPermissionDialog = true
+                             } else {
+                                 viewModel.setEnableAutoMute(true)
+                             }
+                         } else {
+                             viewModel.setEnableAutoMute(false)
+                         }
+                     }
+                 )
+             }
+             Spacer(modifier = Modifier.height(16.dp))
 
-            // 5. 数据与同步 (Data & Backup)
-            PreferenceCategory(title = "数据与同步") {
-                // 起迪绑定
-                if (showBindQidiDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showBindQidiDialog = false },
-                        title = { Text("绑定起迪教务") },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = qidiEndpoint,
-                                    onValueChange = { qidiEndpoint = it },
-                                    label = { Text("入口地址（含 http/https）") },
-                                    placeholder = { Text("例如：https://jw.example.edu.cn") },
-                                    singleLine = true
+             // 6. 数据与同步
+             PreferenceCategory(title = "数据与同步") {
+                 SettingRow(
+                     title = "账号绑定",
+                     description = if (boundProvider != null) {
+                         "已绑定 ${boundProvider!!.name}"
+                     } else {
+                         "未绑定"
+                     },
+                     icon = { Icon(Icons.Default.CloudSync, null) },
+                     action = {
+                         if (boundProvider != null) {
+                             TextButton(onClick = {
+                                 pendingUnbindProvider = boundProvider
+                                 showUnbindConfirmDialog = true
+                             }) { Text("解绑") }
+                         } else {
+                             TextButton(onClick = { showSyncProviderDialog = true }) { Text("绑定") }
+                         }
+                     },
+                     showDivider = true
+                 )
+
+                 if (showUnbindConfirmDialog && pendingUnbindProvider != null) {
+                     AlertDialog(
+                         onDismissRequest = { 
+                             showUnbindConfirmDialog = false
+                             pendingUnbindProvider = null 
+                         },
+                         title = { Text("确认解绑") },
+                         text = { Text("确定要解除与 ${pendingUnbindProvider?.name} 的绑定吗？\n解绑后将无法自动同步课程数据。") },
+                         confirmButton = {
+                             TextButton(onClick = {
+                                viewModel.clearSyncCredentials()
+                                 showUnbindConfirmDialog = false
+                                 pendingUnbindProvider = null
+                                 Toast.makeText(context, "已解绑", Toast.LENGTH_SHORT).show()
+                             }) {
+                                 Text("确定解绑", color = MaterialTheme.colorScheme.error)
+                             }
+                         },
+                         dismissButton = {
+                             TextButton(onClick = { 
+                                 showUnbindConfirmDialog = false
+                                 pendingUnbindProvider = null
+                             }) {
+                                 Text("取消")
+                             }
+                         }
+                     )
+                 }
+
+                 if (showSyncProviderDialog) {
+                     AlertDialog(
+                         onDismissRequest = { showSyncProviderDialog = false },
+                         title = { Text("选择绑定方式") },
+                         text = {
+                             Column {
+                                Text(
+                                    text = "请选择教务系统进行账号绑定，绑定后可一键同步课程。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                OutlinedTextField(
-                                    value = qidiUsername,
-                                    onValueChange = { qidiUsername = it },
-                                    label = { Text("用户名") },
-                                    singleLine = true
-                                )
-                                OutlinedTextField(
-                                    value = qidiPassword,
-                                    onValueChange = { qidiPassword = it },
-                                    label = { Text("密码") },
-                                    singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation()
-                                )
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                val ok = qidiEndpoint.startsWith("http") && qidiUsername.isNotBlank() && qidiPassword.isNotBlank()
-                                if (ok) {
-                                    viewModel.bindQidiCredentials(qidiEndpoint.trim(), qidiUsername.trim(), qidiPassword)
-                                    showBindQidiDialog = false
-                                    android.widget.Toast.makeText(context, "已绑定起迪账号", android.widget.Toast.LENGTH_SHORT).show()
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Card(
+                                    onClick = {
+                                        showSyncProviderDialog = false
+                                        showBindQidiDialog = true
+                                    },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                    )
+                                ) {
+                                    ListItem(
+                                        leadingContent = { Icon(Icons.Default.School, null) },
+                                        headlineContent = { Text("起迪教务") },
+                                        supportingContent = { Text("适用于起迪教务系统账号登录") }
+                                    )
                                 }
-                            }) { Text("绑定") }
-                        },
-                        dismissButton = { TextButton(onClick = { showBindQidiDialog = false }) { Text("取消") } }
-                    )
-                }
-                
-                // 正方绑定
-                if (showBindZfDialog) {
-                    AlertDialog(
-                        onDismissRequest = { showBindZfDialog = false },
-                        title = { Text("绑定正方教务") },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    value = zfEndpoint,
-                                    onValueChange = { zfEndpoint = it },
-                                    label = { Text("入口地址（含 http/https）") },
-                                    placeholder = { Text("例如：https://jwgl.example.edu.cn") },
-                                    singleLine = true
-                                )
-                                OutlinedTextField(
-                                    value = zfUsername,
-                                    onValueChange = { zfUsername = it },
-                                    label = { Text("用户名") },
-                                    singleLine = true
-                                )
-                                OutlinedTextField(
-                                    value = zfPassword,
-                                    onValueChange = { zfPassword = it },
-                                    label = { Text("密码") },
-                                    singleLine = true,
-                                    visualTransformation = PasswordVisualTransformation()
-                                )
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                val ok = zfEndpoint.startsWith("http") && zfUsername.isNotBlank() && zfPassword.isNotBlank()
-                                if (ok) {
-                                    viewModel.bindZfCredentials(zfEndpoint.trim(), zfUsername.trim(), zfPassword)
-                                    showBindZfDialog = false
-                                    android.widget.Toast.makeText(context, "已绑定正方账号", android.widget.Toast.LENGTH_SHORT).show()
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Card(
+                                    onClick = {
+                                        showSyncProviderDialog = false
+                                        showBindZfDialog = true
+                                    },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                    )
+                                ) {
+                                    ListItem(
+                                        leadingContent = { Icon(Icons.Default.AccountBalance, null) },
+                                        headlineContent = { Text("正方教务") },
+                                        supportingContent = { Text("适用于正方教务系统账号登录") }
+                                    )
                                 }
-                            }) { Text("绑定") }
-                        },
-                        dismissButton = { TextButton(onClick = { showBindZfDialog = false }) { Text("取消") } }
-                    )
-                }
+                             }
+                         },
+                         confirmButton = {
+                             TextButton(onClick = { showSyncProviderDialog = false }) { Text("取消") }
+                         }
+                     )
+                 }
 
-                // 账号与同步
-                SettingRow(
-                    title = "一键更新账号",
-                    description = when (boundProvider) {
-                        SyncProviderType.QIDI -> "已绑定起迪账号"
-                        SyncProviderType.ZF -> "已绑定正方账号"
-                        SyncProviderType.WAKEUP -> "WakeUp 已下线"
-                        null -> "未绑定"
-                    },
-                    icon = { Icon(Icons.Default.AccountCircle, null) },
-                    onClick = { showSyncProviderDialog = true },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "上次更新",
-                    description = lastSyncDesc,
-                    icon = { Icon(Icons.Default.History, null) },
-                    onClick = { },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "清除凭据",
-                    description = "移除本机保存的账号/口令",
-                    icon = { Icon(Icons.Default.Delete, null) },
-                    onClick = { showClearCredentialsDialog = true }
-                )
-                
-                SettingRow(
-                    title = "WebDAV 同步",
-                    description = "同步到坚果云/Nextcloud",
-                    icon = { Icon(Icons.Default.CloudSync, null) },
-                    onClick = { 
-                        android.widget.Toast.makeText(context, "WebDAV 同步功能开发中", android.widget.Toast.LENGTH_SHORT).show() 
-                    },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "备份与还原",
-                    description = "导出 .json 备份文件",
-                    icon = { Icon(Icons.Default.Save, null) },
-                    onClick = { 
-                        android.widget.Toast.makeText(context, "备份还原功能开发中", android.widget.Toast.LENGTH_SHORT).show()
-                    },
-                    showDivider = true
-                )
-                SettingRow(
-                    title = "清空所有数据",
-                    icon = { Icon(Icons.Default.DeleteForever, null) },
-                    onClick = { 
-                         android.widget.Toast.makeText(context, "清空数据功能开发中", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
+                 // Qidi Dialog
+                 if (showBindQidiDialog) {
+                     AlertDialog(
+                         onDismissRequest = { showBindQidiDialog = false },
+                         title = { Text("绑定启帝教务") },
+                         text = {
+                             Column {
+                                 OutlinedTextField(
+                                     value = qidiEndpoint,
+                                     onValueChange = { qidiEndpoint = it },
+                                     label = { Text("教务地址") },
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                                 Spacer(modifier = Modifier.height(8.dp))
+                                 OutlinedTextField(
+                                     value = qidiUsername,
+                                     onValueChange = { qidiUsername = it },
+                                     label = { Text("学号") },
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                                 Spacer(modifier = Modifier.height(8.dp))
+                                 OutlinedTextField(
+                                     value = qidiPassword,
+                                     onValueChange = { qidiPassword = it },
+                                     label = { Text("密码") },
+                                     visualTransformation = PasswordVisualTransformation(),
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                             }
+                         },
+                         confirmButton = {
+                             TextButton(onClick = {
+                                viewModel.bindQidiCredentials(
+                                    endpoint = qidiEndpoint,
+                                    username = qidiUsername,
+                                    password = qidiPassword
+                                )
+                                 showBindQidiDialog = false
+                             }) { Text("绑定") }
+                         },
+                         dismissButton = {
+                             TextButton(onClick = { showBindQidiDialog = false }) { Text("取消") }
+                         }
+                     )
+                 }
 
-            // 6. 关于 (About)
-            PreferenceCategory(title = "关于") {
-                val packageManager = LocalContext.current.packageManager
-                val packageName = LocalContext.current.packageName
-                val currentVersion = remember {
-                    try {
-                        packageManager.getPackageInfo(packageName, 0).versionName
-                    } catch (e: Exception) {
-                        "Unknown"
-                    }
-                }
-                UpdateSettingItem(
-                    currentVersion = currentVersion,
-                    onCheckUpdate = onCheckUpdate
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(32.dp))
+                 // ZF Dialog
+                 if (showBindZfDialog) {
+                     AlertDialog(
+                         onDismissRequest = { showBindZfDialog = false },
+                         title = { Text("绑定正方教务") },
+                         text = {
+                             Column {
+                                 OutlinedTextField(
+                                     value = zfEndpoint,
+                                     onValueChange = { zfEndpoint = it },
+                                     label = { Text("教务地址") },
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                                 Spacer(modifier = Modifier.height(8.dp))
+                                 OutlinedTextField(
+                                     value = zfUsername,
+                                     onValueChange = { zfUsername = it },
+                                     label = { Text("学号") },
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                                 Spacer(modifier = Modifier.height(8.dp))
+                                 OutlinedTextField(
+                                     value = zfPassword,
+                                     onValueChange = { zfPassword = it },
+                                     label = { Text("密码") },
+                                     visualTransformation = PasswordVisualTransformation(),
+                                     modifier = Modifier.fillMaxWidth()
+                                 )
+                             }
+                         },
+                         confirmButton = {
+                             TextButton(onClick = {
+                                viewModel.bindZfCredentials(
+                                    endpoint = zfEndpoint,
+                                    username = zfUsername,
+                                    password = zfPassword
+                                )
+                                 showBindZfDialog = false
+                             }) { Text("绑定") }
+                         },
+                         dismissButton = {
+                             TextButton(onClick = { showBindZfDialog = false }) { Text("取消") }
+                         }
+                     )
+                 }
+
+                 SettingRow(
+                     title = "WebDAV 同步",
+                     description = lastSyncDesc,
+                     icon = { Icon(Icons.Default.Cloud, null) },
+                     onClick = { Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show() },
+                     showDivider = true
+                 )
+                 SettingRow(
+                     title = "备份与还原",
+                     icon = { Icon(Icons.Default.Restore, null) },
+                     onClick = { Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show() },
+                     showDivider = true
+                 )
+                 SettingRow(
+                     title = "清空所有数据",
+                     icon = { Icon(Icons.Default.DeleteForever, null) },
+                     onClick = { showClearCredentialsDialog = true }
+                 )
+                 
+                 if (showClearCredentialsDialog) {
+                     AlertDialog(
+                         onDismissRequest = { showClearCredentialsDialog = false },
+                         title = { Text("确认清空") },
+                         text = { Text("确定要清空所有本地数据吗？此操作不可恢复。") },
+                         confirmButton = {
+                             TextButton(onClick = {
+                                 viewModel.clearAllData()
+                                 showClearCredentialsDialog = false
+                                 Toast.makeText(context, "已清空", Toast.LENGTH_SHORT).show()
+                             }) {
+                                 Text("清空", color = MaterialTheme.colorScheme.error)
+                             }
+                         },
+                         dismissButton = {
+                             TextButton(onClick = { showClearCredentialsDialog = false }) { Text("取消") }
+                         }
+                     )
+                 }
+             }
+             Spacer(modifier = Modifier.height(16.dp))
+             
+             // 7. 关于
+             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+             val versionName = remember { packageInfo.versionName }
+             PreferenceCategory(title = "关于") {
+                 UpdateSettingItem(
+                     currentVersion = versionName,
+                     onCheckUpdate = onCheckUpdate
+                 )
+                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                 SettingRow(
+                     title = "开源许可",
+                     onClick = { /* TODO */ }
+                 )
+             }
+             Spacer(modifier = Modifier.height(32.dp))
         }
     }
-    
-    if (showSyncProviderDialog) {
-        AlertDialog(
-            onDismissRequest = { showSyncProviderDialog = false },
-            title = { Text("一键更新账号") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        onClick = {
-                            showSyncProviderDialog = false
-                            if (boundProvider == SyncProviderType.QIDI) {
-                                viewModel.clearSyncCredentials()
-                                android.widget.Toast.makeText(context, "已解绑起迪账号", android.widget.Toast.LENGTH_SHORT).show()
-                            } else {
-                                showBindQidiDialog = true
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (boundProvider == SyncProviderType.QIDI) "解绑起迪账号" else "绑定起迪账号")
-                    }
-                    Button(
-                        onClick = {
-                            showSyncProviderDialog = false
-                            if (boundProvider == SyncProviderType.ZF) {
-                                viewModel.clearSyncCredentials()
-                                android.widget.Toast.makeText(context, "已解绑正方账号", android.widget.Toast.LENGTH_SHORT).show()
-                            } else {
-                                showBindZfDialog = true
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (boundProvider == SyncProviderType.ZF) "解绑正方账号" else "绑定正方账号")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSyncProviderDialog = false }) { Text("关闭") }
-            }
-        )
-    }
-
-    if (showClearCredentialsDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearCredentialsDialog = false },
-            title = { Text("确认清除凭据") },
-            text = { Text("将移除已保存的账号/口令，且无法撤销。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showClearCredentialsDialog = false
-                    viewModel.clearSyncCredentials()
-                    android.widget.Toast.makeText(context, "已清除凭据", android.widget.Toast.LENGTH_SHORT).show()
-                }) { Text("清除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearCredentialsDialog = false }) { Text("取消") }
-            }
-        )
-    }
-    
-
 }
 
-
 @Composable
-private fun CourseCardPreview(
-    settings: AppSettings
-) {
-    Box(
+fun CourseCardPreview(settings: AppSettings) {
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .height(140.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
     ) {
-        // Wallpaper Background
-        if (settings.wallpaperUri != null) {
-            AsyncImage(
-                model = settings.wallpaperUri,
-                contentDescription = null,
-                contentScale = if (settings.wallpaperMode == WallpaperMode.CROP) ContentScale.Crop else ContentScale.FillBounds,
-                modifier = Modifier.matchParentSize()
-            )
-            // Overlay
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = settings.transparency))
-            )
-        } else {
-            // Default colorful background to show transparency
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.secondaryContainer
-                            )
-                        )
-                    )
-            )
-        }
-
-        // Mock Grid Lines
-        Column(modifier = Modifier.fillMaxSize()) {
-            val dividerColor = try {
-                Color(android.graphics.Color.parseColor(settings.dividerColor))
-            } catch (e: Exception) { Color.LightGray }
-            
-            repeat(3) {
-                HorizontalDivider(
-                    color = dividerColor.copy(alpha = settings.dividerAlpha),
-                    thickness = settings.dividerWidthDp.dp,
-                    modifier = Modifier.padding(top = 40.dp)
-                )
-            }
-        }
-
-        // Mock Course Card
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            ElevatedCard(
+            Text(
+                text = "效果预览",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Preview Card
+            Box(
                 modifier = Modifier
-                    .size(width = 100.dp, height = 100.dp),
-                shape = RoundedCornerShape(settings.cardCornerRadius.dp),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.cardAlpha)
-                )
+                    .size(width = 120.dp, height = settings.courseItemHeightDp.dp)
+                    .clip(RoundedCornerShape(settings.cardCornerRadius.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.cardAlpha))
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(settings.cardCornerRadius.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier.padding(4.dp)
                 ) {
                     if (settings.showCourseIcons) {
                         Icon(
-                            imageVector = Icons.Default.School,
+                            imageVector = Icons.Default.StickyNote2, // Using StickyNote2 as generic course icon
                             contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                     }
                     Text(
                         text = "高等数学",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                     Text(
-                        text = "@3-205",
+                        text = "@教1-101",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                        fontSize = 10.sp,
+                        maxLines = 1
                     )
                 }
             }
         }
-        
-        Text(
-            text = "效果预览",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(8.dp)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
-                .padding(horizontal = 4.dp, vertical = 2.dp)
-        )
     }
 }
 
