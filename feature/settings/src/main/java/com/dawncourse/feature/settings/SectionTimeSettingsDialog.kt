@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
