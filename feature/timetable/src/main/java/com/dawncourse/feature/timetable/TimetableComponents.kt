@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -59,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.core.ui.util.CourseColorUtils
 import java.time.DayOfWeek
@@ -139,7 +139,7 @@ fun TimetableTopBar(
                     )
                 }
                 
-                DropdownMenu(
+                AnimatedDropdownMenu(
                     expanded = showWeekMenu,
                     onDismissRequest = { showWeekMenu = false },
                     modifier = Modifier
