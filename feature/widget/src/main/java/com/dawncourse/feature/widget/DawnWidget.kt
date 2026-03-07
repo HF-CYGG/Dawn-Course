@@ -135,17 +135,27 @@ class DawnWidget : GlanceAppWidget() {
         }
         val sectionTimes = settings.sectionTimes
 
-        val currentWeek = if (semester != null) {
-            val termStartDate = Instant.ofEpochMilli(semester.startDate)
+        val termStartDate = semester?.let {
+            Instant.ofEpochMilli(it.startDate)
                 .atZone(ZoneId.systemDefault())
                 .toLocalDate()
+        }
+        // 是否处于开学前（假期中）
+        val isBeforeSemesterStart = termStartDate != null && today.isBefore(termStartDate)
+        // 距离开学还有多少天（开学前才有意义）
+        val daysUntilSemesterStart = if (isBeforeSemesterStart && termStartDate != null) {
+            ChronoUnit.DAYS.between(today, termStartDate)
+        } else {
+            null
+        }
+        val currentWeek = if (semester != null && termStartDate != null && !isBeforeSemesterStart) {
             val daysDiff = ChronoUnit.DAYS.between(termStartDate, today)
             (daysDiff / 7).toInt() + 1
         } else {
-            1 // 没读取到数据时的保底值
+            0 // 未开学或无学期时不显示周次
         }
         
-        val isSemesterEnded = semester != null && currentWeek > semester.weekCount
+        val isSemesterEnded = semester != null && !isBeforeSemesterStart && currentWeek > semester.weekCount
         
         val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
 
@@ -157,7 +167,7 @@ class DawnWidget : GlanceAppWidget() {
             }
         }
 
-        val courses = if (isSemesterEnded) {
+        val courses = if (isSemesterEnded || isBeforeSemesterStart) {
             emptyList()
         } else {
             allCourses.filter { course ->
@@ -187,7 +197,17 @@ class DawnWidget : GlanceAppWidget() {
         val emptyMessage = if (courses.isNotEmpty()) {
             ""
         } else {
-            if (isSemesterEnded) {
+            if (isBeforeSemesterStart) {
+                if (daysUntilSemesterStart != null) {
+                    if (daysUntilSemesterStart == 0L) {
+                        "明天就要接受知识的洗礼了"
+                    } else {
+                        "距开学还有 ${daysUntilSemesterStart} 天"
+                    }
+                } else {
+                    "还未开学哦"
+                }
+            } else if (isSemesterEnded) {
                 "学期已结束 🎉"
             } else {
                 val hasCourseThisWeek = allCourses.any { course ->
@@ -215,7 +235,7 @@ class DawnWidget : GlanceAppWidget() {
 
         provideContent {
             GlanceTheme {
-                TimetableWidgetContent(courses, today, currentWeek, sectionTimes, emptyMessage)
+                TimetableWidgetContent(courses, today, currentWeek, sectionTimes, emptyMessage, isBeforeSemesterStart)
             }
         }
     }
@@ -237,7 +257,8 @@ class DawnWidget : GlanceAppWidget() {
         today: LocalDate,
         currentWeek: Int,
         sectionTimes: List<SectionTime>,
-        emptyMessage: String
+        emptyMessage: String,
+        isBeforeSemesterStart: Boolean
     ) {
         val size = LocalSize.current
         val height = size.height
@@ -268,7 +289,7 @@ class DawnWidget : GlanceAppWidget() {
                         modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
                     ) {
                          Text(
-                            text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                            text = if (isBeforeSemesterStart) "假期中" else "周${getDayOfWeekText(today.dayOfWeek.value)}",
                             style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
                         )
                         Spacer(GlanceModifier.width(8.dp))
@@ -278,7 +299,8 @@ class DawnWidget : GlanceAppWidget() {
                         )
                     }
                 } else {
-                    WidgetHeader("第${currentWeek}周", "${today.monthValue}月${today.dayOfMonth}日")
+                    val weekTitle = if (isBeforeSemesterStart) "假期中" else "第${currentWeek}周"
+                    WidgetHeader(weekTitle, "${today.monthValue}月${today.dayOfMonth}日")
                 }
 
                 if (courses.isEmpty()) {
@@ -291,7 +313,7 @@ class DawnWidget : GlanceAppWidget() {
         } else {
              // 1x4 & 2x4 -> Focus Mode (Horizontal)
              // 直接渲染，不包裹在 Column 中，以便 FocusCourseItem 控制背景和圆角
-             FocusCourseItem(courses, sectionTimes, today = today, emptyMessage = emptyMessage)
+             FocusCourseItem(courses, sectionTimes, today = today, emptyMessage = emptyMessage, isBeforeSemesterStart = isBeforeSemesterStart)
         }
     }
 
@@ -300,7 +322,8 @@ class DawnWidget : GlanceAppWidget() {
         courses: List<Course>,
         sectionTimes: List<SectionTime>,
         today: LocalDate,
-        emptyMessage: String
+        emptyMessage: String,
+        isBeforeSemesterStart: Boolean
     ) {
         val now = LocalTime.now()
         val nextCourse = courses.firstOrNull { course ->
@@ -326,7 +349,7 @@ class DawnWidget : GlanceAppWidget() {
                 modifier = GlanceModifier.width(40.dp) // 稍微加宽一点以容纳更大的字体
             ) {
                 Text(
-                    text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
+                    text = if (isBeforeSemesterStart) "假期中" else "周${getDayOfWeekText(today.dayOfWeek.value)}",
                     style = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Bold, color = WidgetColors.Primary)
                 )
                 Text(
