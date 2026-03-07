@@ -78,7 +78,7 @@ val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
  *
  * @param displayedWeek 当前展示的周次（用户正在查看的周次）
  * @param realCurrentWeek 当前日期所属的真实周次（用于“当前”标记与本周提示）
- * @param isHolidayMode 是否处于假期模式（当前日期已超过学期总周数）
+ * @param isHolidayMode 是否处于假期模式（开学前或学期结束）
  * @param totalWeeks 学期总周数
  * @param onWeekSelected 周次选择回调
  * @param onSettingsClick 设置按钮点击回调
@@ -121,7 +121,7 @@ fun TimetableTopBar(
                 }
                 if (isHolidayMode) {
                     Text(
-                        text = "当前展示：第 $displayedWeek 周",
+                        text = if (displayedWeek <= 0) "当前展示：假期中" else "当前展示：第 $displayedWeek 周",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -168,6 +168,65 @@ fun TimetableTopBar(
                             .verticalScroll(weekMenuScrollState)
                             .padding(horizontal = 6.dp, vertical = 6.dp)
                     ) {
+                        val isHolidaySelected = displayedWeek <= 0
+                        val isHolidayCurrent = realCurrentWeek <= 0
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.BeachAccess,
+                                        contentDescription = "假期中",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = "假期中",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = if (isHolidaySelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    if (isHolidayCurrent) {
+                                        Text(
+                                            text = "当前",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            },
+                            leadingIcon = if (isHolidaySelected) {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            onClick = {
+                                onWeekSelected(0)
+                                showWeekMenu = false
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isHolidaySelected) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0f)
+                                    }
+                                )
+                        )
                         for (i in 1..totalWeeks) {
                             val isDisplayedWeek = i == displayedWeek
                             val isRealCurrent = i == realCurrentWeek
@@ -313,11 +372,7 @@ fun WeekHeader(
 
                     // 日期显示 (例如 09.01)
                     if (settings.showDateInHeader && semesterStartDate != null) {
-                        val baseMonday = if (isCurrentWeek && LocalDate.now().isBefore(semesterStartDate)) {
-                            LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                        } else {
-                            semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                        }
+                        val baseMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
                         val date = baseMonday.plusWeeks((displayedWeek - 1).toLong())
                             .plusDays(index.toLong())
                         val dateText = "${date.monthValue}.${date.dayOfMonth}"
@@ -679,10 +734,32 @@ fun CourseCard(
 /**
  * 假期模式视图
  *
- * 当当前日期超过学期总周数时显示。
+ * 当当前日期超过学期总周数或未到开学日期时显示。
+ *
+ * @param modifier 修饰符
+ * @param isBeforeSemesterStart 是否处于开学前
  */
 @Composable
-fun HolidayView(modifier: Modifier = Modifier) {
+fun HolidayView(
+    modifier: Modifier = Modifier,
+    isBeforeSemesterStart: Boolean,
+    daysUntilSemesterStart: Long? = null
+) {
+    // 提示文案：区分“开学前”与“学期结束”
+    val titleText = if (isBeforeSemesterStart) "还未开学哦" else "好好享受假期吧！"
+    val descText = if (isBeforeSemesterStart) {
+        if (daysUntilSemesterStart != null) {
+            if (daysUntilSemesterStart == 0L) {
+                "明天就要接受知识的洗礼了"
+            } else {
+                "距开学还有 ${daysUntilSemesterStart} 天"
+            }
+        } else {
+            "开学后将自动显示课程表，请耐心等待。"
+        }
+    } else {
+        "本学期课程已全部结束，下学期也要加油哦。"
+    }
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -702,7 +779,7 @@ fun HolidayView(modifier: Modifier = Modifier) {
             )
             
             Text(
-                text = "好好享受假期吧！",
+                text = titleText,
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
@@ -713,7 +790,7 @@ fun HolidayView(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "本学期课程已全部结束，下学期也要加油哦。",
+                text = descText,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
