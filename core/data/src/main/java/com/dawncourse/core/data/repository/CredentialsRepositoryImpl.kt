@@ -35,6 +35,11 @@ class CredentialsRepositoryImpl @Inject constructor(
     private val _boundProvider = MutableStateFlow<SyncProviderType?>(null)
     override val boundProvider: Flow<SyncProviderType?> = _boundProvider.asStateFlow()
 
+    init {
+        // 启动时从加密存储中恢复绑定状态，避免更新后 UI 显示“未绑定”
+        _boundProviderEmit(readBoundProviderFromPrefs())
+    }
+
     private fun prefs() = EncryptedSharedPreferences.create(
         context,
         prefsName,
@@ -44,6 +49,18 @@ class CredentialsRepositoryImpl @Inject constructor(
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
+
+    private fun readBoundProviderFromPrefs(): SyncProviderType? {
+        return runCatching {
+            val p = prefs()
+            val providerName = p.getString(keyProvider, null) ?: return null
+            val typeName = p.getString(keyType, null) ?: return null
+            val provider = runCatching { SyncProviderType.valueOf(providerName) }.getOrNull() ?: return null
+            val type = runCatching { SyncCredentialType.valueOf(typeName) }.getOrNull() ?: return null
+            if (type != SyncCredentialType.PASSWORD && type != SyncCredentialType.TOKEN) return null
+            provider
+        }.getOrNull()
+    }
 
     override suspend fun getCredentials(): SyncCredentials? {
         val p = prefs()
