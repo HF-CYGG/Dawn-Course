@@ -36,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 
 import androidx.compose.runtime.saveable.rememberSaveable
+import java.time.LocalDate
 
 /**
  * 课表功能入口路由 (Composable Route)
@@ -142,6 +143,8 @@ internal fun TimetableScreen(
     
     // 计算当前真实周次
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
+    val semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+    val isBeforeSemesterStart = semesterStartDate != null && LocalDate.now().isBefore(semesterStartDate)
     // 绑定总周数到设置
     val maxWeeks = settings.totalWeeks
     // 允许 Pager 扩展到当前真实周次（如果超过总周数）
@@ -222,7 +225,7 @@ internal fun TimetableScreen(
                 ) { page ->
                     val week = page + 1
                     
-                    if (week > maxWeeks) {
+                    if (week > maxWeeks || (isBeforeSemesterStart && week == realCurrentWeek)) {
                         HolidayView(modifier = Modifier.fillMaxSize())
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
@@ -230,7 +233,7 @@ internal fun TimetableScreen(
                             WeekHeader(
                                 isCurrentWeek = week == realCurrentWeek,
                                 displayedWeek = week,
-                                semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+                                semesterStartDate = semesterStartDate
                             )
 
                             // 3.2 垂直滚动区域 (时间轴 + 课程网格)
