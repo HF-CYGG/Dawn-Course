@@ -11,25 +11,36 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncProviderType
@@ -41,6 +52,8 @@ import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 
 /**
@@ -78,6 +91,52 @@ fun QidiAutoSyncScreen(
     var addressBar by remember { mutableStateOf("") }
     var targetYear by remember { mutableStateOf("") }
     var targetTerm by remember { mutableStateOf("") }
+    var pendingLoadUrl by remember { mutableStateOf<String?>(null) }
+    var showProgressDialog by remember { mutableStateOf(false) }
+    var currentStep by remember { mutableStateOf("等待开始") }
+    val logItems = remember { mutableStateListOf<String>() }
+    val logScrollState = rememberScrollState()
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm:ss") }
+    var captchaUrl by remember { mutableStateOf("") }
+    var captchaCode by remember { mutableStateOf("") }
+
+    fun addLog(message: String) {
+        logItems.add("${LocalTime.now().format(timeFormatter)} $message")
+    }
+
+    LaunchedEffect(provider) {
+        addLog("初始化同步页面：$providerName")
+        val creds = viewModel.loadQidiCredentials()
+        val needProvider = provider
+        if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
+            subTitle = "未绑定${providerName}凭据，请在设置中绑定"
+            addLog("未找到可用凭据或提供者不一致")
+            return@LaunchedEffect
+        }
+        credsForAutoFill = creds
+        val endpoint = creds.endpointUrl
+        if (!endpoint.isNullOrBlank()) {
+            val normalized = normalizeEndpointForLoad(endpoint)
+            if (normalized.isNullOrBlank()) {
+                subTitle = "入口地址无效，请在设置中重新绑定"
+                addLog("入口地址无效：$endpoint")
+                return@LaunchedEffect
+            }
+            addressBar = normalized
+            pendingLoadUrl = normalized
+            if (webView != null) {
+                loading = true
+                webView?.loadUrl(normalized)
+                addLog("自动加载入口：$normalized")
+            } else {
+                subTitle = "正在打开${providerName}教务系统..."
+                addLog("等待 WebView 初始化")
+            }
+        } else {
+            subTitle = "请在上方地址栏手动输入或通过门户进入${providerName}教务系统，系统将自动记录入口"
+            addLog("入口地址为空，等待手动输入")
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -94,6 +153,92 @@ fun QidiAutoSyncScreen(
             )
         }
     ) { paddingValues ->
+        if (showProgressDialog) {
+            Dialog(onDismissRequest = { if (!loading && !needManualLogin) showProgressDialog = false }) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                    tonalElevation = 4.dp
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(text = currentStep, style = MaterialTheme.typography.titleMedium)
+                        HorizontalDivider()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .verticalScroll(logScrollState)
+                        ) {
+                            logItems.forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (needManualLogin && captchaUrl.isNotBlank()) {
+                            Text("验证码", style = MaterialTheme.typography.titleSmall)
+                            CaptchaImage(url = captchaUrl)
+                            OutlinedTextField(
+                                value = captchaCode,
+                                onValueChange = { captchaCode = it },
+                                label = { Text("请输入验证码") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val wv = webView ?: return@OutlinedButton
+                                        scope.launch {
+                                            wv.evaluateJavascript(
+                                                "var i=document.querySelector('#yzmPic'); if(i){ i.click(); } void 0;"
+                                            , null)
+                                            val res = suspendEvaluateJs(
+                                                wv,
+                                                "(function(){var i=document.querySelector('#yzmPic'); if(!i) return ''; var s=i.getAttribute('src')||''; try{ return new URL(s, location.href).href }catch(e){ return s; }})()"
+                                            )
+                                            val src = parseJsReturn(res).replace("\\/", "/")
+                                            if (src.isNotBlank()) {
+                                                captchaUrl = src
+                                                addLog("已刷新验证码")
+                                            }
+                                        }
+                                    }
+                                ) { Text("刷新验证码") }
+                                Button(
+                                    onClick = {
+                                        val code = captchaCode.trim()
+                                        if (code.isBlank()) {
+                                            addLog("验证码为空")
+                                            return@Button
+                                        }
+                                        val wv = webView ?: return@Button
+                                        val safe = escapeJs(code)
+                                        wv.evaluateJavascript(
+                                            "(function(){var input=document.querySelector('#yzm')||document.querySelector('input[name=\"yzm\"]')||document.querySelector('input[id*=\"yzm\"]'); if(input){input.value='$safe';} var b=document.querySelector('#dl'); if(b){b.click();}})();"
+                                        , null)
+                                        addLog("已提交验证码并触发登录")
+                                    }
+                                ) { Text("继续登录") }
+                            }
+                        }
+                        if (!loading && !needManualLogin) {
+                            OutlinedButton(
+                                onClick = { showProgressDialog = false },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("关闭") }
+                        }
+                    }
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -115,10 +260,12 @@ fun QidiAutoSyncScreen(
                     val url = normalizeEndpointForLoad(addressBar)
                     if (url.isNullOrBlank()) {
                         subTitle = "请输入有效网址"
+                        addLog("输入的地址无效：$addressBar")
                         return@OutlinedButton
                     }
                     addressBar = url
                     wv.loadUrl(url)
+                    addLog("手动前往地址：$url")
                 }) { Text("前往") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -142,16 +289,36 @@ fun QidiAutoSyncScreen(
             }
             WebViewBox(
                 provider = provider,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
                 onWebViewReady = { wv ->
                     webView = wv
+                    addLog("WebView 初始化完成")
+                    val url = pendingLoadUrl
+                    if (!url.isNullOrBlank()) {
+                        loading = true
+                        wv.loadUrl(url)
+                        addLog("触发预加载：$url")
+                    }
                 },
                 onPageStarted = { url ->
+                    loading = true
+                    if (showProgressDialog) {
+                        currentStep = "页面加载中"
+                        addLog("开始加载：$url")
+                    }
                     if (url.isNotBlank()) {
                         addressBar = url
                     }
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
                 onPageFinished = { wv, _ ->
+                    loading = false
+                    if (showProgressDialog) {
+                        currentStep = "页面加载完成"
+                        addLog("页面加载完成")
+                    }
                     val creds = credsForAutoFill
                     if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
                         val js = buildAutoFillScript(
@@ -159,6 +326,9 @@ fun QidiAutoSyncScreen(
                             password = creds.secret
                         )
                         wv.evaluateJavascript(js, null)
+                        if (showProgressDialog) {
+                            addLog("已执行自动填充脚本")
+                        }
                     }
                     // 检测正方登录页的错误与验证码可见性，提示用户手动输入；并在首次进入登录页/课表页时自动记录入口
                     if (provider == SyncProviderType.ZF) {
@@ -178,11 +348,17 @@ fun QidiAutoSyncScreen(
                                           var cs=getComputedStyle(yzmDiv);
                                           yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
                                         }
+                                        var yzmSrc = '';
+                                        var yzmImg = document.querySelector('#yzmPic');
+                                        if(yzmImg){
+                                          var s = yzmImg.getAttribute('src') || '';
+                                          try{ yzmSrc = new URL(s, location.href).href; }catch(e){ yzmSrc = s; }
+                                        }
                                         var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl');
                                         var isKebiao = !!document.querySelector('#ylkbTable') || !!document.querySelector('#ajaxForm');
                                         var href = location.href;
-                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, isLogin:isLogin, isKebiao:isKebiao, href:href});
-                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false,isLogin:false,isKebiao:false,href:''}); }
+                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, href:href});
+                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false,yzmSrc:'',isLogin:false,isKebiao:false,href:''}); }
                                     })();
                                     """.trimIndent()
                                 )
@@ -190,8 +366,18 @@ fun QidiAutoSyncScreen(
                                 val wrong = txt.contains("\"wrong\":true")
                                 val yzm = txt.contains("\"yzm\":true")
                                 needManualLogin = wrong || yzm
+                                val yzmSrcMatch = Regex("\"yzmSrc\":\"(.*?)\"").find(txt)
+                                val yzmSrc = yzmSrcMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
+                                captchaUrl = if (yzm && yzmSrc.isNotBlank()) yzmSrc else ""
                                 if (needManualLogin) {
                                     subTitle = "检测到登录失败或需要验证码，请在页面中手动输入后点击“继续登录/提取”。"
+                                    if (showProgressDialog) {
+                                        currentStep = "需要验证码或手动登录"
+                                        addLog("检测到验证码或登录失败")
+                                        if (yzm) addLog("验证码已可见")
+                                        if (wrong) addLog("检测到账号或密码错误提示")
+                                        if (captchaUrl.isNotBlank()) addLog("验证码地址已获取")
+                                    }
                                 }
                                 val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
                                 val href = hrefMatch?.groups?.get(1)?.value ?: ""
@@ -199,6 +385,12 @@ fun QidiAutoSyncScreen(
                                     val updated = viewModel.updateEndpointIfNeeded(href, provider)
                                     if (updated) {
                                         subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"
+                                        if (showProgressDialog) {
+                                            addLog("已更新入口地址")
+                                        }
+                                    }
+                                    if (showProgressDialog) {
+                                        addLog("当前地址：$href")
                                     }
                                 }
                             } catch (_: Throwable) {
@@ -208,14 +400,22 @@ fun QidiAutoSyncScreen(
                     }
                 },
                 onPageError = { desc ->
+                    loading = false
                     if (desc.isNotBlank()) {
                         subTitle = "页面加载失败：$desc"
+                        if (showProgressDialog) {
+                            currentStep = "页面加载失败"
+                            addLog("页面加载失败：$desc")
+                        }
                     }
                 }
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
-                    onClick = { webView?.reload() }
+                    onClick = {
+                        webView?.reload()
+                        addLog("手动刷新页面")
+                    }
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Text(" 重新加载")
@@ -223,30 +423,41 @@ fun QidiAutoSyncScreen(
                 OutlinedButton(
                     onClick = {
                         scope.launch {
+                            showProgressDialog = true
+                            currentStep = "读取绑定凭据"
+                            addLog("开始读取绑定凭据")
                             val creds = viewModel.loadQidiCredentials()
                             val needProvider = provider
                             if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
                                 subTitle = "未绑定${providerName}凭据，请在设置中绑定"
+                                currentStep = "未绑定账号"
+                                addLog("未绑定${providerName}凭据")
                                 return@launch
                             }
                             val endpoint = creds.endpointUrl
                             credsForAutoFill = creds
+                            addLog("已读取绑定凭据")
                             loading = true
                             subTitle = if (endpoint.isNullOrBlank()) {
                                 "请在上方地址栏手动输入或通过门户进入${providerName}教务系统，系统将自动记录入口"
                             } else {
                                 "正在打开${providerName}教务系统..."
                             }
+                            currentStep = "打开教务系统"
+                            addLog("准备加载入口地址")
                             val wv = webView ?: return@launch
                             if (!endpoint.isNullOrBlank()) {
                                 val normalized = normalizeEndpointForLoad(endpoint)
                                 if (normalized.isNullOrBlank()) {
                                     loading = false
                                     subTitle = "入口地址无效，请在设置中重新绑定"
+                                    currentStep = "入口地址无效"
+                                    addLog("入口地址无效")
                                     return@launch
                                 }
                                 addressBar = normalized
                                 wv.loadUrl(normalized)
+                                addLog("开始加载入口：$normalized")
                             }
                         }
                     }
@@ -255,48 +466,21 @@ fun QidiAutoSyncScreen(
                     Text(" 开始同步（$providerName）")
                 }
             }
-            if (provider == SyncProviderType.ZF && needManualLogin) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            webView?.evaluateJavascript(
-                                "var b=document.querySelector('#dl'); if(b){b.click();} void 0;"
-                            , null)
-                        }
-                    ) { Text("继续登录") }
-                    OutlinedButton(
-                        onClick = {
-                            webView?.evaluateJavascript(
-                                "var i=document.querySelector('#yzmPic'); if(i){ i.click(); } void 0;"
-                            , null)
-                        }
-                    ) { Text("刷新验证码") }
-                    OutlinedButton(
-                        onClick = {
-                            val wv = webView ?: return@OutlinedButton
-                            scope.launch {
-                                val href = parseJsReturn(suspendEvaluateJs(wv, "location.href"))
-                                val updated = viewModel.updateEndpointIfNeeded(href, provider)
-                                if (updated) {
-                                    subTitle = "已记录当前为登录入口"
-                                } else {
-                                    subTitle = "入口已存在或记录失败"
-                                }
-                            }
-                        }
-                    ) { Text("记录当前为入口") }
-                }
-            }
             Row {
                 OutlinedButton(
                     onClick = {
                         // 注入脚本并提取，随后写入数据库
                         scope.launch {
+                            showProgressDialog = true
+                            currentStep = "注入脚本并提取课程"
+                            addLog("开始提取课程")
                             loading = true
                             subTitle = "正在提取课程..."
                             val wv = webView ?: run {
                                 loading = false
                                 subTitle = "WebView 未初始化"
+                                currentStep = "WebView 未初始化"
+                                addLog("WebView 未初始化")
                                 return@launch
                             }
                             try {
@@ -308,6 +492,7 @@ fun QidiAutoSyncScreen(
                                     // 起迪：尝试使用 provider 脚本
                                     runCatching { assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() } }.getOrNull()
                                 } else null
+                                addLog("已加载解析脚本")
                                 val js = buildString {
                                     append("(function(){try{")
                                     append("window.__dawnResult=null;window.__dawnReady=false;")
@@ -393,6 +578,7 @@ fun QidiAutoSyncScreen(
                                     append("}catch(e){window.__dawnReady=true;}})();")
                                 }
                                 wv.evaluateJavascript(js, null)
+                                addLog("已注入提取脚本")
                                 // 轮询读取结果
                                 var attempts = 0
                                 var raw = ""
@@ -403,15 +589,22 @@ fun QidiAutoSyncScreen(
                                         raw = parsed
                                         break
                                     }
+                                    if (attempts % 10 == 0) {
+                                        addLog("等待页面返回数据：${attempts}/40")
+                                    }
                                     attempts++
                                     kotlinx.coroutines.delay(300)
                                 }
                                 if (raw.isBlank()) {
                                     subTitle = "未能提取到有效内容，请确认已登录并处于课表页"
                                     loading = false
+                                    currentStep = "未提取到有效内容"
+                                    addLog("未提取到有效内容")
                                     return@launch
                                 }
+                                addLog("页面数据已获取")
                                 importViewModel.parseResultFromWebView(raw)
+                                addLog("开始解析课程数据")
                                 // 等待解析进入 Review 状态并拿到课程
                                 var wait = 0
                                 var parsed: List<ParsedCourse> = emptyList()
@@ -419,21 +612,33 @@ fun QidiAutoSyncScreen(
                                     val ui = importViewModel.uiState.value
                                     parsed = ui.parsedCourses
                                     if (parsed.isNotEmpty()) break
+                                    if (wait % 10 == 0) {
+                                        addLog("等待解析结果：${wait}/40")
+                                    }
                                     wait++
                                     kotlinx.coroutines.delay(200)
                                 }
                                 if (parsed.isEmpty()) {
                                     subTitle = "解析失败或未发现课程"
                                     loading = false
+                                    currentStep = "解析失败"
+                                    addLog("解析失败或未发现课程")
                                     return@launch
                                 }
+                                currentStep = "写入课程数据"
+                                addLog("解析完成，课程数：${parsed.size}")
                                 val count = viewModel.applyToCurrentSemester(parsed)
                                 subTitle = "同步成功：更新 ${count} 门课程"
                                 loading = false
+                                currentStep = "同步完成"
+                                addLog("同步成功：更新 ${count} 门课程")
+                                showProgressDialog = false
                                 onFinish()
                             } catch (_: Throwable) {
                                 loading = false
                                 subTitle = "提取失败：请重试或更换入口"
+                                currentStep = "提取失败"
+                                addLog("提取失败")
                             }
                         }
                     }
@@ -444,6 +649,36 @@ fun QidiAutoSyncScreen(
             }
         }
     }
+}
+
+@Composable
+private fun CaptchaImage(url: String) {
+    AndroidView(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 100.dp, max = 160.dp),
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(Color.Transparent.toArgb())
+                settings.javaScriptEnabled = false
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+            }
+        },
+        update = { view ->
+            if (url.isNotBlank()) {
+                view.loadUrl(url)
+            }
+        }
+    )
+}
+
+private fun escapeJs(raw: String): String {
+    return raw
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "")
 }
 
 private fun normalizeEndpointForLoad(raw: String?): String? {
@@ -471,6 +706,7 @@ private fun normalizeEndpointForLoad(raw: String?): String? {
 @Composable
 private fun WebViewBox(
     provider: SyncProviderType,
+    modifier: Modifier = Modifier,
     onWebViewReady: (WebView) -> Unit,
     onPageStarted: (String) -> Unit = {},
     onPageTitle: (String) -> Unit,
@@ -478,9 +714,7 @@ private fun WebViewBox(
     onPageError: (String) -> Unit = {}
 ) {
     AndroidView(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 8.dp),
+        modifier = modifier.padding(top = 8.dp),
         factory = { context ->
             val wv = WebView(context)
             val settings = wv.settings
