@@ -601,7 +601,7 @@ private fun DataSyncSection(
 ) {
     PreferenceCategory(title = "数据与同步") {
         SettingRow(
-            title = "账号绑定",
+            title = "账号绑定（测试）",
             description = if (boundProvider != null) {
                 "已绑定 ${boundProvider.name}"
             } else {

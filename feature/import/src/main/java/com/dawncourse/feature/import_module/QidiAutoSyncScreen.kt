@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
+import android.webkit.URLUtil
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
@@ -111,13 +112,13 @@ fun QidiAutoSyncScreen(
                 )
                 OutlinedButton(onClick = {
                     val wv = webView ?: return@OutlinedButton
-                    var url = addressBar.trim()
-                    if (url.isNotEmpty() && !(url.startsWith("http://") || url.startsWith("https://"))) {
-                        url = "https://$url"
+                    val url = normalizeEndpointForLoad(addressBar)
+                    if (url.isNullOrBlank()) {
+                        subTitle = "请输入有效网址"
+                        return@OutlinedButton
                     }
-                    if (url.isNotEmpty()) {
-                        wv.loadUrl(url)
-                    }
+                    addressBar = url
+                    wv.loadUrl(url)
                 }) { Text("前往") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -238,7 +239,14 @@ fun QidiAutoSyncScreen(
                             }
                             val wv = webView ?: return@launch
                             if (!endpoint.isNullOrBlank()) {
-                                wv.loadUrl(endpoint)
+                                val normalized = normalizeEndpointForLoad(endpoint)
+                                if (normalized.isNullOrBlank()) {
+                                    loading = false
+                                    subTitle = "入口地址无效，请在设置中重新绑定"
+                                    return@launch
+                                }
+                                addressBar = normalized
+                                wv.loadUrl(normalized)
                             }
                         }
                     }
@@ -436,6 +444,21 @@ fun QidiAutoSyncScreen(
             }
         }
     }
+}
+
+private fun normalizeEndpointForLoad(raw: String?): String? {
+    val trimmed = raw?.trim().orEmpty()
+    if (trimmed.isBlank()) return null
+    val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        trimmed
+    } else {
+        "https://$trimmed"
+    }
+    if (URLUtil.isNetworkUrl(withScheme)) {
+        return withScheme
+    }
+    val guessed = URLUtil.guessUrl(withScheme)
+    return if (URLUtil.isNetworkUrl(guessed)) guessed else null
 }
 
 /**

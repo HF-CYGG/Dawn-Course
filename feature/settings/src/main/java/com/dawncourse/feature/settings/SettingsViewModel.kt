@@ -23,6 +23,7 @@ import javax.inject.Inject
 import android.content.Context
 import android.content.Intent
 import kotlinx.coroutines.flow.map
+import android.webkit.URLUtil
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -152,7 +153,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindQidiCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
-            val normalized = endpoint.trim().removeSuffix("/")
+            val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.QIDI,
                 type = SyncCredentialType.PASSWORD,
@@ -169,7 +170,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindZfCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
-            val normalized = endpoint.trim().removeSuffix("/")
+            val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.ZF,
                 type = SyncCredentialType.PASSWORD,
@@ -213,6 +214,21 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.setBackgroundBrightness(value)
         }
+    }
+
+    private fun normalizeEndpointInput(raw: String): String {
+        val trimmed = raw.trim().trimEnd('/')
+        if (trimmed.isBlank()) return ""
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+        if (URLUtil.isNetworkUrl(withScheme)) {
+            return withScheme
+        }
+        val guessed = URLUtil.guessUrl(withScheme)
+        return if (URLUtil.isNetworkUrl(guessed)) guessed else ""
     }
 
     /**
