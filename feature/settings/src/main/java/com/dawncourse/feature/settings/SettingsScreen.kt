@@ -230,9 +230,10 @@ private fun TimetableSection(
     PreferenceCategory(title = "课表管理") {
         SettingRow(
             title = "当前学期",
-            description = "${settings.currentSemesterName} (第 1 周 / 共 ${settings.totalWeeks} 周)",
+            description = "点击修改学期及周次设置",
             icon = { Icon(Icons.Default.DateRange, null) },
             onClick = onOpenSemester,
+            showArrow = true,
             showDivider = true
         )
         SliderSetting(
@@ -264,9 +265,10 @@ private fun TimetableSection(
         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
         SettingRow(
             title = "节次时间设置",
-            description = "调整每一节课的上课与下课时间",
+            description = "点击配置具体上下课时间",
             icon = { Icon(Icons.Default.AccessTime, null) },
-            onClick = onOpenSectionTime
+            onClick = onOpenSectionTime,
+            showArrow = true
         )
     }
 }

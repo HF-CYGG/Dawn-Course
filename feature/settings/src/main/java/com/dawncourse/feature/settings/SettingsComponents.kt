@@ -46,6 +46,7 @@ fun SettingRow(
     icon: @Composable (() -> Unit)? = null,
     action: @Composable (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    showArrow: Boolean = false,
     showDivider: Boolean = false,
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
@@ -83,6 +84,15 @@ fun SettingRow(
                 if (action != null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     action()
+                }
+                if (showArrow) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
                 }
             }
             content()
