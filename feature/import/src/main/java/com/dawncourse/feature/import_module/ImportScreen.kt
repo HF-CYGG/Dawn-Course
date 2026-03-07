@@ -2,6 +2,8 @@ package com.dawncourse.feature.import_module
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.URLUtil
 import android.webkit.WebResourceError
 import android.webkit.WebView
@@ -712,12 +714,16 @@ private fun WebViewStep(
                     @Suppress("DEPRECATION")
                     settings.allowUniversalAccessFromFileURLs = false
                     // 禁止 JS 自动弹窗
-                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.javaScriptCanOpenWindowsAutomatically = true
                     // 兼容部分教务系统的 HTTP 资源（避免页面空白）
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                     // 安全配置：禁用文件访问，防止本地文件泄露
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    settings.loadsImagesAutomatically = true
+                    settings.blockNetworkImage = false
                     settings.useWideViewPort = true
                     settings.loadWithOverviewMode = true
                     settings.setSupportZoom(true)
@@ -730,6 +736,11 @@ private fun WebViewStep(
                     }
                     // 修正部分教务系统对 WebView UA 的屏蔽
                     settings.userAgentString = settings.userAgentString.replace("wv", "")
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            isLoading = newProgress < 100
+                        }
+                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
