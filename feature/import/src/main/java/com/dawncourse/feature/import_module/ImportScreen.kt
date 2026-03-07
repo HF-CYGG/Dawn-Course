@@ -31,11 +31,11 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AccessTime
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.WbTwilight
@@ -66,6 +67,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -82,6 +85,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
 import kotlinx.coroutines.Job
@@ -97,12 +101,6 @@ import java.time.temporal.ChronoUnit
 import java.time.ZoneId
 import java.time.LocalDate
 import kotlin.coroutines.resume
-
-private fun configureImportWebViewSecurity(webView: WebView) {
-    val settings = webView.settings
-    // Disable access to content:// URLs to avoid exposing protected content
-    settings.allowContentAccess = false
-}
 
 /**
  * 导入功能主屏幕
@@ -122,6 +120,10 @@ fun ImportScreen(
     viewModel: ImportViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var showQiangZhiDialog by remember { mutableStateOf(false) }
+    var qiangZhiBaseUrl by remember { mutableStateOf("") }
+    var qiangZhiStudentId by remember { mutableStateOf("") }
+    var qiangZhiPassword by remember { mutableStateOf("") }
 
     // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
@@ -131,6 +133,33 @@ fun ImportScreen(
             }
 
         }
+    }
+
+    if (showQiangZhiDialog) {
+        QiangZhiApiImportDialog(
+            baseUrl = qiangZhiBaseUrl,
+            studentId = qiangZhiStudentId,
+            password = qiangZhiPassword,
+            onBaseUrlChange = { qiangZhiBaseUrl = it },
+            onStudentIdChange = { qiangZhiStudentId = it },
+            onPasswordChange = { qiangZhiPassword = it },
+            onDismiss = { showQiangZhiDialog = false },
+            onConfirm = {
+                val fallbackBaseUrl = deriveQiangZhiBaseUrl(uiState.webUrl)
+                val baseUrl = if (qiangZhiBaseUrl.isBlank()) fallbackBaseUrl else qiangZhiBaseUrl
+                showQiangZhiDialog = false
+                if (baseUrl.isBlank() || qiangZhiStudentId.isBlank() || qiangZhiPassword.isBlank()) {
+                    viewModel.updateResultText("强智 API 导入失败：请填写教务系统地址、学号和密码")
+                    return@QiangZhiApiImportDialog
+                }
+                viewModel.runQiangZhiApiImport(
+                    baseUrl = baseUrl,
+                    studentId = qiangZhiStudentId,
+                    password = qiangZhiPassword,
+                    totalWeeks = uiState.weekCount
+                )
+            }
+        )
     }
 
     Scaffold(
@@ -175,11 +204,23 @@ fun ImportScreen(
             when (uiState.step) {
                 ImportStep.Input -> SelectionStep(
                     viewModel = viewModel,
-                    uiState = uiState
+                    uiState = uiState,
+                    onOpenQiangZhiDialog = { defaultUrl ->
+                        if (defaultUrl.isNotBlank()) {
+                            qiangZhiBaseUrl = defaultUrl
+                        }
+                        showQiangZhiDialog = true
+                    }
                 )
                 ImportStep.WebView -> WebViewStep(
                     viewModel = viewModel,
-                    uiState = uiState
+                    uiState = uiState,
+                    onOpenQiangZhiDialog = { defaultUrl ->
+                        if (defaultUrl.isNotBlank()) {
+                            qiangZhiBaseUrl = defaultUrl
+                        }
+                        showQiangZhiDialog = true
+                    }
                 )
                 ImportStep.Review -> ReviewStep(
                     viewModel = viewModel,
@@ -317,16 +358,86 @@ private fun ParsedCourseItem(
 }
 
 /**
+ * 强智 API 导入弹窗
+ *
+ * 提供教务系统地址、学号、密码输入，用于通过强智 API 拉取课表。
+ */
+@Composable
+private fun QiangZhiApiImportDialog(
+    baseUrl: String,
+    studentId: String,
+    password: String,
+    onBaseUrlChange: (String) -> Unit,
+    onStudentIdChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("强智 API 导入") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = onBaseUrlChange,
+                    label = { Text("教务系统地址") },
+                    placeholder = { Text("例如：https://jwxt.xxx.edu.cn") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = studentId,
+                    onValueChange = onStudentIdChange,
+                    label = { Text("学号") },
+                    placeholder = { Text("请输入学号") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("密码") },
+                    placeholder = { Text("请输入密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "仅用于本次导入，不会保存账号与密码",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("开始导入")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+/**
  * 步骤一：选择导入方式
  *
- * 提供两种入口：
+ * 提供三种入口：
  * 1. 网页导入：跳转到 WebViewStep
- * 2. 文件导入：调用系统文件选择器读取 .ics 文件
+ * 2. 强智 API 导入：使用学号密码拉取课表
+ * 3. 文件导入：调用系统文件选择器读取 .ics 文件
  */
 @Composable
 private fun SelectionStep(
     viewModel: ImportViewModel,
-    uiState: ImportUiState
+    uiState: ImportUiState,
+    onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = LocalContext.current
     // 注册文件选择器 ActivityResultLauncher
@@ -375,6 +486,13 @@ private fun SelectionStep(
             onClick = { viewModel.setStep(ImportStep.WebView) }
         )
 
+        // 选项卡：强智 API 导入
+        ImportOptionCard(
+            title = "强智 API 导入（学号/密码）",
+            description = "适用于强智教务系统，账号密码换取 token 后拉取课表",
+            icon = Icons.Default.Security,
+            onClick = { onOpenQiangZhiDialog(deriveQiangZhiBaseUrl(uiState.webUrl)) }
+        )
         // 选项卡：ICS 文件导入
         ImportOptionCard(
             title = "ICS 日历文件导入",
@@ -511,7 +629,8 @@ private fun ImportOptionCard(
 @Composable
 private fun WebViewStep(
     viewModel: ImportViewModel,
-    uiState: ImportUiState
+    uiState: ImportUiState,
+    onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -564,10 +683,36 @@ private fun WebViewStep(
         }
     }
 
-    fun configureWebViewSecurity(targetWebView: WebView) {
-        // Explicitly disallow access to content:// URLs to avoid exposing sensitive data
-        val settings = targetWebView.settings
-        settings.allowContentAccess = false
+    fun normalizeHttpUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "http://$trimmed"
+        }
+        val parsed = Uri.parse(withScheme)
+        val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
+        val host = parsed.host.orEmpty()
+        return if ((scheme == "http" || scheme == "https") && host.isNotBlank()) withScheme else null
+    }
+
+    fun isSafeHttpUrl(url: String): Boolean {
+        val parsed = Uri.parse(url)
+        val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
+        val host = parsed.host.orEmpty()
+        return (scheme == "http" || scheme == "https") && host.isNotBlank()
+    }
+
+    fun loadUrlIfValid(raw: String) {
+        val safeUrl = normalizeHttpUrl(raw)
+        if (safeUrl == null) {
+            viewModel.updateResultText("请输入有效网址")
+            return
+        }
+        inputUrl = safeUrl
+        viewModel.updateWebUrl(safeUrl)
+        webView?.loadUrl(safeUrl)
     }
 
     fun parseJavascriptResult(raw: String?): String {
@@ -628,7 +773,8 @@ private fun WebViewStep(
             }
         )
     }
-    
+    val qiangZhiBaseUrl = deriveQiangZhiBaseUrl(uiState.webUrl)
+    val showQiangZhiHint = remember(uiState.webUrl) { isQiangZhiHost(uiState.webUrl) }
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部地址栏
         Surface(
@@ -653,15 +799,7 @@ private fun WebViewStep(
                         imeAction = androidx.compose.ui.text.input.ImeAction.Go
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onGo = {
-                            val url = normalizeUrl(inputUrl)
-                            if (url == null) {
-                                Toast.makeText(context, "请输入有效网址", Toast.LENGTH_SHORT).show()
-                            } else {
-                                viewModel.updateWebUrl(url)
-                                webView?.loadUrl(url)
-                            }
-                        }
+                        onGo = { loadUrlIfValid(inputUrl) }
                     ),
                     trailingIcon = {
                         if (inputUrl.isNotEmpty()) {
@@ -673,15 +811,7 @@ private fun WebViewStep(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = {
-                        val url = normalizeUrl(inputUrl)
-                        if (url == null) {
-                            Toast.makeText(context, "请输入有效网址", Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.updateWebUrl(url)
-                            webView?.loadUrl(url)
-                        }
-                    },
+                    onClick = { loadUrlIfValid(inputUrl) },
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
                 ) {
                     Text("前往")
@@ -697,6 +827,35 @@ private fun WebViewStep(
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
         }
+
+        if (showQiangZhiHint) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "检测到可能为强智教务系统，抓取失败可改用 API 导入",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                SuggestionChip(
+                    onClick = { onOpenQiangZhiDialog(qiangZhiBaseUrl) },
+                    label = { Text("改用强智 API") },
+                    colors = SuggestionChipDefaults.suggestionChipColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                )
+            }
+        }
         
         // WebView 容器
         AndroidView(
@@ -706,18 +865,12 @@ private fun WebViewStep(
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         settings.safeBrowsingEnabled = true
                     }
-                    // 安全配置：禁用文件与内容访问，避免通过 WebView 读取本地文件或 content://
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    @Suppress("DEPRECATION")
-                    settings.allowFileAccessFromFileURLs = false
-                    @Suppress("DEPRECATION")
-                    settings.allowUniversalAccessFromFileURLs = false
-                    // 禁止 JS 自动弹窗
-                    settings.javaScriptCanOpenWindowsAutomatically = true
-                    // 兼容部分教务系统的 HTTP 资源（避免页面空白）
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                    // 安全配置：禁用文件访问，防止本地文件泄露
+                    settings.setAllowFileAccess(false)
+                    settings.setAllowContentAccess(false)
+                    settings.setAllowFileAccessFromFileURLs(false)
+                    settings.setAllowUniversalAccessFromFileURLs(false)
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
@@ -748,7 +901,7 @@ private fun WebViewStep(
                             if (url == "about:blank") {
                                 return false
                             }
-                            return !url.startsWith("http://") && !url.startsWith("https://")
+                            return !isSafeHttpUrl(url)
                         }
 
                         @Deprecated("Deprecated in Java")
@@ -757,7 +910,7 @@ private fun WebViewStep(
                             if (targetUrl == "about:blank") {
                                 return false
                             }
-                            return !targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")
+                            return !isSafeHttpUrl(targetUrl)
                         }
 
                         override fun onReceivedError(
@@ -791,8 +944,13 @@ private fun WebViewStep(
                         }
                     }
                     if (uiState.webUrl.isNotBlank()) {
-                        val normalized = normalizeUrl(uiState.webUrl) ?: uiState.webUrl
-                        loadUrl(normalized)
+                        val safeUrl = normalizeHttpUrl(uiState.webUrl)
+                        if (safeUrl != null) {
+                            inputUrl = safeUrl
+                            loadUrl(safeUrl)
+                        } else {
+                            viewModel.updateResultText("请输入有效网址")
+                        }
                     }
                     webView = this
                 }
@@ -863,115 +1021,115 @@ private fun WebViewStep(
                 Button(
                     onClick = {
                         try {
-                            // 读取并拼接通用工具函数和适配脚本
-                            val assets = context.assets
-                            val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
-                            val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
-                            val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
-
-                            // 构建注入脚本
-                            val js = StringBuilder()
-                            js.append("(function() {\n")
-                            js.append("try {\n")
-                            js.append("window.__dawnResult = null;\n")
-                            js.append("window.__dawnReady = false;\n")
-                            js.append(outputConsole).append("\n;\n")
-                            js.append(courseUtils).append("\n;\n")
-                            js.append(qidiProvider).append("\n;\n")
-                            
-                            js.append("""
-                                // 尝试运行 scheduleHtmlProvider
-                                (async function() {
-                                    try {
-                                        if (typeof scheduleHtmlProvider === 'function') {
-                                            console.log("Found scheduleHtmlProvider, running...");
-                                            var result = await scheduleHtmlProvider();
-                                            if (result !== "do not continue") {
-                                                window.__dawnResult = result;
-                                                window.__dawnReady = true;
-                                                return;
-                                            }
-                                        }
-                                    } catch(e) {
-                                        console.error("Provider execution failed:", e);
-                                    }
-                                    
-                                    // 降级策略：使用原有的 HTML 提取逻辑
-                                    function findScheduleHtml(doc) {
-                                        if (!doc) return null;
-                                        
-                                        // 1. 尝试强智教务系统特定 ID 提取 (参考 CrawlerCourseTable 逻辑)
-                                        // 强智系统课程表通常使用 ID 格式 "节次-周次-2" (例如 "1-1-2")
-                                        try {
-                                            var qiangzhiData = [];
-                                            var hasQiangzhi = false;
-                                            // 遍历 1-5 节次 (对应强智系统的 5 个大节)
-                                            for (var c = 1; c <= 5; c++) {
-                                                // 遍历 1-7 周次 (对应周一到周日)
-                                                for (var w = 1; w <= 7; w++) {
-                                                    var id = c + "-" + w + "-2";
-                                                    var el = doc.getElementById(id);
-                                                    if (el) {
-                                                        hasQiangzhi = true;
-                                                        var text = el.innerText || el.textContent;
-                                                        // 仅提取非空单元格
-                                                        if (text && text.trim().length > 0) {
-                                                            qiangzhiData.push({
-                                                                "row": c,
-                                                                "col": w,
-                                                                "text": text.trim()
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            // 如果检测到强智格式且包含数据，则直接返回特定 JSON
-                                            if (hasQiangzhi && qiangzhiData.length > 0) {
-                                                return JSON.stringify({
-                                                    "type": "qiangzhi_direct",
-                                                    "data": qiangzhiData
-                                                });
-                                            }
-                                        } catch (e) { console.error("Qiangzhi extract failed", e); }
-                                        
-                                        var html = doc.body ? doc.body.innerHTML : "";
-                                        if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
-                                            return html;
-                                        }
-                                        var frames = doc.getElementsByTagName('frame');
-                                        for (var i = 0; i < frames.length; i++) {
-                                            try {
-                                                var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                                var result = findScheduleHtml(frameDoc);
-                                                if (result) return result;
-                                            } catch(e) {}
-                                        }
-                                        var iframes = doc.getElementsByTagName('iframe');
-                                        for (var i = 0; i < iframes.length; i++) {
-                                            try {
-                                                var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                                var result = findScheduleHtml(frameDoc);
-                                                if (result) return result;
-                                            } catch(e) {}
-                                        }
-                                        return null;
-                                    }
-                                    window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
-                                    window.__dawnReady = true;
-                                })();
-                            } catch(e) {
-                                console.error("Provider execution failed:", e);
-                                window.__dawnReady = true;
-                            }
-                            })();
-                            """.trimIndent())
-
                             val currentWebView = webView
                             if (currentWebView == null) {
                                 viewModel.updateResultText("未能提取到有效 HTML 内容")
                                 return@Button
                             }
-                            currentWebView.evaluateJavascript(js.toString(), null)
+
+                            // 如果检测到为强智教务系统，使用专用 Provider 直接请求课表页面 HTML
+                            val js: String = if (isQiangZhiHost(uiState.webUrl)) {
+                                """
+                                (function() {
+                                    try {
+                                        window.__dawnResult = null;
+                                        window.__dawnReady = false;
+                                        (function() {
+                                            try {
+                                                var xhr = new XMLHttpRequest();
+                                                xhr.open('GET', '/jsxsd/xskb/xskb_list.do?Ves632DSdyV=NEW_XSD_PYGL', false);
+                                                xhr.send();
+                                                if (xhr.status === 200) {
+                                                    window.__dawnResult = xhr.responseText;
+                                                } else {
+                                                    window.__dawnResult = "";
+                                                }
+                                            } catch (e) {
+                                                try {
+                                                    var iframes = document.getElementsByTagName('iframe');
+                                                    if (iframes.length > 0) {
+                                                        window.__dawnResult = iframes[0].contentWindow.document.body.innerHTML;
+                                                    } else {
+                                                        window.__dawnResult = document.body ? document.body.innerHTML : "";
+                                                    }
+                                                } catch (e2) {
+                                                    window.__dawnResult = document.body ? document.body.innerHTML : "";
+                                                }
+                                            }
+                                            window.__dawnReady = true;
+                                        })();
+                                    } catch (e) {
+                                        window.__dawnReady = true;
+                                    }
+                                })();
+                                """.trimIndent()
+                            } else {
+                                // 非强智教务系统，继续使用通用 Provider + 降级逻辑
+                                val assets = context.assets
+                                val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
+                                val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
+                                val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
+
+                                buildString {
+                                    append("(function(){\n")
+                                    append("try {\n")
+                                    append("window.__dawnResult = null;\n")
+                                    append("window.__dawnReady = false;\n")
+                                    append(outputConsole).append("\n;\n")
+                                    append(courseUtils).append("\n;\n")
+                                    append(qidiProvider).append("\n;\n")
+                                    append(
+                                        """
+                                        (async function() {
+                                            try {
+                                                if (typeof scheduleHtmlProvider === 'function') {
+                                                    console.log("Found scheduleHtmlProvider, running...");
+                                                    var result = await scheduleHtmlProvider();
+                                                    if (result !== "do not continue") {
+                                                        window.__dawnResult = result;
+                                                        window.__dawnReady = true;
+                                                        return;
+                                                    }
+                                                }
+                                            } catch(e) {
+                                                console.error("Provider execution failed:", e);
+                                            }
+                                            
+                                            function findScheduleHtml(doc) {
+                                                if (!doc) return null;
+                                                var html = doc.body ? doc.body.innerHTML : "";
+                                                if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                                    return html;
+                                                }
+                                                var frames = doc.getElementsByTagName('frame');
+                                                for (var i = 0; i < frames.length; i++) {
+                                                    try {
+                                                        var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
+                                                        var result = findScheduleHtml(frameDoc);
+                                                        if (result) return result;
+                                                    } catch(e) {}
+                                                }
+                                                var iframes = doc.getElementsByTagName('iframe');
+                                                for (var i = 0; i < iframes.length; i++) {
+                                                    try {
+                                                        var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                                                        var result = findScheduleHtml(frameDoc);
+                                                        if (result) return result;
+                                                    } catch(e) {}
+                                                }
+                                                return null;
+                                            }
+                                            window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
+                                            window.__dawnReady = true;
+                                        })();
+                                        """.trimIndent()
+                                    )
+                                    append("\n} catch(e) { window.__dawnReady = true; }\n")
+                                    append("})();")
+                                }
+                            }
+
+                            currentWebView.evaluateJavascript(js, null)
                             viewModel.updateResultText("正在提取...")
                             pollJob?.cancel()
                             pollJob = coroutineScope.launch {
@@ -1023,6 +1181,7 @@ private fun ReviewStep(
     val scrollState = rememberScrollState()
 
     var showDatePicker by remember { mutableStateOf(false) }
+    var showTimeSettingDialog by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
         initialSelectedDateMillis = uiState.semesterStartDate
     )
@@ -1036,6 +1195,32 @@ private fun ReviewStep(
                     viewModel.updateSemesterSettings(timestamp, uiState.weekCount)
                 }
                 showDatePicker = false
+            }
+        )
+    }
+
+    if (showTimeSettingDialog) {
+        BatchGenerateTimeDialog(
+            maxDailySections = uiState.detectedMaxSection,
+            initialDuration = uiState.courseDuration,
+            initialBreakDuration = uiState.breakDuration,
+            initialAmStart = uiState.amStartTime,
+            initialPmStartSec = uiState.pmStartSection,
+            initialPmStart = uiState.pmStartTime,
+            initialEveStartSec = uiState.eveStartSection,
+            initialEveStart = uiState.eveStartTime,
+            onDismissRequest = { showTimeSettingDialog = false },
+            onConfirm = { times ->
+                viewModel.updateSectionTimes(times)
+                // 同时更新最大节次，保持一致
+                viewModel.updateTimeSettings(
+                    maxSection = times.size,
+                    duration = uiState.courseDuration, // 这些值在 dialog 中可能已变，但这里主要更新 sectionTimes
+                    breakDuration = uiState.breakDuration,
+                    bigBreakDuration = uiState.bigBreakDuration,
+                    sectionsPerBigSection = uiState.sectionsPerBigSection
+                )
+                showTimeSettingDialog = false
             }
         )
     }
@@ -1137,87 +1322,51 @@ private fun ReviewStep(
 
         // 3. 作息时间设置
         ImportSettingsSection(title = "作息时间") {
-            // 单节时长
             ListItem(
-                headlineContent = { Text("单节时长") },
+                headlineContent = { Text("作息时间表") },
+                supportingContent = {
+                    val count = if (uiState.sectionTimes.isNotEmpty()) uiState.sectionTimes.size else uiState.detectedMaxSection
+                    Text("共 $count 节课")
+                },
                 leadingContent = { Icon(Icons.Outlined.Timer, null) },
                 trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration - 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            enabled = uiState.courseDuration > 5,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.courseDuration}分钟", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration + 5, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
+                    Button(onClick = { showTimeSettingDialog = true }) {
+                        Text("设置")
                     }
                 }
             )
 
             HorizontalDivider()
             
-            // 课间时长
-             ListItem(
-                headlineContent = { Text("小课间") },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration - 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            enabled = uiState.breakDuration > 0,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.breakDuration}分钟", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration + 1, uiState.bigBreakDuration, uiState.sectionsPerBigSection) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
+            // 预览列表
+            if (uiState.sectionTimes.isNotEmpty()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    uiState.sectionTimes.forEachIndexed { index, time ->
+                        if (index < 4 || index >= uiState.sectionTimes.size - 2) { // 只显示前4节和最后2节，避免过长
+                             Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("第 ${index + 1} 节", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${time.startTime} - ${time.endTime}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        } else if (index == 4) {
+                             Text(
+                                "...", 
+                                modifier = Modifier.fillMaxWidth(), 
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
-            )
-
-             HorizontalDivider()
-            
-            // 大节包含小节数 (用于大课间逻辑)
-             ListItem(
-                headlineContent = { Text("大节包含小节数") },
-                supportingContent = { Text("每隔几节课休息一次大课间") },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection - 1) },
-                            enabled = uiState.sectionsPerBigSection > 1,
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text("${uiState.sectionsPerBigSection}节", Modifier.padding(horizontal = 8.dp))
-                        
-                        FilledIconButton(
-                            onClick = { viewModel.updateTimeSettings(uiState.detectedMaxSection, uiState.courseDuration, uiState.breakDuration, uiState.bigBreakDuration, uiState.sectionsPerBigSection + 1) },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
-                    }
-                }
-            )
-        }
-
-        // 4. 时间表预览
-        ImportSettingsSection(title = "时间表预览") {
-             // 简单的预览列表
-             Column(modifier = Modifier.padding(16.dp)) {
-                 // 上午
-                 SectionTimePreviewRow("上午", 1, uiState.amStartTime)
-                 // 下午
-                 SectionTimePreviewRow("下午", uiState.pmStartSection, uiState.pmStartTime)
-                 // 晚上
-                 SectionTimePreviewRow("晚上", uiState.eveStartSection, uiState.eveStartTime)
-             }
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1261,24 +1410,34 @@ private fun ImportSettingsSection(
     }
 }
 
-@Composable
-private fun SectionTimePreviewRow(
-    label: String,
-    startSection: Int,
-    startTime: LocalTime
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-        Text(
-            text = "第 $startSection 节 ${startTime.format(DateTimeFormatter.ofPattern("HH:mm"))} 开始",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+/**
+ * 推导强智 API 使用的基础地址
+ *
+ * 只保留协议、域名、端口三部分，避免把路径误当成接口地址。
+ */
+private fun deriveQiangZhiBaseUrl(url: String): String {
+    return try {
+        if (url.isBlank()) return ""
+        val parsed = Uri.parse(url)
+        val host = parsed.host.orEmpty()
+        if (host.isBlank()) return ""
+        val scheme = parsed.scheme ?: "https"
+        val port = if (parsed.port > 0) ":${parsed.port}" else ""
+        "$scheme://$host$port"
+    } catch (_: Exception) {
+        ""
+    }
+}
+
+/**
+ * 判断当前地址是否可能为强智教务系统
+ */
+private fun isQiangZhiHost(url: String): Boolean {
+    return try {
+        val parsed = Uri.parse(url)
+        val host = parsed.host?.lowercase().orEmpty()
+        host.contains("qzdatasoft") || url.contains("app.do?method=", ignoreCase = true)
+    } catch (_: Exception) {
+        false
     }
 }

@@ -17,7 +17,7 @@ coroutines = "1.7.3" # Kotlin 协程
 navigation-compose = "2.7.7" # Compose 导航组件
 glance = "1.1.1" # 桌面小组件 (Widget) 框架
 work = "2.9.0" # WorkManager 后台任务
-datastore = "1.0.0" # DataStore 数据存储
+datastore = "1.2.0" # DataStore 数据存储
 quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
 hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
@@ -33,6 +33,7 @@ protobuf = "4.34.0"
 jdom = "2.0.6.1"
 guava = "33.5.0-android"
 gson = "2.13.2"
+jsoup = "1.18.1"
 
 # 库依赖定义 (Libraries)
 [libraries]
@@ -96,6 +97,7 @@ protobuf-java = { group = "com.google.protobuf", name = "protobuf-java", version
 jdom = { group = "org.jdom", name = "jdom2", version.ref = "jdom" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 
 # Networking
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version = "2.11.0" }

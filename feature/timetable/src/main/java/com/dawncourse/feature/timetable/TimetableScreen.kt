@@ -37,6 +37,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 
 import androidx.compose.runtime.saveable.rememberSaveable
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 /**
  * 课表功能入口路由 (Composable Route)
@@ -160,19 +162,32 @@ internal fun TimetableScreen(
     
     // 计算当前真实周次
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
+    val semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+    val isBeforeSemesterStart = semesterStartDate != null && LocalDate.now().isBefore(semesterStartDate)
     // 绑定总周数到设置
     val maxWeeks = settings.totalWeeks
     // 允许 Pager 扩展到当前真实周次（如果超过总周数）
-    val pageCount = maxOf(maxWeeks, realCurrentWeek)
+    val basePageCount = maxOf(maxWeeks, realCurrentWeek.coerceAtLeast(1))
+    val hasHolidayPage = isBeforeSemesterStart
+    val pageCount = basePageCount + if (hasHolidayPage) 1 else 0
 
     // Pager 状态管理
     val pagerState = rememberPagerState(
-        initialPage = (realCurrentWeek - 1).coerceIn(0, pageCount - 1),
+        initialPage = if (hasHolidayPage) {
+            val targetPage = if (realCurrentWeek <= 0) 0 else realCurrentWeek
+            targetPage.coerceIn(0, pageCount - 1)
+        } else {
+            (realCurrentWeek - 1).coerceIn(0, pageCount - 1)
+        },
         pageCount = { pageCount }
     )
     
     // 根据 Pager 计算当前展示的周次
-    val displayedWeek by remember { derivedStateOf { pagerState.currentPage + 1 } }
+    val displayedWeek by remember(hasHolidayPage) {
+        derivedStateOf {
+            if (hasHolidayPage) pagerState.currentPage else pagerState.currentPage + 1
+        }
+    }
     
     val scope = rememberCoroutineScope()
 
@@ -212,12 +227,14 @@ internal fun TimetableScreen(
                 TimetableTopBar(
                     displayedWeek = displayedWeek,
                     realCurrentWeek = realCurrentWeek,
-                    isHolidayMode = realCurrentWeek > maxWeeks,
+                    isHolidayMode = displayedWeek == 0 || displayedWeek > maxWeeks,
                     totalWeeks = maxWeeks,
                     onWeekSelected = { week ->
                         scope.launch {
-                            val targetPage = (week - 1).coerceIn(0, pageCount - 1)
-                            pagerState.animateScrollToPage(targetPage)
+                            hasScrolledToCurrentWeek = true
+                            val targetPage = if (hasHolidayPage) week else (week - 1)
+                            val safeTargetPage = targetPage.coerceIn(0, pageCount - 1)
+                            pagerState.animateScrollToPage(safeTargetPage)
                         }
                     },
                     onSettingsClick = onSettingsClick,
@@ -239,17 +256,26 @@ internal fun TimetableScreen(
                     modifier = Modifier.weight(1f),
                     beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
                 ) { page ->
-                    val week = page + 1
+                    val week = if (hasHolidayPage) page else page + 1
                     
-                    if (week > maxWeeks) {
-                        HolidayView(modifier = Modifier.fillMaxSize())
+                    if (week > maxWeeks || (hasHolidayPage && week == 0)) {
+                        val daysUntilSemesterStart = if (hasHolidayPage && week == 0) {
+                            semesterStartDate?.let { ChronoUnit.DAYS.between(LocalDate.now(), it).coerceAtLeast(0) }
+                        } else {
+                            null
+                        }
+                        HolidayView(
+                            modifier = Modifier.fillMaxSize(),
+                            isBeforeSemesterStart = hasHolidayPage && week == 0,
+                            daysUntilSemesterStart = daysUntilSemesterStart
+                        )
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
                             // 3.1 星期栏头部 (跟随页面滑动)
                             WeekHeader(
                                 isCurrentWeek = week == realCurrentWeek,
                                 displayedWeek = week,
-                                semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
+                                semesterStartDate = semesterStartDate
                             )
 
                             // 3.2 垂直滚动区域 (时间轴 + 课程网格)

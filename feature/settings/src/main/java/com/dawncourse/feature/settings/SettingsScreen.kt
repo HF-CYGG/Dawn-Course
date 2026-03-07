@@ -78,7 +78,7 @@ fun SettingsScreen(
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
     val wallpaperLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             try {
@@ -87,7 +87,7 @@ fun SettingsScreen(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             } catch (e: Exception) {
-                // Ignore
+                e.printStackTrace()
             }
             viewModel.setWallpaperUri(it.toString())
         }
@@ -165,7 +165,7 @@ fun SettingsScreen(
                 viewModel = viewModel,
                 onPickWallpaper = {
                     try {
-                        wallpaperLauncher.launch("image/*")
+                        wallpaperLauncher.launch(arrayOf("image/*"))
                     } catch (e: Exception) {
                         Toast.makeText(context, "无法打开图片选择器", Toast.LENGTH_SHORT).show()
                     }

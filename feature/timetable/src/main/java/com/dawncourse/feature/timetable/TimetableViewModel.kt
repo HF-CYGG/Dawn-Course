@@ -126,8 +126,8 @@ class TimetableViewModel @Inject constructor(
                 if (semester != null) {
                     // 根据学期开始日期计算当前周次
                     val week = calculateWeekUseCase(semester.startDate)
-                    // 确保周次至少为 1，但允许超过学期总周数（用于触发假期模式）
-                    val validWeek = week.coerceAtLeast(1)
+                    // 允许开学前显示 0 周，避免把“未开学”误判为第 1 周
+                    val validWeek = week.coerceAtLeast(0)
                     _currentWeek.value = validWeek
                 }
             }

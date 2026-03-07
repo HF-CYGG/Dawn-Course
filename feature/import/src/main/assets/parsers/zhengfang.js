@@ -2,10 +2,7 @@
  * 泰山科技学院/强智教务系统 解析脚本 (Regex 实现版)
  * 对应 docs/泰山科技学院教务系统脚本开发文档.md 的逻辑
  * 
- * 注：由于 QuickJS 环境默认不包含 Cheerio 库，此处使用 Regex 实现文档中描述的相同解析逻辑。
- * 效果与文档提供的 cheerio 版本一致。
- * 
- * 更新：集成“旧正方”教务系统解析逻辑，兼容更多正方系统版本。
+ * 依赖: common_parser_utils.js
  */
 
 function scheduleHtmlParser(html) {
@@ -19,6 +16,18 @@ function scheduleHtmlParser(html) {
     
     courses = dedupeCourses(courses);
     return JSON.stringify(courses);
+}
+
+function cleanTeacherText(text) {
+    if (!text) return "";
+    var cleaned = text.replace(/\s+/g, " ").trim();
+    var stopRegex = /(教学班组成|教学班|考核方式|课程学时组成|课程学时|课程性质|课程属性|课程类别|课程类型|选课备注|备注|人数|班级组成|班级|课序号|课程号|课程代码|开课单位|上课对象|授课对象|授课形式)/;
+    var stopIndex = cleaned.search(stopRegex);
+    if (stopIndex > 0) {
+        cleaned = cleaned.substring(0, stopIndex).trim();
+    }
+    cleaned = cleaned.replace(/[，,;；/]+$/g, "").trim();
+    return cleaned;
 }
 
 /**
@@ -48,12 +57,15 @@ function parseNewZhengfang(html) {
             name = extractName(blockHtml);
 
             teacher = extractTextByTitle(blockHtml, "教师");
+            if (!teacher) teacher = extractTextByTitle(blockHtml, "任课教师");
             if (teacher) {
                 teacher = cleanTeacherName(teacher);
             }
             location = extractTextByTitle(blockHtml, "上课地点");
+            if (!location) location = extractTextByTitle(blockHtml, "教室");
+            if (!location) location = extractTextByTitle(blockHtml, "校区/上课地点");
             if (location) {
-                location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+                location = location.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
             }
 
             var timeText = extractTextByTitle(blockHtml, "节/周");
@@ -75,11 +87,23 @@ function parseNewZhengfang(html) {
                     if (teacherTextMatch) {
                         teacher = cleanTeacherName(teacherTextMatch[1].trim());
                     }
+                    if (!teacher) {
+                        var teacherTextMatch2 = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(text);
+                        if (teacherTextMatch2) {
+                            teacher = teacherTextMatch2[2].trim();
+                        }
+                    }
                 }
                 if (!location) {
                     var locTextMatch = /上课地点\s*[:：]?\s*([^教师周数节次校区]+)/.exec(text);
                     if (locTextMatch) {
                         location = locTextMatch[1].trim().replace('泰山科技学院', '').trim();
+                    }
+                    if (!location) {
+                        var locTextMatch2 = /(上课地点|教室)\s*[:：]?\s*([\s\S]*?)(?=教师|周数|节次|校区|$)/.exec(text);
+                        if (locTextMatch2) {
+                            location = locTextMatch2[2].trim().replace('泰山科技学院', '').trim();
+                        }
                     }
                 }
                 if (!weeksStr) {
@@ -89,6 +113,7 @@ function parseNewZhengfang(html) {
                     sectionsStr = extractSectionsStr(text);
                 }
             }
+            teacher = cleanTeacherText(teacher);
 
             if (name && weeksStr && sectionsStr) {
                 var weeks = parseWeeks(weeksStr);
@@ -118,6 +143,7 @@ function parseNewZhengfang(html) {
         var listName = extractName(listBlockHtml);
         var listText = normalizeText(listBlockHtml);
         var listTeacher = extractTextByTitle(listBlockHtml, "教师");
+        if (!listTeacher) listTeacher = extractTextByTitle(listBlockHtml, "任课教师");
         if (listTeacher) {
             listTeacher = cleanTeacherName(listTeacher);
         } else {
@@ -127,8 +153,22 @@ function parseNewZhengfang(html) {
             }
         }
         var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
+        if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "教室");
+        if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "校区/上课地点");
         if (listLocation) {
-            listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+            listLocation = listLocation.replace(/上课地点\s*[:：]?\s*/g, "").replace(/教室\s*[:：]?\s*/g, "").replace('泰山科技学院', '').trim();
+        }
+        if (!listTeacher) {
+            var listTeacherTextMatch = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(listText);
+            if (listTeacherTextMatch) {
+                listTeacher = listTeacherTextMatch[2].trim();
+            }
+        }
+        if (!listLocation) {
+            var listLocTextMatch = /(上课地点|教室)\s*[:：]?\s*([\s\S]*?)(?=教师|周数|节次|校区|$)/.exec(listText);
+            if (listLocTextMatch) {
+                listLocation = listLocTextMatch[2].trim().replace('泰山科技学院', '').trim();
+            }
         }
         var listWeeksStr = extractWeeksStr(listText);
         var listSectionsStr = sectionStart ? (sectionStart + "-" + (sectionEnd || sectionStart) + "节") : extractSectionsStr(listText);
@@ -136,6 +176,7 @@ function parseNewZhengfang(html) {
         if (!listWeeksStr && listTimeText) {
             listWeeksStr = extractWeeksStr(listTimeText);
         }
+        listTeacher = cleanTeacherText(listTeacher);
         if (listName && listWeeksStr && listSectionsStr) {
             var listWeeks = parseWeeks(listWeeksStr);
             var listSections = parseSections(listSectionsStr);
@@ -173,8 +214,6 @@ function parseOldZhengfang(html) {
         // 即跳过 index 0 和 1 (Header 和 早晨/标签行)
         // 有效数据从 i=2 开始
         // 默认节次 defaultSection = index - 1 (因为 index 0 是 header, index 1 是空/标签, index 2 是第一节)
-        // 实际上正方表格通常: Row 0=Header, Row 1=MorningSpan+Section1? 或者 Row 1=MorningSpan, Row 2=Section1?
-        // 这里的逻辑主要依赖内容识别，但兜底需要 defaultSection
         
         var rowHtml = rows[i];
         var cells = [];
@@ -191,7 +230,8 @@ function parseOldZhengfang(html) {
             // Filter empty and clean
             var rawInfo = [];
             for(var k=0; k<parts.length; k++) {
-                var p = sanitizePlainText(parts[k]);
+                // 使用通用工具库的 stripTags
+                var p = stripTags(parts[k]);
                 if (p) rawInfo.push(p);
             }
             
@@ -208,7 +248,6 @@ function parseOldZhengfang(html) {
                 // 找到时间行 idx
                 // 结构通常为: Name, Time, Teacher, Location
                 // provider.js: Name=index, Time=index+1, Teacher=index+2, Location=index+3
-                // 这里的 idx 是 Time 的位置
                 
                 if (idx - 1 < 0) { idx++; continue; }
                 
@@ -269,7 +308,6 @@ function parseOldTimeRanges(rawTime) {
     var regex = /(\d+)[-,]?(\d*)/g;
     var match;
     // 限制只匹配前面的数字部分，避免匹配到无关内容
-    // 但正方格式通常比较规范，如 "周二第1,2节{第1-16周}"
     while ((match = regex.exec(rawTime)) !== null) {
         var start = parseInt(match[1]);
         var end = match[2] ? parseInt(match[2]) : start;
@@ -279,7 +317,6 @@ function parseOldTimeRanges(rawTime) {
     }
     return result;
 }
-
 function sanitizePlainText(rawHtml) {
     if (!rawHtml) return "";
     var text = String(rawHtml);

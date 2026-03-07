@@ -4,22 +4,69 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    
-    <!-- Design: Dawn Pillars (Vertical Time Flow) -->
-    
-    <!-- Left Pillar: Night Blue (Cool) -->
+
+    <!-- Group with clip-path to round the corners of the content -->
+    <group>
+        <clip-path
+            android:pathData="M36,24 H72 A12,12 0 0 1 84,36 V72 A12,12 0 0 1 72,84 H36 A12,12 0 0 1 24,72 V36 A12,12 0 0 1 36,24 Z" />
+
+        <!-- Row 1 -->
+        <path
+            android:fillColor="#1F1F23"
+            android:pathData="M24,24 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#3D7BD9"
+            android:pathData="M44,24 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M64,24 h20 v20 h-20 z" />
+
+        <!-- Row 2 -->
+        <path
+            android:fillColor="#7EC6EA"
+            android:pathData="M24,44 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M44,44 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#F2C445"
+            android:pathData="M64,44 h20 v20 h-20 z" />
+
+        <!-- Row 3 -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M24,64 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#EB6A34"
+            android:pathData="M44,64 h20 v20 h-20 z" />
+        <path
+            android:fillColor="#E33B3A"
+            android:pathData="M64,64 h20 v20 h-20 z" />
+    </group>
+
+    <!-- Inner Grid Lines -->
     <path
-        android:fillColor="#42A5F5"
-        android:pathData="M24,38 h16 a4,4 0 0 1 4,4 v32 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-32 a4,4 0 0 1 4,-4 z" />
-        
-    <!-- Center Pillar: Twilight Purple (Transition) -->
+        android:strokeColor="#1F1F23"
+        android:strokeWidth="3"
+        android:pathData="M24,44 H84" />
     <path
-        android:fillColor="#AB47BC"
-        android:pathData="M46,28 h16 a4,4 0 0 1 4,4 v52 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-52 a4,4 0 0 1 4,-4 z" />
-        
-    <!-- Right Pillar: Dawn Pink (Warm) -->
+        android:strokeColor="#1F1F23"
+        android:strokeWidth="3"
+        android:pathData="M24,64 H84" />
     <path
-        android:fillColor="#EC407A"
-        android:pathData="M68,34 h16 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-16 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z" />
-        
+        android:strokeColor="#1F1F23"
+        android:strokeWidth="3"
+        android:pathData="M44,24 V84" />
+    <path
+        android:strokeColor="#1F1F23"
+        android:strokeWidth="3"
+        android:pathData="M64,24 V84" />
+
+    <!-- Outer Border -->
+    <path
+        android:strokeColor="#1F1F23"
+        android:strokeWidth="3"
+        android:fillColor="#00000000"
+        android:pathData="M36,24 H72 A12,12 0 0 1 84,36 V72 A12,12 0 0 1 72,84 H36 A12,12 0 0 1 24,72 V36 A12,12 0 0 1 36,24 Z" />
+
 </vector>

@@ -1,5 +1,12 @@
 package com.dawncourse.feature.import_module.model
 
+import java.time.DayOfWeek
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
+import kotlin.math.ceil
+
 /**
  * 导入解析结果模型
  *
@@ -79,42 +86,86 @@ data class IcsEvent(
     val summary: String,
     val location: String,
     val description: String,
-    val start: java.time.LocalDateTime,
-    val end: java.time.LocalDateTime?,
+    val start: LocalDateTime,
+    val end: LocalDateTime?,
     val rrule: String?,
-    val rdates: List<java.time.LocalDateTime>,
-    val exdates: List<java.time.LocalDateTime>
+    val rdates: List<LocalDateTime>,
+    val exdates: List<LocalDateTime>
 )
 
 fun parseIcsToParsedCourses(raw: String): List<ParsedCourse> {
     val events = parseIcsEvents(raw)
     if (events.isEmpty()) return emptyList()
+    
+    // 找出最早的日期作为基准周的开始
+    // 这里假设所有课程都在同一个学期内，取最早的一个作为开学第一周的参考
+    // 注意：有些日历可能会导出几年前的数据，这里应该过滤一下异常值，但暂时假设用户导入的是当前学期的 ICS
     val allDates = events.flatMap { event ->
         expandIcsOccurrences(event)
     }.map { it.toLocalDate() }
+    
     if (allDates.isEmpty()) return emptyList()
-    // allDates 已判空，但仍避免使用非空断言，保证在异常数据下也不会崩溃。
+    
+    // 找到所有事件中最早的一天，并定位到该周的周一作为 "基准周" (Week 1) 的开始
     val baseWeekStart = allDates.minOrNull()
-        ?.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        ?.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         ?: return emptyList()
+        
     val parsedCourses = mutableListOf<ParsedCourse>()
+    
     for (event in events) {
         val occurrences = expandIcsOccurrences(event)
         if (occurrences.isEmpty()) continue
+        
+        // 按星期几分组处理，因为同一个 RRULE 可能包含多个 BYDAY (e.g. MO,WE)
+        // 它们在逻辑上应该是分开的课程记录
         val occurrencesByDay = occurrences.groupBy { it.dayOfWeek.value }
+        
         val sectionRange = calculateSectionRange(event.start, event.end)
+        
+        // 尝试从 Summary 或 Description 中提取更多信息
+        var teacher = extractTeacher(event.description)
+        var name = unescapeIcsText(event.summary)
+        
+        // 如果没有提取到老师，尝试从 Summary 分割 (e.g. "高等数学 - 张三")
+        if (teacher.isBlank() && name.contains("-")) {
+            val parts = name.split("-")
+            if (parts.size >= 2) {
+                name = parts[0].trim()
+                teacher = parts[1].trim()
+            }
+        } else if (teacher.isBlank() && name.contains(" ")) {
+             // 尝试空格分割 (e.g. "高等数学 张三")
+             val parts = name.split(" ")
+             if (parts.size >= 2) {
+                 // 简单的启发式：假设后面较短的是名字
+                 val last = parts.last()
+                 if (last.length in 2..4) {
+                     teacher = last
+                     name = parts.dropLast(1).joinToString(" ")
+                 }
+             }
+        }
+        
         for ((dayOfWeek, dayOccurrences) in occurrencesByDay) {
+            // 计算这些发生日期对应的周次 (相对于 baseWeekStart)
             val weeks = dayOccurrences.map { occurrence ->
-                val weekStart = occurrence.toLocalDate().with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
-                (java.time.temporal.ChronoUnit.WEEKS.between(baseWeekStart, weekStart) + 1).toInt()
-            }.distinct().sorted()
+                val weekStart = occurrence.toLocalDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                // 计算相差的周数 + 1
+                (ChronoUnit.WEEKS.between(baseWeekStart, weekStart) + 1).toInt()
+            }.distinct().sorted().filter { it > 0 } // 过滤掉负数周次（如果有的话）
+            
+            if (weeks.isEmpty()) continue
+            
+            // 将离散的周次合并为区间 (e.g. 1-16, 1-15单)
             val weekRanges = splitWeeks(weeks)
+            
             for (weekRange in weekRanges) {
                 parsedCourses.add(
                     ParsedCourse(
-                        name = event.summary,
-                        teacher = extractTeacher(event.description),
-                        location = event.location,
+                        name = name,
+                        teacher = teacher,
+                        location = unescapeIcsText(event.location),
                         dayOfWeek = dayOfWeek,
                         startSection = sectionRange.startSection,
                         duration = sectionRange.duration,
@@ -421,10 +472,18 @@ private fun parseIcsEvents(raw: String): List<IcsEvent> {
             continue
         }
         val map = current ?: continue
+        
+        // 兼容带参数的 key，例如 DTSTART;TZID=Asia/Shanghai:20230904T080000
         val parts = line.split(":", limit = 2)
         if (parts.size < 2) continue
-        val key = parts[0].substringBefore(";").uppercase()
+        
+        // 只取 key 的第一部分作为主键 (忽略参数)
+        val fullKey = parts[0]
+        val key = fullKey.substringBefore(";").uppercase()
         val value = parts[1]
+        
+        // 特殊处理：如果是 RDATE 或 EXDATE，可能有多个值，或者多行
+        // 这里简化处理，直接存入 list
         map.getOrPut(key) { mutableListOf() }.add(value)
     }
     return events
@@ -435,12 +494,15 @@ private fun buildIcsEvent(map: Map<String, List<String>>): IcsEvent? {
     val start = parseIcsDateTime(dtStartRaw) ?: return null
     val end = map["DTEND"]?.firstOrNull()?.let { parseIcsDateTime(it) }
     val rrule = map["RRULE"]?.firstOrNull()
+    
+    // RDATE 和 EXDATE 可能有多个，且每个可能包含多个逗号分隔的时间
     val rdates = map["RDATE"].orEmpty().flatMap { value ->
         value.split(",").mapNotNull { parseIcsDateTime(it.trim()) }
     }
     val exdates = map["EXDATE"].orEmpty().flatMap { value ->
         value.split(",").mapNotNull { parseIcsDateTime(it.trim()) }
     }
+    
     return IcsEvent(
         summary = map["SUMMARY"]?.firstOrNull().orEmpty(),
         location = map["LOCATION"]?.firstOrNull().orEmpty(),
@@ -453,110 +515,224 @@ private fun buildIcsEvent(map: Map<String, List<String>>): IcsEvent? {
     )
 }
 
+/**
+ * 反折叠 ICS 行
+ * 
+ * ICS 规范：如果一行以空格或 tab 开头，则是上一行的续行。
+ */
 private fun unfoldIcsLines(raw: String): List<String> {
     val normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
     val result = mutableListOf<String>()
     for (line in normalized.split("\n")) {
+        if (line.isEmpty()) continue
         if (line.startsWith(" ") || line.startsWith("\t")) {
             val lastIndex = result.lastIndex
             if (lastIndex >= 0) {
-                result[lastIndex] = result[lastIndex] + line.trimStart()
+                result[lastIndex] = result[lastIndex] + line.trimStart() // 移除开头的空格/tab
             }
-        } else if (line.isNotBlank()) {
-            result.add(line.trimEnd())
+        } else {
+            result.add(line)
         }
     }
     return result
 }
 
-private fun parseIcsDateTime(value: String): java.time.LocalDateTime? {
+/**
+ * 反转义 ICS 文本
+ *
+ * 替换 \\n, \\, \\;, \\\\ 等
+ */
+private fun unescapeIcsText(text: String): String {
+    return text.replace("\\n", "\n")
+        .replace("\\N", "\n")
+        .replace("\\,", ",")
+        .replace("\\;", ";")
+        .replace("\\\\", "\\")
+}
+
+/**
+ * 解析 ICS 时间字符串
+ *
+ * 支持格式：
+ * 1. yyyyMMdd (全天 -> 00:00:00)
+ * 2. yyyyMMddTHHmmss
+ * 3. yyyyMMddTHHmmssZ (UTC -> 转 Local)
+ * 4. yyyyMMddTHHmm
+ */
+private fun parseIcsDateTime(value: String): LocalDateTime? {
     val raw = value.trim()
-    return when {
-        raw.length == 8 -> {
-            val date = java.time.LocalDate.parse(raw, java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"))
-            date.atStartOfDay()
+    return try {
+        when {
+            // yyyyMMdd (8 chars)
+            raw.length == 8 && raw.all { it.isDigit() } -> {
+                val date = java.time.LocalDate.parse(raw, DateTimeFormatter.ofPattern("yyyyMMdd"))
+                date.atStartOfDay()
+            }
+            // yyyyMMddTHHmmssZ (16 chars, ends with Z)
+            raw.endsWith("Z") -> {
+                // 暂时忽略时区，直接当做本地时间处理，或者转为 LocalTime
+                // 严谨做法是 OffsetDateTime -> LocalDateTime (in system default zone)
+                // 这里为了课程表的直观性，直接取年月日时分秒部分，假设用户就是指当地时间
+                // (因为 OffsetDateTime.toLocalDateTime() 会保留原面值，不会自动加减时区)
+                val formatter = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
+                LocalDateTime.parse(raw, formatter)
+            }
+            // yyyyMMddTHHmmss (15 chars)
+            raw.length == 15 && raw.contains("T") -> {
+                val formatter = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
+                LocalDateTime.parse(raw, formatter)
+            }
+             // yyyyMMddTHHmm (13 chars) - 部分非标准实现
+            raw.length == 13 && raw.contains("T") -> {
+                val formatter = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmm")
+                LocalDateTime.parse(raw, formatter)
+            }
+            else -> null
         }
-        raw.endsWith("Z") -> {
-            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'")
-            java.time.OffsetDateTime.parse(raw, formatter).toLocalDateTime()
-        }
-        raw.length >= 15 -> {
-            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss")
-            java.time.LocalDateTime.parse(raw.substring(0, 15), formatter)
-        }
-        else -> null
+    } catch (e: Exception) {
+        null
     }
 }
 
-private fun expandIcsOccurrences(event: IcsEvent): List<java.time.LocalDateTime> {
-    val occurrences = mutableListOf<java.time.LocalDateTime>()
-    occurrences.add(event.start)
-    occurrences.addAll(event.rdates)
-    val rule = event.rrule ?: return occurrences.filterNot { it in event.exdates }.distinct().sorted()
+/**
+ * 展开重复规则，获取所有发生的时间点
+ */
+private fun expandIcsOccurrences(event: IcsEvent): List<LocalDateTime> {
+    val occurrences = mutableListOf<LocalDateTime>()
+    occurrences.add(event.start) // 初始时间总是一个发生点
+    occurrences.addAll(event.rdates) // 额外的具体日期
+    
+    val rule = event.rrule ?: return filterExDates(occurrences, event.exdates)
+    
     val ruleParts = rule.split(";").associate {
         val pair = it.split("=")
         pair[0].uppercase() to pair.getOrElse(1) { "" }
     }
+    
+    // 目前仅严谨支持 WEEKLY，其他频率暂按单次处理 (或依赖 RDATE)
     if (ruleParts["FREQ"]?.uppercase() != "WEEKLY") {
-        return occurrences.filterNot { it in event.exdates }.distinct().sorted()
+        return filterExDates(occurrences, event.exdates)
     }
+    
     val interval = ruleParts["INTERVAL"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
     val count = ruleParts["COUNT"]?.toIntOrNull()
-    val until = ruleParts["UNTIL"]?.let { parseIcsDateTime(it) }?.toLocalDate()
-    val byDay = ruleParts["BYDAY"]?.split(",")?.mapNotNull { parseIcsByDay(it) }.orEmpty()
-    val days = if (byDay.isEmpty()) listOf(event.start.dayOfWeek) else byDay
+    val until = ruleParts["UNTIL"]?.let { parseIcsDateTime(it) } // UNTIL 是 UTC 或 Local
+    
+    // 解析 BYDAY (MO, TU, WE...)
+    val byDayRaw = ruleParts["BYDAY"]
+    val byDays = if (!byDayRaw.isNullOrBlank()) {
+        byDayRaw.split(",").mapNotNull { parseIcsByDay(it) }
+    } else {
+        listOf(event.start.dayOfWeek) // 默认是开始日期的星期
+    }
+    
     val startDate = event.start.toLocalDate()
     val startTime = event.start.toLocalTime()
-    val firstDates = days.map { day ->
-        startDate.with(java.time.temporal.TemporalAdjusters.nextOrSame(day))
+    
+    // 寻找当前周的周一作为锚点
+    val weekStart = startDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    
+    // 限制最大生成数量，防止死循环
+    val maxWeeks = 52 // 限制最多扫描 52 周
+    
+    // 策略：RFC 5545 规定 COUNT 包括初始项。简单起见，我们重新生成所有符合规则的项，然后去重
+    occurrences.clear() 
+    // 重新添加 RDATE
+    occurrences.addAll(event.rdates)
+    
+    // 遍历周
+    for (i in 0 until maxWeeks) {
+        val currentWeekStart = weekStart.plusWeeks((i * interval).toLong())
+        
+        for (day in byDays) {
+            // 计算当前周的 目标星期几
+            // 周一 + (day.value - 1) 天
+            val targetDate = currentWeekStart.plusDays((day.value - 1).toLong())
+            val targetDateTime = LocalDateTime.of(targetDate, startTime)
+            
+            // 规则：必须在 DTSTART 之后 (或相等)
+            if (targetDateTime.isBefore(event.start)) continue
+            
+            // 规则：必须在 UNTIL 之前 (或相等)
+            if (until != null) {
+                // 优化：如果 UNTIL 是 00:00:00，则将其视为当天的 23:59:59 (即包含当天所有课程)
+                // 这是为了解决时区差异 (UTC 00:00) 导致本地课程 (e.g. 08:00) 被误过滤的问题
+                val adjustedUntil = if (until.hour == 0 && until.minute == 0 && until.second == 0) {
+                    until.withHour(23).withMinute(59).withSecond(59)
+                } else {
+                    until
+                }
+                
+                if (targetDateTime.isAfter(adjustedUntil)) {
+                    return filterExDates(occurrences, event.exdates)
+                }
+            }
+            
+            occurrences.add(targetDateTime)
+            
+            // 规则：COUNT 限制
+            if (count != null && occurrences.distinct().size >= count) {
+                return filterExDates(occurrences, event.exdates)
+            }
+        } 
     }
-    val maxCount = count ?: 60
-    var weekIndex = 0
-    while (occurrences.size < maxCount && weekIndex < 200) {
-        for (date in firstDates) {
-            val occurrenceDate = date.plusWeeks((weekIndex * interval).toLong())
-            if (until != null && occurrenceDate.isAfter(until)) continue
-            occurrences.add(java.time.LocalDateTime.of(occurrenceDate, startTime))
-            if (occurrences.size >= maxCount) break
-        }
-        if (until != null && firstDates.all { it.plusWeeks((weekIndex * interval).toLong()).isAfter(until) }) break
-        weekIndex++
-    }
-    return occurrences.filterNot { it in event.exdates }.distinct().sorted()
+    
+    return filterExDates(occurrences, event.exdates)
 }
 
-private fun parseIcsByDay(value: String): java.time.DayOfWeek? {
-    return when (value.trim().uppercase()) {
-        "MO" -> java.time.DayOfWeek.MONDAY
-        "TU" -> java.time.DayOfWeek.TUESDAY
-        "WE" -> java.time.DayOfWeek.WEDNESDAY
-        "TH" -> java.time.DayOfWeek.THURSDAY
-        "FR" -> java.time.DayOfWeek.FRIDAY
-        "SA" -> java.time.DayOfWeek.SATURDAY
-        "SU" -> java.time.DayOfWeek.SUNDAY
+private fun filterExDates(occurrences: MutableList<LocalDateTime>, exdates: List<LocalDateTime>): List<LocalDateTime> {
+    return occurrences.filterNot { occ -> 
+        exdates.any { ex -> ex.isEqual(occ) } 
+    }.distinct().sorted()
+}
+
+private fun parseIcsByDay(value: String): DayOfWeek? {
+    // BYDAY=2MO (第二个周一) 这种暂不支持，只支持标准 MO, TU...
+    // 只要取最后两个字符即可
+    val code = value.trim().takeLast(2).uppercase()
+    return when (code) {
+        "MO" -> DayOfWeek.MONDAY
+        "TU" -> DayOfWeek.TUESDAY
+        "WE" -> DayOfWeek.WEDNESDAY
+        "TH" -> DayOfWeek.THURSDAY
+        "FR" -> DayOfWeek.FRIDAY
+        "SA" -> DayOfWeek.SATURDAY
+        "SU" -> DayOfWeek.SUNDAY
         else -> null
     }
 }
 
 private fun calculateSectionRange(
-    start: java.time.LocalDateTime,
-    end: java.time.LocalDateTime?
+    start: LocalDateTime,
+    end: LocalDateTime?
 ): SectionRange {
     val startMinutes = start.hour * 60 + start.minute
+    
+    // 更加通用的节次推断逻辑
+    // 假设常见的上课时间段
+    // 08:00 - 12:00 -> 1-4 节 (每节 45-50 分钟)
+    // 14:00 - 18:00 -> 5-8 节
+    // 19:00 - 22:00 -> 9-12 节
+    
     val (baseMinutes, baseSlot) = when {
-        start.hour < 12 -> (8 * 60) to 1
-        start.hour < 18 -> (14 * 60) to 5
-        else -> (19 * 60) to 9
+        start.hour < 13 -> (8 * 60) to 1  // 上午课，基准 8:00 是第 1 节
+        start.hour < 18 -> (14 * 60) to 5 // 下午课，基准 14:00 是第 5 节
+        else -> (19 * 60) to 9            // 晚课，基准 19:00 是第 9 节
     }
 
     val diff = startMinutes - baseMinutes
+    // 粗略估算：每 45-55 分钟算一节课的偏移
+    // 比如 8:00 -> diff 0 -> offset 0
+    // 8:50 -> diff 50 -> offset 1
+    // 10:00 -> diff 120 -> offset 2
     val offset = (diff / 45).coerceAtLeast(0)
     val sectionIndex = baseSlot + offset
 
     val duration = if (end != null) {
         val endMinutes = end.hour * 60 + end.minute + if (end.toLocalDate().isAfter(start.toLocalDate())) 24 * 60 else 0
         val durationMinutes = (endMinutes - startMinutes).coerceAtLeast(1)
-        kotlin.math.ceil(durationMinutes / 45.0).toInt().coerceAtLeast(1)
+        // 向上取整，每 45 分钟算一节
+        ceil(durationMinutes / 40.0).toInt().coerceAtLeast(1)
     } else {
         1
     }
@@ -565,17 +741,22 @@ private fun calculateSectionRange(
 
 private fun extractTeacher(description: String): String {
     if (description.isBlank()) return ""
-    val lines = description.split("\\n", "\\\\n")
-    val keywords = listOf("老师", "教师", "授课", "任课")
+    val unescaped = unescapeIcsText(description)
+    val lines = unescaped.split("\n")
+    
+    // 常见的包含老师信息的关键字
+    val keywords = listOf("老师", "教师", "授课", "任课", "Teacher", "Instructor")
+    
     for (line in lines) {
         val trimmed = line.trim()
-        if (keywords.any { trimmed.contains(it) }) {
-            var name = trimmed.replace("老师", "")
-                .replace("教师", "")
-                .replace("授课", "")
-                .replace("任课", "")
-                .replace(":", "")
+        if (keywords.any { trimmed.contains(it, ignoreCase = true) }) {
+            var name = trimmed
+            keywords.forEach { k -> 
+                name = name.replace(k, "", ignoreCase = true)
+            }
+            name = name.replace(":", "")
                 .replace("：", "")
+                .trim()
             
             // 使用正则去除 (xxx)、[xxx]、(xxx) 等后缀
             val regex = Regex("[\\(\\[（].*?[\\)\\]）]")
@@ -584,5 +765,8 @@ private fun extractTeacher(description: String): String {
             return name.trim()
         }
     }
+    
+    // 如果没有关键字，尝试找一些很短的行，且不是 URL，不是地点
+    // 这是一个弱 heuristic，暂时不启用，以免误判
     return ""
 }

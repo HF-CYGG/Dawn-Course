@@ -8,8 +8,11 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
+import com.dawncourse.feature.import_module.model.SectionRange
+import com.dawncourse.feature.import_module.model.XiaoaiCourse
 import com.dawncourse.feature.import_module.model.convertXiaoaiCoursesToParsedCourses
 import com.dawncourse.feature.import_module.model.parseIcsToParsedCourses
 import com.dawncourse.feature.import_module.model.parseParsedCoursesFromRaw
@@ -25,6 +28,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
+import java.net.URI
+import java.net.URLEncoder
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -108,6 +114,7 @@ sealed interface ImportEvent {
 class ImportViewModel @Inject constructor(
     private val application: Application,
     private val scriptEngine: ScriptEngine,
+    private val qiangZhiApiEngine: QiangZhiApiEngine,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
     private val settingsRepository: SettingsRepository
@@ -282,9 +289,20 @@ class ImportViewModel @Inject constructor(
                     var hasParserCrash = false
                     var hasAnyParserAttempt = false
 
-                    // 0. 特殊处理：检测是否为强智直连数据
+                    // 当前 WebView URL，用于判断是否为强智教务系统
+                    val currentUrl = _uiState.value.webUrl
+
+                    // 0.1 优先尝试：若为强智教务系统，使用 Kotlin + Jsoup 解析 HTML
+                    if (qiangZhiApiEngine.isQiangZhiHost(currentUrl)) {
+                        val qiangZhiCourses = qiangZhiApiEngine.parseHtmlWithJsoup(raw)
+                        if (qiangZhiCourses.isNotEmpty()) {
+                            return@withContext qiangZhiCourses
+                        }
+                    }
+
+                    // 0.2 特殊处理：检测是否为强智直连 JSON 数据
                     if (raw.contains("qiangzhi_direct")) {
-                        return@withContext parseQiangZhiJson(raw)
+                        return@withContext qiangZhiApiEngine.parseJson(raw)
                     }
 
                     // 1. 尝试作为 JSON 解析
@@ -294,15 +312,28 @@ class ImportViewModel @Inject constructor(
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
                     
-                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试正方、青果等脚本)
+                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试强智、正方、青果等脚本)
                     if (courses.isEmpty()) {
-                        val parsers = listOf("parsers/zhengfang.js", "parsers/kingosoft.js")
+                        val parsers = listOf("parsers/qiangzhi.js", "parsers/zhengfang.js", "parsers/kingosoft.js")
+                        // 加载通用工具库
+                        val commonUtils = try {
+                            application.assets.open("parsers/common_parser_utils.js").bufferedReader().use { it.readText() }
+                        } catch (e: Exception) {
+                            "" // 理论上不应发生
+                        }
+
                         for (parserPath in parsers) {
                             hasAnyParserAttempt = true
                             try {
                                 // 加载解析脚本
                                 val script = application.assets.open(parserPath).bufferedReader().use { it.readText() }
-                                val jsonResult = scriptEngine.parseHtml(script, raw)
+                                // 拼接通用工具库和具体解析脚本
+                                val fullScript = if (commonUtils.isNotEmpty()) {
+                                    "$commonUtils\n$script"
+                                } else {
+                                    script
+                                }
+                                val jsonResult = scriptEngine.parseHtml(fullScript, raw)
                                 val xiaoai = parseXiaoaiProviderResult(jsonResult)
                                 val result = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                                 
@@ -341,12 +372,14 @@ class ImportViewModel @Inject constructor(
                         settingsRepository.setLastImportUrl(lastUrl)
                     }
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         )
                     }
@@ -405,13 +438,15 @@ class ImportViewModel @Inject constructor(
                     }
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
                     _uiState.update { 
                         it.copy(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek, // 自动设置学期总周数
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "成功解析 ${parsed.size} 个课程段"
                         ) 
                     }
@@ -435,6 +470,47 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
+     * 根据当前设置生成默认作息时间表
+     */
+    private fun generateDefaultSectionTimes(state: ImportUiState, maxSection: Int): List<SectionTime> {
+        val generatedTimes = mutableListOf<SectionTime>()
+        val formatter = DateTimeFormatter.ofPattern("HH:mm")
+
+        for (i in 1..maxSection) {
+            val startTime = when (i) {
+                1 -> state.amStartTime
+                state.pmStartSection -> state.pmStartTime
+                state.eveStartSection -> state.eveStartTime
+                else -> {
+                    // 计算当前节次的开始时间：上一节结束时间 + 课间休息
+                    val prevEnd = if (generatedTimes.isNotEmpty()) {
+                        LocalTime.parse(generatedTimes.last().endTime, formatter)
+                    } else {
+                        // 防御性代码，理论上不应发生（除非 maxSection < 1 但循环进来了，或者 i=1 没匹配到）
+                        // 如果 i != 1 但 generatedTimes 为空，说明 pmStartSection/eveStartSection 设置有问题导致跳过了前面的节次？
+                        // 简单起见，如果为空则回退到 amStartTime
+                        state.amStartTime
+                    }
+                    
+                    val prevSectionIndex = i - 1
+                    // 判断是否为大课间 (例如第2节后、第4节后)
+                    val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
+                    val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
+                    prevEnd.plusMinutes(gap.toLong())
+                }
+            }
+            val endTime = startTime.plusMinutes(state.courseDuration.toLong())
+            generatedTimes.add(
+                SectionTime(
+                    startTime = startTime.format(formatter),
+                    endTime = endTime.format(formatter)
+                )
+            )
+        }
+        return generatedTimes
+    }
+
+    /**
      * 确认导入
      *
      * 将解析后的课程数据、学期设置和时间表设置保存到数据库。
@@ -454,41 +530,11 @@ class ImportViewModel @Inject constructor(
                 // 1. 更新全局时间设置
                 settingsRepository.setMaxDailySections(state.detectedMaxSection)
                 
-                // 1.1 自动生成作息时间表
-                val generatedTimes = mutableListOf<SectionTime>()
-                val formatter = DateTimeFormatter.ofPattern("HH:mm")
-                
-                for (i in 1..state.detectedMaxSection) {
-                    val startTime = when (i) {
-                        1 -> state.amStartTime
-                        state.pmStartSection -> state.pmStartTime
-                        state.eveStartSection -> state.eveStartTime
-                        else -> {
-                            // 计算当前节次的开始时间：上一节结束时间 + 课间休息
-                            val prevEnd = LocalTime.parse(generatedTimes.last().endTime, formatter)
-                            val prevSectionIndex = i - 1
-                            // 判断是否为大课间 (例如第2节后、第4节后)
-                            val isBigBreak = (prevSectionIndex % state.sectionsPerBigSection == 0)
-                            val gap = if (isBigBreak) state.bigBreakDuration else state.breakDuration
-                            prevEnd.plusMinutes(gap.toLong())
-                        }
-                    }
-                    val endTime = startTime.plusMinutes(state.courseDuration.toLong())
-                    generatedTimes.add(
-                        SectionTime(
-                            startTime = startTime.format(formatter),
-                            endTime = endTime.format(formatter)
-                        )
-                    )
-                }
-
-                // 合并用户手动修改的时间和自动生成的时间
+                // 1.1 使用当前状态中的作息时间表（如果为空则重新生成默认值作为兜底）
                 val finalTimes = if (state.sectionTimes.isNotEmpty()) {
-                    (1..state.detectedMaxSection).map { index ->
-                        state.sectionTimes.getOrNull(index - 1) ?: generatedTimes[index - 1]
-                    }
+                    state.sectionTimes
                 } else {
-                    generatedTimes
+                    generateDefaultSectionTimes(state, state.detectedMaxSection)
                 }
                 settingsRepository.setSectionTimes(finalTimes)
                 
@@ -569,6 +615,102 @@ class ImportViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(resultText = "ICS 解析失败: ${e.message}", isLoading = false) }
+            }
+        }
+    }
+
+    /**
+     * 运行强智 API 导入
+     *
+     * 使用学号与密码获取 token，再根据学年与周次拉取课表。
+     *
+     * @param baseUrl 教务系统基础地址，例如 https://jwxt.xxx.edu.cn
+     * @param studentId 学号
+     * @param password 密码
+     * @param totalWeeks 学期总周数
+     */
+    fun runQiangZhiApiImport(
+        baseUrl: String,
+        studentId: String,
+        password: String,
+        totalWeeks: Int
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, resultText = "正在连接强智教务系统...") }
+            try {
+                var importSource = "API"
+                val parsedCourses = withContext(Dispatchers.IO) {
+                    val normalizedBaseUrl = qiangZhiApiEngine.normalizeBaseUrl(baseUrl)
+                    if (normalizedBaseUrl.isBlank()) {
+                        throw Exception("教务系统地址不正确")
+                    }
+                    if (studentId.isBlank() || password.isBlank()) {
+                        throw Exception("学号或密码不能为空")
+                    }
+
+                    try {
+                        // 1. 尝试标准 API 导入
+                        val token = qiangZhiApiEngine.authUser(normalizedBaseUrl, studentId, password)
+                        val currentInfo = qiangZhiApiEngine.getCurrentTime(normalizedBaseUrl, token)
+                        val xnxqh = currentInfo.optString("xnxqh")
+                        if (xnxqh.isBlank()) {
+                            throw Exception("无法获取学年学期信息")
+                        }
+                        val targetWeeks = totalWeeks.coerceIn(1, 30)
+                        val allCourses = mutableListOf<XiaoaiCourse>()
+                        for (week in 1..targetWeeks) {
+                            val weekArray = qiangZhiApiEngine.getCourseArray(
+                                baseUrl = normalizedBaseUrl,
+                                token = token,
+                                studentId = studentId,
+                                xnxqh = xnxqh,
+                                week = week
+                            )
+                            allCourses.addAll(qiangZhiApiEngine.parseApiCourses(weekArray))
+                        }
+                        val merged = qiangZhiApiEngine.mergeCourses(allCourses)
+                        convertXiaoaiCoursesToParsedCourses(merged)
+                    } catch (apiError: Exception) {
+                        // 2. API 失败时，尝试 Web 模拟登录兜底
+                        val msg = apiError.message ?: ""
+                        val shouldFallback = msg.contains("登录状态已过期") ||
+                            msg.contains("API 接口返回了网页") ||
+                            msg.contains("网页导入") ||
+                            msg.contains("未开放移动端") ||
+                            msg.contains("防火墙") ||
+                            msg.contains("HTTP Error 404") ||
+                            msg.contains("HTTP Error 500")
+                        if (shouldFallback) {
+                             // 仅在明确是 API 不可用或返回 HTML 时尝试 Web 导入
+                             val cookie = qiangZhiApiEngine.loginWeb(normalizedBaseUrl, studentId, password)
+                             val html = qiangZhiApiEngine.fetchHtmlTimetable(normalizedBaseUrl, cookie)
+                             // parseHtmlWithJsoup 直接返回 List<ParsedCourse>，无需转换
+                             importSource = "Web"
+                             return@withContext qiangZhiApiEngine.parseHtmlWithJsoup(html)
+                        }
+                        throw apiError // 如果不是特定错误，或者 Web 导入也未执行，抛出原异常
+                    }
+                }
+                if (parsedCourses.isEmpty()) {
+                    _uiState.update { it.copy(isLoading = false, resultText = "未找到课程数据") }
+                } else {
+                    val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
+                    val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = parsedCourses,
+                            step = ImportStep.Review,
+                            detectedMaxSection = safeMaxSection,
+                            weekCount = maxWeek,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
+                            resultText = "强智 $importSource 导入成功: ${parsedCourses.size} 个课程段"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = "强智 API 导入失败: ${e.message}") }
             }
         }
     }
@@ -673,13 +815,15 @@ class ImportViewModel @Inject constructor(
                 } else {
                      val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                      val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
+                     val safeMaxSection = maxSection.coerceAtLeast(4)
                      _uiState.update { 
                         it.copy(
                             isLoading = false, 
                             parsedCourses = parsed,
                             step = ImportStep.Review,
-                            detectedMaxSection = maxSection.coerceAtLeast(4),
+                            detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
                             resultText = "WakeUp 导入成功: ${parsed.size} 个课程段"
                         ) 
                     }
@@ -691,178 +835,10 @@ class ImportViewModel @Inject constructor(
         }
     }
 
-    /**
-     * 解析强智教务系统直连 JSON 数据
-     *
-     * 该数据由 WebView 中的 JS 脚本直接从 DOM 提取，格式为：
-     * {
-     *   "type": "qiangzhi_direct",
-     *   "data": [
-     *     { "row": 1, "col": 1, "text": "课程名..." },
-     *     ...
-     *   ]
-     * }
-     *
-     * @param json 包含强智教务系统课程数据的 JSON 字符串
-     * @return 解析后的通用课程列表 [ParsedCourse]
-     */
-    private fun parseQiangZhiJson(json: String): List<ParsedCourse> {
-        val root = org.json.JSONObject(json)
-        val data = root.optJSONArray("data") ?: return emptyList()
-        val xiaoaiCourses = mutableListOf<com.dawncourse.feature.import_module.model.XiaoaiCourse>()
 
-        for (i in 0 until data.length()) {
-            val item = data.getJSONObject(i)
-            // 强智系统的节次映射：row 1 -> 第1大节 (1-2节)
-            val row = item.optInt("row") // 1..5
-            // 强智系统的周次映射：col 1 -> 周一
-            val col = item.optInt("col") // 1..7 (Week)
-            val text = item.optString("text")
-            
-            if (text.isBlank()) continue
 
-            // 解析文本内容 (格式通常为: 课程名 教师 周次 地点)
-            val rawCourses = parseQiangZhiText(text)
-            
-            rawCourses.forEach { c ->
-                // 计算起始节次：(大节 - 1) * 2 + 1
-                // 例如：第1大节 -> 1节, 第2大节 -> 3节
-                val startSection = (row - 1) * 2 + 1
-                val sections = listOf(startSection, startSection + 1)
-                
-                // 解析周次字符串 (例如 "1-16周", "1-8,10-16周")
-                val weekList = parseWeekString(c.week)
-                
-                if (weekList.isNotEmpty()) {
-                    xiaoaiCourses.add(
-                        com.dawncourse.feature.import_module.model.XiaoaiCourse(
-                            name = c.name,
-                            teacher = c.teacher,
-                            position = c.place,
-                            day = col,
-                            weeks = weekList,
-                            sections = sections
-                        )
-                    )
-                }
-            }
-        }
-        return convertXiaoaiCoursesToParsedCourses(xiaoaiCourses)
-    }
 
-    /**
-     * 强智课程原始数据模型
-     * 用于暂存从单元格文本中解析出的单一课程信息
-     */
-    private data class QiangZhiCourseRaw(
-        var name: String = "",
-        var teacher: String = "",
-        var week: String = "",
-        var place: String = ""
-    )
 
-    /**
-     * 解析强智教务系统单元格文本
-     *
-     * 单元格文本通常包含多门课程，每门课程由 4 部分组成：
-     * 1. 课程名称
-     * 2. 教师姓名
-     * 3. 周次信息 (如 "1-16(周)")
-     * 4. 上课地点
-     *
-     * 该算法通过遍历字符并识别空白分隔符，循环提取每门课程的这 4 个字段。
-     *
-     * @param info 单元格内的完整文本内容
-     * @return 解析出的 [QiangZhiCourseRaw] 列表
-     */
-    private fun parseQiangZhiText(info: String): List<QiangZhiCourseRaw> {
-        val list = mutableListOf<QiangZhiCourseRaw>()
-        var index = 0
-        val length = info.length
-        
-        while (index < length) {
-            var segNum = 1 // 当前解析字段序号 (1:Name, 2:Teacher, 3:Week, 4:Place)
-            val infoSeg = StringBuilder()
-            val course = QiangZhiCourseRaw()
-            
-            // 循环解析一门课程的 4 个字段
-            while (segNum <= 4 && index <= length) {
-                // 读取当前字符，如果已到末尾则模拟为空格以触发结束逻辑
-                val ch = if (index == length) ' ' else info[index]
-                index++
-                
-                if (!ch.isWhitespace()) {
-                    infoSeg.append(ch)
-                } else {
-                    // 遇到空白字符，且缓冲区有内容，说明一个字段解析完成
-                    if (infoSeg.isNotEmpty()) {
-                         val strSeg = infoSeg.toString()
-                         when (segNum) {
-                             1 -> course.name = strSeg
-                             2 -> course.teacher = strSeg
-                             3 -> course.week = strSeg
-                             4 -> course.place = strSeg
-                         }
-                         segNum++
-                         infoSeg.clear()
-                    }
-                }
-            }
-            // 只有解析出课程名才视为有效课程
-            if (course.name.isNotEmpty()) {
-                list.add(course)
-            }
-        }
-        return list
-    }
-    
-    /**
-     * 解析周次字符串
-     *
-     * 支持格式：
-     * - "1-16" -> [1, 2, ..., 16]
-     * - "1-5,7-9" -> [1, 2, 3, 4, 5, 7, 8, 9]
-     * - "3" -> [3]
-     * - "1-16(周)" -> 自动忽略非数字字符
-     *
-     * @param weekStr 包含周次信息的字符串
-     * @return 周次整数列表
-     */
-    private fun parseWeekString(weekStr: String): List<Int> {
-        val weeks = mutableListOf<Int>()
-        var index = 0
-        val len = weekStr.length
-        while (index < len) {
-            // 跳过非数字字符 (如 "周", "(", "," 等)
-            while (index < len && !weekStr[index].isDigit()) {
-                index++
-            }
-            if (index >= len) break
 
-            // 提取第一个数字 (起始周或单周)
-            var l = 0
-            while (index < len && weekStr[index].isDigit()) {
-                l = l * 10 + (weekStr[index] - '0')
-                index++
-            }
-            
-            // 检查是否为区间格式 (例如 "1-16")
-            if (index < len && weekStr[index] == '-') {
-                index++
-                // 提取第二个数字 (结束周)
-                var r = 0
-                while (index < len && weekStr[index].isDigit()) {
-                    r = r * 10 + (weekStr[index] - '0')
-                    index++
-                }
-                if (r > 0) {
-                    for (i in l..r) weeks.add(i)
-                }
-            } else {
-                // 单周格式
-                if (l > 0) weeks.add(l)
-            }
-        }
-        return weeks
-    }
+
 }

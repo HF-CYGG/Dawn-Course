@@ -143,11 +143,12 @@ fun CourseDetailSheet(
                 }
                 
                 // 教师信息 (非空才显示)
-                if (course.teacher.isNotEmpty()) {
+                val teacherText = cleanTeacherText(course.teacher)
+                if (teacherText.isNotEmpty()) {
                     CourseDetailItem(
                         icon = Icons.Default.Person,
                         label = "教师",
-                        value = course.teacher,
+                        value = teacherText,
                         iconTint = themePrimary
                     )
                 }
@@ -382,6 +383,19 @@ private fun getDayText(day: Int): String {
         7 -> "日"
         else -> ""
     }
+}
+
+private fun cleanTeacherText(raw: String): String {
+    if (raw.isBlank()) return ""
+    var cleaned = raw.replace(Regex("\\s+"), " ").trim()
+    cleaned = cleaned.replace(Regex("^(教师|任课教师)\\s*[:：]?\\s*"), "")
+    val stopRegex = Regex("(教学班组成|教学班|考核方式|课程学时组成|课程学时|课程性质|课程属性|课程类别|课程类型|选课备注|备注|人数|班级组成|班级|课序号|课程号|课程代码|开课单位|上课对象|授课对象|授课形式)")
+    val match = stopRegex.find(cleaned)
+    if (match != null && match.range.first > 0) {
+        cleaned = cleaned.substring(0, match.range.first).trim()
+    }
+    cleaned = cleaned.trimEnd { it == '，' || it == ',' || it == ';' || it == '；' || it == '/' }
+    return cleaned
 }
 
 /**

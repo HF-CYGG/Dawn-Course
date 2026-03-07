@@ -2,13 +2,32 @@ name: Android CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'deps.txt'
+      - 'scripts/**'
   pull_request:
-    branches: [ "**" ]
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'deps.txt'
+      - 'scripts/**'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
 
     steps:
     - uses: actions/checkout@v4
