@@ -2,6 +2,7 @@ package com.dawncourse.feature.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -21,16 +22,17 @@ fun PreferenceCategory(
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
         )
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.medium,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 content()
             }
         }
