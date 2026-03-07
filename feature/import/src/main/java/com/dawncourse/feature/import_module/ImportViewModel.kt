@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -124,6 +125,12 @@ class ImportViewModel @Inject constructor(
         val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val timestamp = monday.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         _uiState.update { it.copy(semesterStartDate = timestamp) }
+        viewModelScope.launch {
+            val lastImportUrl = settingsRepository.settings.first().lastImportUrl
+            if (!lastImportUrl.isNullOrBlank()) {
+                _uiState.update { it.copy(webUrl = lastImportUrl) }
+            }
+        }
     }
 
     /**
@@ -329,6 +336,10 @@ class ImportViewModel @Inject constructor(
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
                 } else {
+                    val lastUrl = _uiState.value.webUrl
+                    if (lastUrl.isNotBlank()) {
+                        settingsRepository.setLastImportUrl(lastUrl)
+                    }
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     _uiState.update {
                         it.copy(
@@ -388,6 +399,10 @@ class ImportViewModel @Inject constructor(
                 if (parsed.isEmpty()) {
                     _uiState.update { it.copy(isLoading = false, resultText = "解析完成，但未发现课程。请确认页面是否正确。") }
                 } else {
+                    val lastUrl = _uiState.value.webUrl
+                    if (lastUrl.isNotBlank()) {
+                        settingsRepository.setLastImportUrl(lastUrl)
+                    }
                     val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
                     val maxWeek = parsed.maxOfOrNull { it.endWeek } ?: 20
                     _uiState.update { 

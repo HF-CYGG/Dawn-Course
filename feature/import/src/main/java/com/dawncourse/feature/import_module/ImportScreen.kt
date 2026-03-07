@@ -560,6 +560,12 @@ private fun WebViewStep(
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
 
+    LaunchedEffect(uiState.webUrl) {
+        if (uiState.webUrl.isNotBlank() && uiState.webUrl != inputUrl) {
+            inputUrl = uiState.webUrl
+        }
+    }
+
     fun configureWebViewSecurity(targetWebView: WebView) {
         // Explicitly disallow access to content:// URLs to avoid exposing sensitive data
         val settings = targetWebView.settings
@@ -707,14 +713,20 @@ private fun WebViewStep(
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
                             isLoading = true
-                            url?.let { inputUrl = it }
+                            url?.let {
+                                inputUrl = it
+                                viewModel.updateWebUrl(it)
+                            }
                         }
                         
                         
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
                             isLoading = false
-                            url?.let { inputUrl = it }
+                            url?.let {
+                                inputUrl = it
+                                viewModel.updateWebUrl(it)
+                            }
                         }
                     }
                     if (uiState.webUrl.isNotBlank()) {

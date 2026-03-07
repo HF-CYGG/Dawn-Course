@@ -254,6 +254,13 @@ interface SettingsRepository {
     suspend fun setIgnoredUpdateVersion(versionCode: Int)
     
     /**
+     * 设置上次成功网页提取的地址
+     *
+     * @param url 网页地址
+     */
+    suspend fun setLastImportUrl(url: String)
+
+    /**
      * 设置模糊处理后的壁纸 URI
      *
      * @param uri URI 字符串
