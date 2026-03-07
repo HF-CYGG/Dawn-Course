@@ -18,6 +18,18 @@ function scheduleHtmlParser(html) {
     return JSON.stringify(courses);
 }
 
+function cleanTeacherText(text) {
+    if (!text) return "";
+    var cleaned = text.replace(/\s+/g, " ").trim();
+    var stopRegex = /(教学班组成|教学班|考核方式|课程学时组成|课程学时|课程性质|课程属性|课程类别|课程类型|选课备注|备注|人数|班级组成|班级|课序号|课程号|课程代码|开课单位|上课对象|授课对象|授课形式)/;
+    var stopIndex = cleaned.search(stopRegex);
+    if (stopIndex > 0) {
+        cleaned = cleaned.substring(0, stopIndex).trim();
+    }
+    cleaned = cleaned.replace(/[，,;；/]+$/g, "").trim();
+    return cleaned;
+}
+
 /**
  * 新正方/强智教务系统解析逻辑
  */
@@ -101,6 +113,7 @@ function parseNewZhengfang(html) {
                     sectionsStr = extractSectionsStr(text);
                 }
             }
+            teacher = cleanTeacherText(teacher);
 
             if (name && weeksStr && sectionsStr) {
                 var weeks = parseWeeks(weeksStr);
@@ -158,6 +171,7 @@ function parseNewZhengfang(html) {
         if (!listWeeksStr && listTimeText) {
             listWeeksStr = extractWeeksStr(listTimeText);
         }
+        listTeacher = cleanTeacherText(listTeacher);
         if (listName && listWeeksStr && listSectionsStr) {
             var listWeeks = parseWeeks(listWeeksStr);
             var listSections = parseSections(listSectionsStr);
