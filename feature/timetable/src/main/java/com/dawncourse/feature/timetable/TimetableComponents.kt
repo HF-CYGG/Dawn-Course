@@ -649,6 +649,7 @@ fun CourseCard(
             .then(borderModifier) // 应用边框
             .clickable(onClick = onClick)
     ) {
+        val cardMaxHeight = maxHeight
         // 宽度检测：如果宽度小于 30dp，则隐藏详细信息以避免拥挤
         val showDetails = maxWidth >= 30.dp && isCurrentWeek
 
@@ -658,16 +659,18 @@ fun CourseCard(
                 .padding(horizontal = 6.dp, vertical = 8.dp), // 内部间距
             verticalArrangement = if (showDetails) Arrangement.SpaceBetween else Arrangement.Center // 根据内容量决定对齐方式
         ) {
+            val nameMaxHeight = cardMaxHeight / 2
             // 1. 课程名
             Text(
                 text = course.name,
+                modifier = Modifier.heightIn(max = nameMaxHeight),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 14.sp, // 稍微紧凑一点
                     color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
                 ),
-                maxLines = Int.MAX_VALUE,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis
             )
             
