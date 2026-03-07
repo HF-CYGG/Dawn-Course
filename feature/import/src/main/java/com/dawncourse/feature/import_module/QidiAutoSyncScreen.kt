@@ -677,6 +677,7 @@ fun QidiAutoSyncScreen(
         }
     }
 }
+}
 
 @Composable
 private fun CaptchaImage(url: String) {
@@ -943,5 +944,4 @@ class QidiSyncViewModel @Inject constructor(
         courseRepository.insertCourses(domainCourses)
         return domainCourses.size
     }
-}
 }
