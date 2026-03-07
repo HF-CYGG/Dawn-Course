@@ -313,10 +313,12 @@ fun WeekHeader(
 
                     // 日期显示 (例如 09.01)
                     if (settings.showDateInHeader && semesterStartDate != null) {
-                        // 修复：确保基准日期是该学期第一周的周一
-                        // 即使学期开始日期设置的是周三，第一周的周一也应该是该周的周一，而不是周三
-                        val firstMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                        val date = firstMonday.plusWeeks((displayedWeek - 1).toLong())
+                        val baseMonday = if (isCurrentWeek && LocalDate.now().isBefore(semesterStartDate)) {
+                            LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                        } else {
+                            semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                        }
+                        val date = baseMonday.plusWeeks((displayedWeek - 1).toLong())
                             .plusDays(index.toLong())
                         val dateText = "${date.monthValue}.${date.dayOfMonth}"
                         
