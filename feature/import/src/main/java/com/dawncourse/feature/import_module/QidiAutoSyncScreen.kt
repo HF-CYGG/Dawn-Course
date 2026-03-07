@@ -9,12 +9,14 @@ import android.webkit.URLUtil
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -38,6 +40,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -239,36 +242,40 @@ fun QidiAutoSyncScreen(
                 }
             }
         }
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = subTitle, style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = addressBar,
-                    onValueChange = { addressBar = it },
-                    label = { Text("网址") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedButton(onClick = {
-                    val wv = webView ?: return@OutlinedButton
-                    val url = normalizeEndpointForLoad(addressBar)
-                    if (url.isNullOrBlank()) {
-                        subTitle = "请输入有效网址"
-                        addLog("输入的地址无效：$addressBar")
-                        return@OutlinedButton
-                    }
-                    addressBar = url
-                    wv.loadUrl(url)
-                    addLog("手动前往地址：$url")
-                }) { Text("前往") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(text = subTitle, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = addressBar,
+                        onValueChange = { addressBar = it },
+                        label = { Text("网址") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedButton(onClick = {
+                        val wv = webView ?: return@OutlinedButton
+                        val url = normalizeEndpointForLoad(addressBar)
+                        if (url.isNullOrBlank()) {
+                            subTitle = "请输入有效网址"
+                            addLog("输入的地址无效：$addressBar")
+                            return@OutlinedButton
+                        }
+                        addressBar = url
+                        wv.loadUrl(url)
+                        addLog("手动前往地址：$url")
+                    }) { Text("前往") }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.OutlinedTextField(
                     value = targetYear,
                     onValueChange = { targetYear = it },
@@ -520,21 +527,27 @@ fun QidiAutoSyncScreen(
                                             });
                                           }
                                           async function openZfTimetableAndQuery(){
-                                            // 1) 若当前已在课表页，直接进行查询
                                             if(document.querySelector('#ylkbTable') || document.querySelector('#ajaxForm')){
-                                              // 继续走查询按钮，提高成功率
                                             }else{
-                                              // 2) 导航到“信息查询 -> 个人课表查询”
-                                              var link = Array.from(document.querySelectorAll('a')).find(a=>{
-                                                var href=(a.getAttribute('href')||'').toLowerCase();
-                                                var txt=(a.textContent||'').trim();
-                                                return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
-                                              });
-                                              if(link){ link.click(); }
+                                              var navLink = (function(){
+                                                try{
+                                                  var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                                                  if(r && r.singleNodeValue){ return r.singleNodeValue; }
+                                                }catch(e){}
+                                                return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
+                                              })();
+                                              if(navLink){ navLink.click(); }
+                                              if(!navLink){
+                                                var link = Array.from(document.querySelectorAll('a')).find(a=>{
+                                                  var href=(a.getAttribute('href')||'').toLowerCase();
+                                                  var txt=(a.textContent||'').trim();
+                                                  return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
+                                                });
+                                                if(link){ link.click(); }
+                                              }
                                               await waitForSelector('#ajaxForm, #ylkbTable', 8000);
                                             }
                                             
-                                            // 3) 设置学年/学期: 若 select 存在，优先选择已选；否则保持默认
                                             try{
                                               var xnm=document.querySelector('#xnm');
                                               var xqm=document.querySelector('#xqm');
@@ -646,6 +659,20 @@ fun QidiAutoSyncScreen(
                     Icon(Icons.Default.PlayArrow, contentDescription = null)
                     Text(" 提取并覆盖当前学期")
                 }
+            }
+            if (showProgressDialog) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    awaitPointerEvent()
+                                }
+                            }
+                        }
+                )
             }
         }
     }
@@ -916,4 +943,5 @@ class QidiSyncViewModel @Inject constructor(
         courseRepository.insertCourses(domainCourses)
         return domainCourses.size
     }
+}
 }
