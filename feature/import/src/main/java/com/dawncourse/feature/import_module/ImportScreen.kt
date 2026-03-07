@@ -681,8 +681,8 @@ private fun WebViewStep(
                     settings.allowUniversalAccessFromFileURLs = false
                     // 禁止 JS 自动弹窗
                     settings.javaScriptCanOpenWindowsAutomatically = false
-                    // 仅允许 HTTPS 混合内容策略为禁止（如有强需可下调）
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    // 兼容部分教务系统的 HTTP 资源（避免页面空白）
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                     // 安全配置：禁用文件访问，防止本地文件泄露
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
@@ -691,6 +691,13 @@ private fun WebViewStep(
                     settings.setSupportZoom(true)
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
+                    // 允许 Cookie，确保登录态与跳转正常
+                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    }
+                    // 修正部分教务系统对 WebView UA 的屏蔽
+                    settings.userAgentString = settings.userAgentString.replace("wv", "")
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
