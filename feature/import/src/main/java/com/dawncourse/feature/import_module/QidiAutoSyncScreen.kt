@@ -348,10 +348,7 @@ fun QidiAutoSyncScreen(
     var errorDialogText by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
     val autoUpdateSupported = provider == SyncProviderType.ZF
-    var autoStartRequested by remember { mutableStateOf(false) }
-    var autoStarted by remember { mutableStateOf(false) }
-    var autoTermApplied by remember { mutableStateOf(false) }
-    var autoExtractTriggered by remember { mutableStateOf(false) }
+    var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     fun addLog(message: String, type: SyncLogType = SyncLogType.INFO) {
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
@@ -538,12 +535,6 @@ fun QidiAutoSyncScreen(
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
         }
-    }
-
-    fun triggerAutoStartIfReady() {
-        if (!autoUpdateSupported || !autoStartRequested || autoStarted || webView == null) return
-        autoStarted = true
-        startSyncFlow()
     }
 
     fun startExtractFlow() {
@@ -835,19 +826,52 @@ fun QidiAutoSyncScreen(
             if (txt.isNotBlank()) {
                 applyOptionSnapshot(txt)
                 addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-                if (autoUpdateSupported && syncStep == SyncStep.SelectTerm && !autoTermApplied) {
-                    autoTermApplied = true
-                    applySelectedTermToPage {
-                        syncStep = SyncStep.Compare
-                        subTitle = "已选择学年学期，正在自动提取与对比"
-                        if (!autoExtractTriggered) {
-                            autoExtractTriggered = true
-                            startExtractFlow()
-                        }
-                    }
+                if (showProgressDialog) {
+                    runCatching { sheetState.hide() }
+                    showProgressDialog = false
                 }
             } else {
                 addLog("未读取到学年学期选项", SyncLogType.WARNING)
+            }
+        }
+    }
+
+    fun pollPageStateIfNeeded() {
+        if (syncStep != SyncStep.Login || needManualLogin) return
+        val wv = webView ?: return
+        pageStatePollingJob?.cancel()
+        pageStatePollingJob = scope.launch {
+            repeat(12) {
+                if (syncStep != SyncStep.Login || needManualLogin) return@launch
+                val res = suspendEvaluateJs(
+                    wv,
+                    """
+                    (function(){
+                      try{
+                        var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
+                        var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
+                        var hasSelect = !!(y || t);
+                        var hasTable = !!document.querySelector('#ylkbTable')
+                          || !!document.querySelector('#ajaxForm')
+                          || !!document.querySelector('#kbtable')
+                          || !!document.querySelector('#kblist')
+                          || !!document.querySelector('#kblist_table')
+                          || !!document.querySelector('#kbgrid_table_0');
+                        return JSON.stringify({hasSelect:hasSelect, hasTable:hasTable});
+                      }catch(e){ return JSON.stringify({hasSelect:false, hasTable:false}); }
+                    })();
+                    """.trimIndent()
+                )
+                val txt = parseJsReturn(res)
+                val hasSelect = txt.contains("\"hasSelect\":true")
+                val hasTable = txt.contains("\"hasTable\":true")
+                if (hasSelect || hasTable) {
+                    syncStep = SyncStep.SelectTerm
+                    subTitle = "已进入课表页面，请选择学年与学期"
+                    fetchSelectableOptions()
+                    return@launch
+                }
+                kotlinx.coroutines.delay(500)
             }
         }
     }
@@ -884,20 +908,11 @@ fun QidiAutoSyncScreen(
             }
             addressBar = normalized
             pendingLoadUrl = normalized
-            if (webView != null) {
-                loading = true
-                webView?.loadUrl(normalized)
-                addLog("自动加载入口：$normalized", SyncLogType.INFO)
-            } else {
-                subTitle = "正在打开${providerName}教务系统..."
-                addLog("等待 WebView 初始化", SyncLogType.INFO)
-            }
-            autoStartRequested = true
-            triggerAutoStartIfReady()
+            subTitle = "点击“开始连接”后进入${providerName}教务系统"
+            addLog("已准备入口地址，等待用户点击开始连接", SyncLogType.INFO)
         } else {
             subTitle = "请在上方地址栏手动输入或通过门户进入${providerName}教务系统，系统将自动记录入口"
             addLog("入口地址为空，等待手动输入", SyncLogType.WARNING)
-            autoStartRequested = true
         }
     }
 
@@ -1401,10 +1416,16 @@ fun QidiAutoSyncScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "系统将自动启动引擎并尝试登录教务系统。",
+                            text = "请点击按钮开始连接教务系统。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Button(
+                            onClick = { startSyncFlow() },
+                            enabled = !loading,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("开始连接") }
                         if (loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
@@ -1511,10 +1532,16 @@ fun QidiAutoSyncScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "系统将自动提取数据，并与本地当前学期课表进行差异对比。",
+                            text = "点击按钮开始提取数据并与本地当前学期课表对比。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Button(
+                            onClick = { startExtractFlow() },
+                            enabled = !loading,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("开始提取") }
                         if (loading) {
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
@@ -1532,13 +1559,6 @@ fun QidiAutoSyncScreen(
                     webView = wv
                     webUserAgent = wv.settings.userAgentString
                     addLog("WebView 初始化完成", SyncLogType.INFO)
-                    val url = pendingLoadUrl
-                    if (!url.isNullOrBlank()) {
-                        loading = true
-                        wv.loadUrl(url)
-                        addLog("触发预加载：$url", SyncLogType.INFO)
-                    }
-                    triggerAutoStartIfReady()
                 },
                 onPageStarted = { url ->
                     loading = true
@@ -1695,6 +1715,9 @@ fun QidiAutoSyncScreen(
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
                                 }
+                                if (!needManualLogin && !isKebiao && !hasSelect) {
+                                    pollPageStateIfNeeded()
+                                }
                             } catch (e: Throwable) {
                                 reportError("页面状态解析失败", e)
                             }
@@ -1737,6 +1760,8 @@ fun QidiAutoSyncScreen(
                                     syncStep = SyncStep.SelectTerm
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
+                                } else {
+                                    pollPageStateIfNeeded()
                                 }
                             } catch (e: Throwable) {
                                 reportError("页面状态解析失败", e)
