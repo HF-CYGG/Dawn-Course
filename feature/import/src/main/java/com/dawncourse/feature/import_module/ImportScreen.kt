@@ -751,7 +751,55 @@ private fun WebViewStep(
                     onClick = {
                         coroutineScope.launch {
                             val html = parseJavascriptResult(
-                                evaluateJs("document.documentElement.outerHTML")
+                                evaluateJs(
+                                    """
+                                    (function() {
+                                        function collect(doc, path) {
+                                            if (!doc) return "";
+                                            var docType = "";
+                                            try {
+                                                if (doc.doctype && doc.doctype.name) {
+                                                    docType = "<!DOCTYPE " + doc.doctype.name + ">";
+                                                }
+                                            } catch (e) {}
+                                            var html = "";
+                                            try {
+                                                if (doc.documentElement && doc.documentElement.outerHTML) {
+                                                    html = doc.documentElement.outerHTML;
+                                                } else if (doc.body && doc.body.outerHTML) {
+                                                    html = doc.body.outerHTML;
+                                                }
+                                            } catch (e) {}
+                                            var parts = [];
+                                            if (path) parts.push("<!--DAWN_HTML_START:" + path + "-->");
+                                            if (docType) parts.push(docType);
+                                            parts.push(html || "");
+                                            if (path) parts.push("<!--DAWN_HTML_END:" + path + "-->");
+                                            var frames = [];
+                                            try {
+                                                var f1 = doc.getElementsByTagName("frame");
+                                                for (var i = 0; i < f1.length; i++) frames.push(f1[i]);
+                                            } catch (e) {}
+                                            try {
+                                                var f2 = doc.getElementsByTagName("iframe");
+                                                for (var j = 0; j < f2.length; j++) frames.push(f2[j]);
+                                            } catch (e) {}
+                                            for (var k = 0; k < frames.length; k++) {
+                                                var f = frames[k];
+                                                var name = f.id || f.name || ("frame_" + k);
+                                                try {
+                                                    var fd = f.contentDocument || (f.contentWindow && f.contentWindow.document);
+                                                    if (fd) {
+                                                        parts.push(collect(fd, path + ">" + name));
+                                                    }
+                                                } catch (e) {}
+                                            }
+                                            return parts.join("\\n");
+                                        }
+                                        return collect(document, "root");
+                                    })();
+                                    """.trimIndent()
+                                )
                             )
                             if (html.isBlank()) {
                                 Toast.makeText(context, "未获取到页面源码", Toast.LENGTH_SHORT).show()
@@ -1095,12 +1143,32 @@ private fun WebViewStep(
                                                 console.error("Provider execution failed:", e);
                                             }
                                             
+                                            function isScheduleHtml(html) {
+                                                if (!html) return false;
+                                                var hasWeekday = /(星期|周)\s*[一二三四五六日天1-7]/.test(html);
+                                                var hasSections = /节次/.test(html) || /第?\s*\d+\s*节/.test(html);
+                                                var hasWeeks = /周次|周数/.test(html) || /第?\s*\d+\s*周/.test(html);
+                                                var hasCourse = /课程/.test(html);
+                                                var hasTable = /<table[\s>]/i.test(html);
+                                                if (hasWeekday && (hasSections || hasWeeks)) return true;
+                                                if (hasWeeks && hasSections) return true;
+                                                if (hasWeekday && hasCourse && hasTable) return true;
+                                                return false;
+                                            }
                                             function findScheduleHtml(doc) {
                                                 if (!doc) return null;
                                                 var html = doc.body ? doc.body.innerHTML : "";
-                                                if (html.indexOf('星期') !== -1 && (html.indexOf('节') !== -1 || html.indexOf('课') !== -1)) {
+                                                if (isScheduleHtml(html)) {
                                                     return html;
                                                 }
+                                                try {
+                                                    var deskFrame = doc.querySelector && doc.querySelector('iframe#frmDesk');
+                                                    if (deskFrame) {
+                                                        var innerDoc = deskFrame.contentDocument || deskFrame.contentWindow.document;
+                                                        var innerResult = findScheduleHtml(innerDoc);
+                                                        if (innerResult) return innerResult;
+                                                    }
+                                                } catch(e) {}
                                                 var frames = doc.getElementsByTagName('frame');
                                                 for (var i = 0; i < frames.length; i++) {
                                                     try {
