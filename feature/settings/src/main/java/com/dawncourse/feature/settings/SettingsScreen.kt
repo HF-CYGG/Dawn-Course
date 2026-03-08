@@ -922,7 +922,7 @@ private fun SettingsDialogManager(
                 text = {
                     Column {
                         Text(
-                            text = "仅支持正方教务账号绑定，绑定后可一键同步课程。",
+                            text = "仅支持正方教务账号绑定，绑定后可自动更新课表。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
