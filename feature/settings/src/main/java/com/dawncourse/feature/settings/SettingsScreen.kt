@@ -192,7 +192,29 @@ fun SettingsScreen(
                 context = context,
                 onCheckUpdate = onCheckUpdate
             )
-            Spacer(modifier = Modifier.height(32.dp))
+
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val versionName = remember { packageInfo.versionName }
+
+            AboutBrandFooter(
+                versionName = versionName,
+                onRepoClick = {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/DawnCourse"))
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onLicenseClick = {
+                     try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/DawnCourse/blob/main/LICENSE"))
+                        context.startActivity(intent)
+                     } catch (e: Exception) {
+                        Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
         }
     }
     SettingsDialogManager(
@@ -654,11 +676,6 @@ private fun AboutSection(
             currentVersion = versionName,
             onCheckUpdate = onCheckUpdate
         )
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-        SettingRow(
-            title = "开源许可",
-            onClick = { }
-        )
     }
 }
 
@@ -962,6 +979,123 @@ fun CourseCardPreview(settings: AppSettings) {
                         maxLines = 1
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AboutBrandFooter(
+    versionName: String,
+    onRepoClick: () -> Unit,
+    onLicenseClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val appIcon = remember(context) {
+        try {
+            context.packageManager.getApplicationIcon(context.packageName)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 48.dp, bottom = 32.dp), // 增加顶部间距，与上方设置卡片拉开距离
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. App Icon 占位 (使用 Surface 模拟圆角图标感)
+        Surface(
+            modifier = Modifier.size(64.dp),
+            shape = RoundedCornerShape(16.dp), // Squircle 风格圆角
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shadowElevation = 2.dp
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (appIcon != null) {
+                    AsyncImage(
+                        model = appIcon,
+                        contentDescription = "App Icon",
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome, // "Dawn" 黎明的意向
+                        contentDescription = null,
+                        modifier = Modifier.size(36.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+
+        // 2. 应用名称与版本
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Dawn Course",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Version $versionName",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        }
+
+        // 3. 核心宗旨清单 (点缀式排版)
+        Row(
+            modifier = Modifier.padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val footerNoteStyle = MaterialTheme.typography.labelSmall.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+            Text("永久免费", style = footerNoteStyle)
+            Text(" · ", style = footerNoteStyle)
+            Text("开源协议", style = footerNoteStyle)
+            Text(" · ", style = footerNoteStyle)
+            Text("离线优先", style = footerNoteStyle)
+        }
+
+        // 4. 交互式链接 (带图标的 TextButton)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TextButton(onClick = onRepoClick) {
+                Icon(
+                    imageVector = Icons.Default.Code, // 或者使用自定义的 GitHub Icon
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("源码仓库")
+            }
+
+            // 装饰性的垂直分隔线
+            VerticalDivider(
+                modifier = Modifier
+                    .height(16.dp)
+                    .align(Alignment.CenterVertically)
+                    .padding(horizontal = 8.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+
+            TextButton(onClick = onLicenseClick) {
+                Icon(
+                    imageVector = Icons.Default.Gavel,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("GPL-3.0")
             }
         }
     }

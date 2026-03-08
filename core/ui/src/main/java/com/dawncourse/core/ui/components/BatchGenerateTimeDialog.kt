@@ -49,6 +49,42 @@ fun BatchGenerateTimeDialog(
     onDismissRequest: () -> Unit,
     onConfirm: (List<SectionTime>) -> Unit
 ) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            BatchGenerateTimeContent(
+                maxDailySections = maxDailySections,
+                initialDuration = initialDuration,
+                initialBreakDuration = initialBreakDuration,
+                initialAmStart = initialAmStart,
+                initialPmStartSec = initialPmStartSec,
+                initialPmStart = initialPmStart,
+                initialEveStartSec = initialEveStartSec,
+                initialEveStart = initialEveStart,
+                onDismissRequest = onDismissRequest,
+                onConfirm = onConfirm
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BatchGenerateTimeContent(
+    maxDailySections: Int,
+    initialDuration: Int = 45,
+    initialBreakDuration: Int = 10,
+    initialAmStart: LocalTime = LocalTime.of(8, 0),
+    initialPmStartSec: Int = 5,
+    initialPmStart: LocalTime = LocalTime.of(14, 0),
+    initialEveStartSec: Int = 9,
+    initialEveStart: LocalTime = LocalTime.of(19, 0),
+    onDismissRequest: () -> Unit,
+    onConfirm: (List<SectionTime>) -> Unit
+) {
     var sectionDuration by remember { mutableStateOf(initialDuration.toString()) }
     var breakDuration by remember { mutableStateOf(initialBreakDuration.toString()) }
     
@@ -62,20 +98,14 @@ fun BatchGenerateTimeDialog(
     
     var showTimePickerFor by remember { mutableStateOf<String?>(null) } // "morning", "afternoon", "evening"
 
-    Dialog(onDismissRequest = onDismissRequest) {
-        Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
+    Column(
+        modifier = Modifier.padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
                 // Header
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "一键设置时间",
+                        text = "快捷节次设置",
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -134,11 +164,11 @@ fun BatchGenerateTimeDialog(
                                     label = "下午起始",
                                     prefix = "第",
                                     suffix = "节",
-                                    modifier = Modifier.width(90.dp)
+                                    modifier = Modifier.width(80.dp)
                                 )
                                 TimeNodeRow(
                                     icon = Icons.Filled.WbTwilight,
-                                    label = "开始时间",
+                                    label = "开始",
                                     time = afternoonStartTime,
                                     onClick = { showTimePickerFor = "afternoon" },
                                     modifier = Modifier.weight(1f)
@@ -158,11 +188,11 @@ fun BatchGenerateTimeDialog(
                                     label = "晚上起始",
                                     prefix = "第",
                                     suffix = "节",
-                                    modifier = Modifier.width(90.dp)
+                                    modifier = Modifier.width(80.dp)
                                 )
                                 TimeNodeRow(
                                     icon = Icons.Filled.Bedtime,
-                                    label = "开始时间",
+                                    label = "开始",
                                     time = eveningStartTime,
                                     onClick = { showTimePickerFor = "evening" },
                                     modifier = Modifier.weight(1f)
@@ -205,8 +235,6 @@ fun BatchGenerateTimeDialog(
                         Text("生成时间表")
                     }
                 }
-            }
-        }
     }
     
     // Time Picker Dialog
@@ -217,38 +245,19 @@ fun BatchGenerateTimeDialog(
             "evening" -> eveningStartTime
             else -> LocalTime.now()
         }
-        val pickerState = rememberTimePickerState(
-            initialHour = initialTime.hour,
-            initialMinute = initialTime.minute,
-            is24Hour = true
-        )
         
-        DatePickerDialog(
-            onDismissRequest = { showTimePickerFor = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    val newTime = LocalTime.of(pickerState.hour, pickerState.minute)
-                    when(showTimePickerFor) {
-                        "morning" -> morningStartTime = newTime
-                        "afternoon" -> afternoonStartTime = newTime
-                        "evening" -> eveningStartTime = newTime
-                    }
-                    showTimePickerFor = null
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTimePickerFor = null }) { Text("取消") }
+        OptimizedTimePickerDialog(
+            initialTime = initialTime,
+            onDismiss = { showTimePickerFor = null },
+            onConfirm = { selectedTime ->
+                when(showTimePickerFor) {
+                    "morning" -> morningStartTime = selectedTime
+                    "afternoon" -> afternoonStartTime = selectedTime
+                    "evening" -> eveningStartTime = selectedTime
+                }
+                showTimePickerFor = null
             }
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                TimePicker(state = pickerState)
-            }
-        }
+        )
     }
 }
 
@@ -262,13 +271,12 @@ private fun SettingsGroupCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
-        border = null, // Cleaner look
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -278,12 +286,12 @@ private fun SettingsGroupCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -313,9 +321,9 @@ private fun CompactNumericInput(
         prefix = if (prefix.isNotEmpty()) { { Text(prefix) } } else null,
         suffix = if (suffix.isNotEmpty()) { { Text(suffix) } } else null,
         colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         )
     )
 }
@@ -331,9 +339,9 @@ private fun TimeNodeRow(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -345,12 +353,12 @@ private fun TimeNodeRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(18.dp)
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
         
