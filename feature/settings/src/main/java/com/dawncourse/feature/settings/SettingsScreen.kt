@@ -19,10 +19,15 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.animateContentSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -379,6 +384,11 @@ private fun AppearanceSection(
     viewModel: SettingsViewModel,
     onPickWallpaper: () -> Unit
 ) {
+    var showAppearanceAdvanced by remember { mutableStateOf(false) }
+    val advancedArrowRotation by animateFloatAsState(
+        targetValue = if (showAppearanceAdvanced) 180f else 0f,
+        label = "advancedAppearanceArrow"
+    )
     PreferenceCategory(title = "外观与视觉") {
         AdvancedCourseCardPreview(settings = settings)
         Spacer(modifier = Modifier.height(16.dp))
@@ -449,60 +459,83 @@ private fun AppearanceSection(
                 }
             }
         }
-        SmoothSliderSetting(
-            title = "背景遮罩浓度",
-            value = settings.transparency,
-            onValueChangeFinished = { viewModel.setTransparency(it) },
-            valueRange = 0f..1f,
-            valueText = { "${(it * 100).toInt()}%" },
-            description = "调节背景图上覆盖颜色的浓度",
-            showDivider = true
-        )
-        SmoothSliderSetting(
-            title = "背景模糊程度",
-            value = settings.backgroundBlur,
-            onValueChangeFinished = { viewModel.setBackgroundBlur(it) },
-            valueRange = 0f..100f,
-            valueText = { "${it.toInt()} dp" },
-            description = "调节背景图的模糊程度",
-            showDivider = true
-        )
-        SmoothSliderSetting(
-            title = "背景亮度",
-            value = settings.backgroundBrightness,
-            onValueChangeFinished = { viewModel.setBackgroundBrightness(it) },
-            valueRange = 0f..1f,
-            valueText = { "${(it * 100).toInt()}%" },
-            description = "调节背景图的亮度",
-            showDivider = true
-        )
-        SliderSetting(
-            title = "课程卡片高度",
-            value = settings.courseItemHeightDp.toFloat(),
-            onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
-            valueRange = 40f..100f,
-            steps = 12,
-            valueText = "${settings.courseItemHeightDp} dp",
-            showDivider = true
-        )
-        SliderSetting(
-            title = "课程卡片圆角",
-            value = settings.cardCornerRadius.toFloat(),
-            onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
-            valueRange = 0f..24f,
-            steps = 24,
-            valueText = "${settings.cardCornerRadius} dp",
-            showDivider = true
-        )
-        SmoothSliderSetting(
-            title = "课程卡片透明度",
-            value = settings.cardAlpha,
-            onValueChangeFinished = { viewModel.setCardAlpha(it) },
-            valueRange = 0.1f..1f,
-            valueText = { "${(it * 100).toInt()}%" },
-            description = "调节课程卡片的不透明度",
-            showDivider = true
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(spring(stiffness = Spring.StiffnessMediumLow))
+        ) {
+            SettingRow(
+                title = "背景与卡片细节",
+                description = if (showAppearanceAdvanced) "点击收起" else "点击展开",
+                icon = { Icon(Icons.Default.Tune, null) },
+                action = {
+                    Icon(
+                        imageVector = Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.rotate(advancedArrowRotation)
+                    )
+                },
+                onClick = { showAppearanceAdvanced = !showAppearanceAdvanced },
+                showDivider = !showAppearanceAdvanced
+            )
+            if (showAppearanceAdvanced) {
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                SmoothSliderSetting(
+                    title = "背景遮罩浓度",
+                    value = settings.transparency,
+                    onValueChangeFinished = { viewModel.setTransparency(it) },
+                    valueRange = 0f..1f,
+                    valueText = { "${(it * 100).toInt()}%" },
+                    description = "调节背景图上覆盖颜色的浓度",
+                    showDivider = true
+                )
+                SmoothSliderSetting(
+                    title = "背景模糊程度",
+                    value = settings.backgroundBlur,
+                    onValueChangeFinished = { viewModel.setBackgroundBlur(it) },
+                    valueRange = 0f..100f,
+                    valueText = { "${it.toInt()} dp" },
+                    description = "调节背景图的模糊程度",
+                    showDivider = true
+                )
+                SmoothSliderSetting(
+                    title = "背景亮度",
+                    value = settings.backgroundBrightness,
+                    onValueChangeFinished = { viewModel.setBackgroundBrightness(it) },
+                    valueRange = 0f..1f,
+                    valueText = { "${(it * 100).toInt()}%" },
+                    description = "调节背景图的亮度",
+                    showDivider = true
+                )
+                SliderSetting(
+                    title = "课程卡片高度",
+                    value = settings.courseItemHeightDp.toFloat(),
+                    onValueChange = { viewModel.setCourseItemHeight(it.toInt()) },
+                    valueRange = 40f..100f,
+                    steps = 12,
+                    valueText = "${settings.courseItemHeightDp} dp",
+                    showDivider = true
+                )
+                SliderSetting(
+                    title = "课程卡片圆角",
+                    value = settings.cardCornerRadius.toFloat(),
+                    onValueChange = { viewModel.setCardCornerRadius(it.toInt()) },
+                    valueRange = 0f..24f,
+                    steps = 24,
+                    valueText = "${settings.cardCornerRadius} dp",
+                    showDivider = true
+                )
+                SmoothSliderSetting(
+                    title = "课程卡片透明度",
+                    value = settings.cardAlpha,
+                    onValueChangeFinished = { viewModel.setCardAlpha(it) },
+                    valueRange = 0.1f..1f,
+                    valueText = { "${(it * 100).toInt()}%" },
+                    description = "调节课程卡片的不透明度",
+                    showDivider = true
+                )
+            }
+        }
         SwitchSetting(
             title = "显示课程图标",
             description = "在课程卡片上显示课程图标",
