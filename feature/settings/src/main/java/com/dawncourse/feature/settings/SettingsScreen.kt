@@ -5,6 +5,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -50,8 +53,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.border
-
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
 /**
  * 设置主页面
  *
@@ -296,13 +301,87 @@ private fun TimetableSection(
 }
 
 @Composable
+private fun AdvancedCourseCardPreview(settings: AppSettings) {
+    Text(
+        "视觉效果预览",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+    )
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(180.dp)
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(4.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            // 1. 底层：模拟用户壁纸
+            if (settings.wallpaperUri != null) {
+                AsyncImage(
+                    model = settings.wallpaperUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(settings.backgroundBlur.dp)
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            }
+
+            // 2. 中层：遮罩、亮度
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 1f - settings.backgroundBrightness))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = settings.transparency))
+            )
+
+            // 3. 上层：真实的课程卡片
+            Box(modifier = Modifier.align(Alignment.Center)) {
+                Surface(
+                    modifier = Modifier
+                        .size(width = 110.dp, height = 130.dp)
+                        .border(
+                            BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                            RoundedCornerShape(settings.cardCornerRadius.dp)
+                        ),
+                    shape = RoundedCornerShape(settings.cardCornerRadius.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.cardAlpha)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        if (settings.showCourseIcons) {
+                            Icon(Icons.Default.Book, null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        Text("示例课程", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("@图书馆", fontSize = 10.sp, modifier = Modifier.alpha(0.8f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AppearanceSection(
     settings: AppSettings,
     viewModel: SettingsViewModel,
     onPickWallpaper: () -> Unit
 ) {
     PreferenceCategory(title = "外观与视觉") {
-        CourseCardPreview(settings = settings)
+        AdvancedCourseCardPreview(settings = settings)
         Spacer(modifier = Modifier.height(16.dp))
         SettingRow(
             title = "主题模式",
@@ -482,11 +561,80 @@ private fun LayoutSection(
 }
 
 @Composable
+private fun GridLineStylePreview(
+    type: DividerType,
+    width: Float,
+    alpha: Float,
+    colorHex: String
+) {
+    val lineColor = try {
+        Color(android.graphics.Color.parseColor(colorHex)).copy(alpha = alpha)
+    } catch (e: Exception) {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(80.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                RoundedCornerShape(12.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            val pathEffect = when (type) {
+                DividerType.DASHED -> PathEffect.dashPathEffect(floatArrayOf(15f, 10f), 0f)
+                DividerType.DOTTED -> PathEffect.dashPathEffect(floatArrayOf(2f, 8f), 0f)
+                else -> null
+            }
+            
+            val canvasWidth = size.width
+            val canvasHeight = size.height
+            val strokeWidthPx = width.dp.toPx()
+
+            // 绘制横线
+            drawLine(
+                color = lineColor,
+                start = Offset(0f, canvasHeight / 2),
+                end = Offset(canvasWidth, canvasHeight / 2),
+                strokeWidth = strokeWidthPx,
+                pathEffect = pathEffect
+            )
+            // 绘制竖线
+            drawLine(
+                color = lineColor,
+                start = Offset(canvasWidth / 2, 0f),
+                end = Offset(canvasWidth / 2, canvasHeight),
+                strokeWidth = strokeWidthPx,
+                pathEffect = pathEffect
+            )
+        }
+        Text(
+            "预览",
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp)
+                .alpha(0.5f),
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
+
+@Composable
 private fun GridLineSection(
     settings: AppSettings,
     viewModel: SettingsViewModel
 ) {
     PreferenceCategory(title = "网格线设置") {
+        GridLineStylePreview(
+            type = settings.dividerType,
+            width = settings.dividerWidthDp,
+            alpha = settings.dividerAlpha,
+            colorHex = settings.dividerColor
+        )
         SettingRow(title = "线样式") {
             Row(modifier = Modifier.padding(top = 8.dp, start = 16.dp, end = 16.dp)) {
                 DividerType.entries.forEach { type ->
@@ -918,71 +1066,7 @@ private fun BindAccountDialog(
     )
 }
 
-@Composable
-fun CourseCardPreview(settings: AppSettings) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "效果预览",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            // Preview Card
-            Box(
-                modifier = Modifier
-                    .size(width = 120.dp, height = settings.courseItemHeightDp.dp)
-                    .clip(RoundedCornerShape(settings.cardCornerRadius.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = settings.cardAlpha))
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(settings.cardCornerRadius.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(4.dp)
-                ) {
-                    if (settings.showCourseIcons) {
-                        Icon(
-                            imageVector = Icons.Default.StickyNote2, // Using StickyNote2 as generic course icon
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
-                    Text(
-                        text = "高等数学",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
-                    )
-                    Text(
-                        text = "@教1-101",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                        fontSize = 10.sp,
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
-}
+
 
 @Composable
 private fun AboutBrandFooter(
