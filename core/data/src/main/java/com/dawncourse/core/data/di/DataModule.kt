@@ -5,12 +5,18 @@ import androidx.room.Room
 import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.repository.CourseRepositoryImpl
+import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
+import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
+import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.SyncStateRepository
+import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
@@ -114,4 +120,22 @@ abstract class RepositoryModule {
     abstract fun bindSemesterRepository(
         impl: SemesterRepositoryImpl
     ): SemesterRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCredentialsRepository(
+        impl: CredentialsRepositoryImpl
+    ): CredentialsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindTimetableSyncRepository(
+        impl: TimetableSyncRepositoryImpl
+    ): TimetableSyncRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSyncStateRepository(
+        impl: SyncStateRepositoryImpl
+    ): SyncStateRepository
 }
