@@ -754,49 +754,43 @@ private fun WebViewStep(
                                 evaluateJs(
                                     """
                                     (function() {
-                                        function collect(doc, path) {
-                                            if (!doc) return "";
-                                            var docType = "";
-                                            try {
-                                                if (doc.doctype && doc.doctype.name) {
-                                                    docType = "<!DOCTYPE " + doc.doctype.name + ">";
-                                                }
-                                            } catch (e) {}
-                                            var html = "";
-                                            try {
-                                                if (doc.documentElement && doc.documentElement.outerHTML) {
-                                                    html = doc.documentElement.outerHTML;
-                                                } else if (doc.body && doc.body.outerHTML) {
-                                                    html = doc.body.outerHTML;
-                                                }
-                                            } catch (e) {}
-                                            var parts = [];
-                                            if (path) parts.push("<!--DAWN_HTML_START:" + path + "-->");
-                                            if (docType) parts.push(docType);
-                                            parts.push(html || "");
-                                            if (path) parts.push("<!--DAWN_HTML_END:" + path + "-->");
+                                        function collectFrames(doc) {
                                             var frames = [];
                                             try {
-                                                var f1 = doc.getElementsByTagName("frame");
+                                                var f1 = doc.querySelectorAll('iframe, frame');
                                                 for (var i = 0; i < f1.length; i++) frames.push(f1[i]);
                                             } catch (e) {}
-                                            try {
-                                                var f2 = doc.getElementsByTagName("iframe");
-                                                for (var j = 0; j < f2.length; j++) frames.push(f2[j]);
-                                            } catch (e) {}
-                                            for (var k = 0; k < frames.length; k++) {
-                                                var f = frames[k];
-                                                var name = f.id || f.name || ("frame_" + k);
+                                            
+                                            return frames.map(function(f) {
+                                                var content = "Cross-domain blocked";
                                                 try {
-                                                    var fd = f.contentDocument || (f.contentWindow && f.contentWindow.document);
-                                                    if (fd) {
-                                                        parts.push(collect(fd, path + ">" + name));
+                                                    var innerDoc = f.contentDocument || f.contentWindow.document;
+                                                    if (innerDoc) {
+                                                        content = innerDoc.documentElement.outerHTML;
                                                     }
-                                                } catch (e) {}
-                                            }
-                                            return parts.join("\\n");
+                                                } catch (e) { content += ": " + e.message; }
+                                                
+                                                return {
+                                                    id: f.id,
+                                                    name: f.name,
+                                                    src: f.src,
+                                                    content: content
+                                                };
+                                            });
                                         }
-                                        return collect(document, "root");
+
+                                        var info = {
+                                            url: window.location.href,
+                                            userAgent: navigator.userAgent,
+                                            windowSize: {
+                                                width: window.innerWidth,
+                                                height: window.innerHeight
+                                            },
+                                            cookieLength: document.cookie ? document.cookie.length : 0,
+                                            topHtml: document.documentElement.outerHTML,
+                                            frames: collectFrames(document)
+                                        };
+                                        return JSON.stringify(info, null, 2);
                                     })();
                                     """.trimIndent()
                                 )
@@ -806,7 +800,7 @@ private fun WebViewStep(
                                 return@launch
                             }
                             pendingHtmlForExport = html
-                            exportLauncher.launch("课表页面源码.txt")
+                            exportLauncher.launch("debug_snapshot.json")
                         }
                         showNoDataDialog = false
                     }
@@ -1143,23 +1137,43 @@ private fun WebViewStep(
                                                 console.error("Provider execution failed:", e);
                                             }
                                             
-                                            function isScheduleHtml(html) {
+                                            function isScheduleHtml(doc) {
+                                                if (!doc) return false;
+                                                var html = doc.body ? doc.body.innerHTML : "";
                                                 if (!html) return false;
+                                                
+                                                // 规则 A: 包含星期关键词
                                                 var hasWeekday = /(星期|周)\s*[一二三四五六日天1-7]/.test(html);
+                                                // 规则 B: 包含节次/周次关键词
                                                 var hasSections = /节次/.test(html) || /第?\s*\d+\s*节/.test(html);
                                                 var hasWeeks = /周次|周数/.test(html) || /第?\s*\d+\s*周/.test(html);
-                                                var hasCourse = /课程/.test(html);
-                                                var hasTable = /<table[\s>]/i.test(html);
+                                                
+                                                // 规则 C: 启发式特征搜索 (DOM API)
+                                                try {
+                                                    // C1: 存在跨行数 > 5 的单元格 (通常是左侧节次头)
+                                                    var heavyRowspan = doc.querySelector('td[rowspan="5"], td[rowspan="6"], td[rowspan="7"], th[rowspan="5"]');
+                                                    if (heavyRowspan) return true;
+
+                                                    // C2: 存在包含“星期一”和“星期二”的表格行
+                                                    var headers = doc.querySelectorAll('tr, thead');
+                                                    for (var i = 0; i < headers.length; i++) {
+                                                        var text = headers[i].innerText || headers[i].textContent;
+                                                        if (text.indexOf('星期一') !== -1 && text.indexOf('星期二') !== -1) return true;
+                                                    }
+                                                    
+                                                    // C3: 存在高度占比大的网格容器 (仅作为辅助判断)
+                                                    // var grid = doc.querySelector('.grid, .table, table');
+                                                    // if (grid && grid.offsetHeight > window.innerHeight * 0.6) return true;
+                                                } catch (e) {}
+
                                                 if (hasWeekday && (hasSections || hasWeeks)) return true;
                                                 if (hasWeeks && hasSections) return true;
-                                                if (hasWeekday && hasCourse && hasTable) return true;
                                                 return false;
                                             }
                                             function findScheduleHtml(doc) {
                                                 if (!doc) return null;
-                                                var html = doc.body ? doc.body.innerHTML : "";
-                                                if (isScheduleHtml(html)) {
-                                                    return html;
+                                                if (isScheduleHtml(doc)) {
+                                                    return doc.body ? doc.body.innerHTML : doc.documentElement.outerHTML;
                                                 }
                                                 try {
                                                     var deskFrame = doc.querySelector && doc.querySelector('iframe#frmDesk');
