@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.first
 /**
  * 课表同步仓库实现（WakeUp 提供者）
  *
- * 仅实现 WAKEUP 类型的一键更新：使用口令（TOKEN）拉取课程数据并替换当前学期的课程。
+ * 仅实现 WAKEUP 类型的自动更新：使用口令（TOKEN）拉取课程数据并替换当前学期的课程。
  */
 @Singleton
 class TimetableSyncRepositoryImpl @Inject constructor(
@@ -42,7 +42,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
             SyncProviderType.QIDI, SyncProviderType.ZF -> {
                 TimetableSyncResult.Failure(
                     code = SyncErrorCode.AUTH_FAILED,
-                    message = "当前绑定为教务账号，请在主界面使用“一键更新”进入同步页面"
+                    message = "当前绑定为教务账号，请在主界面使用“自动更新”进入同步页面"
                 )
             }
         }

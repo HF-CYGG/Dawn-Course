@@ -5,7 +5,7 @@ import com.dawncourse.core.domain.model.TimetableSyncResult
 /**
  * 课表同步仓库
  *
- * 封装“一键更新”核心流程：读取凭据→认证（或续期）→拉取远端课表→转换领域模型→落库。
+ * 封装“自动更新”核心流程：读取凭据→认证（或续期）→拉取远端课表→转换领域模型→落库。
  * 具体实现交由数据层完成，Domain 层仅定义契约。
  */
 interface TimetableSyncRepository {

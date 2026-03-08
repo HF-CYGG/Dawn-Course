@@ -276,7 +276,7 @@ class TimetableViewModel @Inject constructor(
     }
 
     /**
-     * 一键更新课表
+     * 自动更新课表
      *
      * 调用用例执行同步流程，并通过用户消息反馈结果。
      */

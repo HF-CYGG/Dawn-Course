@@ -60,7 +60,7 @@ class SettingsViewModel @Inject constructor(
         )
 
     /**
-     * 已绑定的一键更新来源（例如 WakeUp）
+     * 已绑定的自动更新来源（例如 正方教务）
      */
     val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
         .stateIn(
@@ -117,7 +117,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 绑定 WakeUp 口令作为一键更新凭据
+     * 绑定 WakeUp 口令作为自动更新凭据
      *
      * @param token WakeUp 分享口令
      */
@@ -145,7 +145,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 绑定起迪教务账号（用户名+密码+入口地址）
+     * 绑定起迪教务账号（已弃用）
      *
      * @param endpoint 教务系统入口地址（形如 https://jw.example.edu.cn）
      * @param username 用户名

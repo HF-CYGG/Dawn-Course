@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.Flow
 /**
  * 凭据仓库（安全存储）
  *
- * 负责以安全方式存储/读取“一键更新”所需的认证信息（用户名+密码或令牌）。
+ * 负责以安全方式存储/读取“自动更新”所需的认证信息（用户名+密码或令牌）。
  * 实现层应基于 Android Keystore + EncryptedSharedPreferences。
  */
 interface CredentialsRepository {

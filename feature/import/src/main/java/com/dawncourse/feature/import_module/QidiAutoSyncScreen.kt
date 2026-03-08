@@ -256,7 +256,7 @@ private fun buildDiffItems(
 }
 
 /**
- * 起迪教务“一键更新（实验）”页面
+ * 正方教务“自动更新（实验）”页面
  *
  * 设计目标：
  * - 自动使用已绑定的“入口地址 + 用户名 + 密码”进行登录
@@ -271,12 +271,11 @@ private fun buildDiffItems(
 fun QidiAutoSyncScreen(
     onBackClick: () -> Unit,
     onFinish: () -> Unit,
-    provider: SyncProviderType = SyncProviderType.QIDI,
+    provider: SyncProviderType = SyncProviderType.ZF,
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
     val providerName = when (provider) {
-        SyncProviderType.QIDI -> "起迪"
         SyncProviderType.ZF -> "正方"
         else -> "教务"
     }

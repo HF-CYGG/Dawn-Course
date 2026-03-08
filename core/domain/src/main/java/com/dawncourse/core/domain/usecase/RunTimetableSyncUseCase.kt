@@ -7,7 +7,7 @@ import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import javax.inject.Inject
 
 /**
- * 一键更新课表用例
+ * 自动更新课表用例
  *
  * 编排调用同步仓库，写入同步状态，向上层返回结构化结果。
  */
@@ -16,7 +16,7 @@ class RunTimetableSyncUseCase @Inject constructor(
     private val syncStateRepository: SyncStateRepository
 ){
     /**
-     * 执行一键同步
+     * 执行自动同步
      */
     suspend operator fun invoke(): TimetableSyncResult {
         val result = syncRepository.syncCurrentSemester()

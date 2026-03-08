@@ -174,7 +174,7 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("course_editor?courseId=$courseId")
                                     },
                                     onNavigateToQidiSync = {
-                                        navController.navigate("qidi_sync")
+                                        navController.navigate("zf_sync")
                                     },
                                     onNavigateToZfSync = {
                                         navController.navigate("zf_sync")
@@ -204,15 +204,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             
-                            // 起迪自动同步页面
-                            composable("qidi_sync") {
-                                QidiAutoSyncScreen(
-                                    onBackClick = { navController.popBackStack() },
-                                    onFinish = { navController.popBackStack() },
-                                    provider = com.dawncourse.core.domain.model.SyncProviderType.QIDI
-                                )
-                            }
-                            
+
                             // 正方自动同步页面（复用同一实现）
                             composable("zf_sync") {
                                 QidiAutoSyncScreen(

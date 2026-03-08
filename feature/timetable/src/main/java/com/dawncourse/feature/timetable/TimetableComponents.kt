@@ -287,7 +287,7 @@ fun TimetableTopBar(
         },
         actions = {
             IconButton(onClick = onSyncClick) {
-                Icon(Icons.Default.Refresh, contentDescription = "一键更新")
+                Icon(Icons.Default.Refresh, contentDescription = "自动更新")
             }
             IconButton(onClick = onImportClick) {
                 Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")

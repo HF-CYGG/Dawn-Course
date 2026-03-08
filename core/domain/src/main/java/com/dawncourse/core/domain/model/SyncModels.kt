@@ -3,14 +3,14 @@ package com.dawncourse.core.domain.model
 /**
  * 同步提供者类型
  *
- * 标识当前一键更新所使用的数据来源类型，便于在数据层进行差异化处理。
+ * 标识当前自动更新所使用的数据来源类型，便于在数据层进行差异化处理。
  * 目前实现：WAKEUP（WakeUp 课程表口令）
- * 未来可扩展：QIDI（起迪教务）、ZF（正方教务）、QINGGUO（青果）等。
+ * 未来可扩展：ZF（正方教务）、QINGGUO（青果）等。
  */
 enum class SyncProviderType {
     /** WakeUp 课程表口令导入/更新 */
     WAKEUP,
-    /** 起迪教务系统（用户名+密码登录） */
+    /** 起迪教务系统（已弃用） */
     QIDI,
     /** 正方教务系统（用户名+密码登录） */
     ZF
@@ -31,7 +31,7 @@ enum class SyncCredentialType {
 /**
  * 同步凭据
  *
- * 用于一键更新时的认证信息。出于安全考虑，所有字段都仅在内存与受信存储之间传输，
+ * 用于自动更新时的认证信息。出于安全考虑，所有字段都仅在内存与受信存储之间传输，
  * 不写入日志，不对外暴露。
  *
  * @property provider 同步提供者类型
@@ -88,7 +88,7 @@ enum class SyncErrorCode {
 }
 
 /**
- * 一键同步结果
+ * 课程表同步结果
  *
  * @property updatedCount 本次写入/更新的课程数量
  * @property message 结果说明（如“新增 20 门课程”）
