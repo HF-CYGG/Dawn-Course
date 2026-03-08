@@ -100,7 +100,12 @@ interface SettingsRepository {
      * @param duration 节数
      */
     suspend fun setDefaultCourseDuration(duration: Int)
-    
+
+    /**
+     * 清除所有设置
+     */
+    suspend fun clearAllSettings()
+
     /**
      * 设置每节课的具体时间
      *
@@ -248,6 +253,13 @@ interface SettingsRepository {
      */
     suspend fun setIgnoredUpdateVersion(versionCode: Int)
     
+    /**
+     * 设置上次成功网页提取的地址
+     *
+     * @param url 网页地址
+     */
+    suspend fun setLastImportUrl(url: String)
+
     /**
      * 设置模糊处理后的壁纸 URI
      *

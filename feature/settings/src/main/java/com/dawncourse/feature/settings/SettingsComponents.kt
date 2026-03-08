@@ -2,6 +2,7 @@ package com.dawncourse.feature.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -21,16 +22,17 @@ fun PreferenceCategory(
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
         )
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.medium,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 content()
             }
         }
@@ -44,6 +46,7 @@ fun SettingRow(
     icon: @Composable (() -> Unit)? = null,
     action: @Composable (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    showArrow: Boolean = false,
     showDivider: Boolean = false,
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
@@ -81,6 +84,15 @@ fun SettingRow(
                 if (action != null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     action()
+                }
+                if (showArrow) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
                 }
             }
             content()

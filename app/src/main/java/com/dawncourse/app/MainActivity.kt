@@ -22,6 +22,7 @@ import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
+import com.dawncourse.feature.import_module.QidiAutoSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
 import android.net.Uri
@@ -163,6 +164,12 @@ class MainActivity : ComponentActivity() {
                                     onCourseClick = { courseId ->
                                         // 传递 courseId 进行编辑，若为 0 或 null 则为新建
                                         navController.navigate("course_editor?courseId=$courseId")
+                                    },
+                                    onNavigateToQidiSync = {
+                                        navController.navigate("qidi_sync")
+                                    },
+                                    onNavigateToZfSync = {
+                                        navController.navigate("zf_sync")
                                     }
                                 )
                             }
@@ -183,21 +190,27 @@ class MainActivity : ComponentActivity() {
                                     onBackClick = {
                                         navController.popBackStack()
                                     },
-                                    onNavigateToTimetableSettings = {
-                                        navController.navigate("timetable_settings")
-                                    },
                                     onCheckUpdate = {
                                         updateViewModel.checkUpdate(isManual = true)
                                     }
                                 )
                             }
                             
-                            // 课表设置页面
-                            composable("timetable_settings") {
-                                com.dawncourse.feature.settings.TimetableSettingsScreen(
-                                    onBackClick = {
-                                        navController.popBackStack()
-                                    }
+                            // 起迪自动同步页面
+                            composable("qidi_sync") {
+                                QidiAutoSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onFinish = { navController.popBackStack() },
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.QIDI
+                                )
+                            }
+                            
+                            // 正方自动同步页面（复用同一实现）
+                            composable("zf_sync") {
+                                QidiAutoSyncScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onFinish = { navController.popBackStack() },
+                                    provider = com.dawncourse.core.domain.model.SyncProviderType.ZF
                                 )
                             }
                             

@@ -24,9 +24,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.BeachAccess
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import com.dawncourse.core.ui.util.CourseColorUtils
 import java.time.DayOfWeek
@@ -95,7 +96,8 @@ fun TimetableTopBar(
     onWeekSelected: (Int) -> Unit,
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
-    onImportClick: () -> Unit
+    onImportClick: () -> Unit,
+    onSyncClick: () -> Unit
 ) {
     var showWeekMenu by remember { mutableStateOf(false) }
     val weekMenuScrollState = rememberScrollState()
@@ -137,7 +139,7 @@ fun TimetableTopBar(
                     )
                 }
                 
-                DropdownMenu(
+                AnimatedDropdownMenu(
                     expanded = showWeekMenu,
                     onDismissRequest = { showWeekMenu = false },
                     modifier = Modifier
@@ -284,6 +286,9 @@ fun TimetableTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onSyncClick) {
+                Icon(Icons.Default.Refresh, contentDescription = "一键更新")
+            }
             IconButton(onClick = onImportClick) {
                 Icon(Icons.Default.CloudDownload, contentDescription = "导入课程")
             }
@@ -634,7 +639,7 @@ fun CourseCard(
     }
 
     // 2. 动态计算内容透明度
-    val contentAlpha = if (isCurrentWeek) 1f else 0.6f
+    val contentAlpha = if (isCurrentWeek) 1f else 0.75f
 
     // 3. 边框样式（移除旧版本没有的边框）
     val borderModifier = Modifier
@@ -668,7 +673,7 @@ fun CourseCard(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 14.sp, // 稍微紧凑一点
-                    color = (if (isCurrentWeek) Color(0xFF333333) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = contentAlpha)
+                    color = (if (isCurrentWeek) Color(0xFF333333) else Color(0xFF333333)).copy(alpha = contentAlpha)
                 ),
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis

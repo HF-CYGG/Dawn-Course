@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.ui.theme.LocalAppSettings
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -56,10 +57,13 @@ fun TimetableRoute(
     onSettingsClick: () -> Unit,
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
-    onCourseClick: (Long) -> Unit
+    onCourseClick: (Long) -> Unit,
+    onNavigateToQidiSync: () -> Unit,
+    onNavigateToZfSync: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
+    val boundProvider by viewModel.boundProvider.collectAsState()
     
     TimetableScreen(
         uiState = uiState,
@@ -67,6 +71,14 @@ fun TimetableRoute(
         onUserMessageShown = { viewModel.userMessageShown() },
         onAddClick = onAddClick,
         onImportClick = onImportClick,
+        onSyncClick = {
+            when (boundProvider) {
+                SyncProviderType.QIDI -> onNavigateToQidiSync()
+                SyncProviderType.ZF -> onNavigateToZfSync()
+                SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令一键更新已下线，请绑定起迪/正方账号")
+                null -> viewModel.showUserMessage("未绑定一键更新账号，请在设置→数据与同步绑定起迪/正方")
+            }
+        },
         onSettingsClick = onSettingsClick,
         onCourseClick = onCourseClick,
         onUndoReschedule = { viewModel.undoReschedule(it) },
@@ -104,6 +116,7 @@ internal fun TimetableScreen(
     onUserMessageShown: () -> Unit = {},
     onAddClick: () -> Unit,
     onImportClick: () -> Unit,
+    onSyncClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onCourseClick: (Long) -> Unit,
     onUndoReschedule: (Course) -> Unit,
@@ -130,12 +143,17 @@ internal fun TimetableScreen(
     // 显示 Snackbar
     LaunchedEffect(userMessage) {
         if (userMessage != null) {
-            val result = snackbarHostState.showSnackbar(
-                message = userMessage,
-                actionLabel = "撤销",
-                withDismissAction = true
-            )
-            if (result == SnackbarResult.ActionPerformed) {
+            val showUndo = userMessage.startsWith("课程已删除") || userMessage.startsWith("已删除")
+            val result = if (showUndo) {
+                snackbarHostState.showSnackbar(
+                    message = userMessage,
+                    actionLabel = "撤销",
+                    withDismissAction = true
+                )
+            } else {
+                snackbarHostState.showSnackbar(message = userMessage)
+            }
+            if (showUndo && result == SnackbarResult.ActionPerformed) {
                 onUndoDelete()
             }
             onUserMessageShown()
@@ -221,7 +239,8 @@ internal fun TimetableScreen(
                     },
                     onSettingsClick = onSettingsClick,
                     onAddClick = onAddClick,
-                    onImportClick = onImportClick
+                    onImportClick = onImportClick,
+                    onSyncClick = onSyncClick
                 )
             },
             contentColor = MaterialTheme.colorScheme.onBackground

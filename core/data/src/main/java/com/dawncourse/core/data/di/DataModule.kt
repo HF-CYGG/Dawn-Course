@@ -20,6 +20,12 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import com.dawncourse.core.domain.repository.CredentialsRepository
+import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
+import com.dawncourse.core.domain.repository.SyncStateRepository
+import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
+import com.dawncourse.core.domain.repository.TimetableSyncRepository
+import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 
 /**
  * 数据库依赖注入模块 (Hilt Module)
@@ -114,4 +120,22 @@ abstract class RepositoryModule {
     abstract fun bindSemesterRepository(
         impl: SemesterRepositoryImpl
     ): SemesterRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindCredentialsRepository(
+        impl: CredentialsRepositoryImpl
+    ): CredentialsRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindSyncStateRepository(
+        impl: SyncStateRepositoryImpl
+    ): SyncStateRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindTimetableSyncRepository(
+        impl: TimetableSyncRepositoryImpl
+    ): TimetableSyncRepository
 }

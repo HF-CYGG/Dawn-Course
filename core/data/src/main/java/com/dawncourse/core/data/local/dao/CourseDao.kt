@@ -111,6 +111,14 @@ interface CourseDao {
     suspend fun deleteCourseById(id: Long)
 
     /**
+     * 删除指定学期下的所有课程
+     *
+     * @param semesterId 学期 ID
+     */
+    @Query("DELETE FROM courses WHERE semesterId = :semesterId")
+    suspend fun deleteCoursesBySemester(semesterId: Long)
+
+    /**
      * 批量更新所有课程的时长
      *
      * @param duration 新的时长（节数）
@@ -137,4 +145,10 @@ interface CourseDao {
             }
         updateCourses(updated)
     }
+
+    /**
+     * 删除所有课程
+     */
+    @Query("DELETE FROM courses")
+    suspend fun deleteAllCourses()
 }

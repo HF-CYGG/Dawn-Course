@@ -46,6 +46,7 @@ enum class AppFontStyle {
  * @property reminderMinutes 提前提醒分钟数
  * @property enablePersistentNotification 是否启用常驻通知
  * @property enableAutoMute 是否启用自动静音
+ * @property lastImportUrl 上次成功网页提取的地址
  * @property blurredWallpaperUri 模糊处理后的壁纸 URI（缓存）
  * @property backgroundBlur 背景模糊半径 (0-100dp)
  * @property backgroundBrightness 背景亮度 (0.0-1.0)
@@ -96,6 +97,9 @@ data class AppSettings(
     val reminderMinutes: Int = 10,
     val enablePersistentNotification: Boolean = false,
     val enableAutoMute: Boolean = false,
+
+    // 导入设置
+    val lastImportUrl: String? = null,
 
     // 更新设置
     val ignoredUpdateVersion: Int = 0,

@@ -1,6 +1,11 @@
 package com.dawncourse.core.ui.components
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DatePickerState
@@ -10,13 +15,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * 通用日期选择对话框
@@ -86,6 +98,47 @@ fun DawnDatePickerDialog(
                     )
                 }
             )
+        }
+    }
+}
+
+@Composable
+fun AnimatedDropdownMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val transition = updateTransition(targetState = expanded, label = "menuTransition")
+    val alpha by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 120) },
+        label = "menuAlpha"
+    ) { if (it) 1f else 0f }
+    val scale by transition.animateFloat(
+        transitionSpec = { tween(durationMillis = 120) },
+        label = "menuScale"
+    ) { if (it) 1f else 0.96f }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            visible = true
+        } else {
+            delay(120)
+            visible = false
+        }
+    }
+    if (visible) {
+        DropdownMenu(
+            expanded = true,
+            onDismissRequest = onDismissRequest,
+            modifier = modifier.graphicsLayer {
+                this.alpha = alpha
+                scaleX = scale
+                scaleY = scale
+                transformOrigin = TransformOrigin(0.1f, 0f)
+            }
+        ) {
+            content()
         }
     }
 }

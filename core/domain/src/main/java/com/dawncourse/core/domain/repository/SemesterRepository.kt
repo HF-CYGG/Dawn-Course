@@ -59,4 +59,8 @@ interface SemesterRepository {
      * @param id 要设置为当前的学期 ID
      */
     suspend fun setCurrentSemester(id: Long)
+    /**
+     * 删除所有学期
+     */
+    suspend fun deleteAllSemesters()
 }
