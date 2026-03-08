@@ -63,6 +63,7 @@ import android.content.res.Configuration
 import java.util.Locale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -70,7 +71,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -80,6 +83,12 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -1260,8 +1269,7 @@ private fun ReviewStep(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val scrollState = rememberScrollState()
-
+    
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimeSettingDialog by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(
@@ -1297,7 +1305,7 @@ private fun ReviewStep(
                 // 同时更新最大节次，保持一致
                 viewModel.updateTimeSettings(
                     maxSection = times.size,
-                    duration = uiState.courseDuration, // 这些值在 dialog 中可能已变，但这里主要更新 sectionTimes
+                    duration = uiState.courseDuration,
                     breakDuration = uiState.breakDuration,
                     bigBreakDuration = uiState.bigBreakDuration,
                     sectionsPerBigSection = uiState.sectionsPerBigSection
@@ -1307,186 +1315,445 @@ private fun ReviewStep(
         )
     }
 
-    Column(
-        modifier = modifier
-            .verticalScroll(scrollState)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp)
+    RefinedReviewScreen(
+        uiState = uiState,
+        onDeleteCourse = { index -> viewModel.deleteParsedCourse(index) },
+        onConfirm = { viewModel.confirmImport() },
+        onUpdateSemester = { start, weeks -> viewModel.updateSemesterSettings(start, weeks) },
+        onOpenDatePicker = { showDatePicker = true },
+        onOpenTimeSettings = { showTimeSettingDialog = true }
+    )
+}
+
+@Composable
+fun RefinedReviewScreen(
+    uiState: ImportUiState,
+    onDeleteCourse: (Int) -> Unit,
+    onConfirm: () -> Unit,
+    onUpdateSemester: (Long, Int) -> Unit,
+    onOpenDatePicker: () -> Unit,
+    onOpenTimeSettings: () -> Unit
+) {
+    var isListExpanded by remember { mutableStateOf(false) }
+    var isConfigExpanded by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
     ) {
-        // 1. 解析结果概览
-        ElevatedCard(
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(top = 16.dp, bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            Row(
+            ImportHeader(courseCount = uiState.parsedCourses.size)
+            CourseSection(
+                courses = uiState.parsedCourses,
+                isExpanded = isListExpanded,
+                onToggle = { isListExpanded = !isListExpanded },
+                onDelete = onDeleteCourse
+            )
+            ConfigSection(
+                uiState = uiState,
+                isExpanded = isConfigExpanded,
+                onToggle = { isConfigExpanded = !isConfigExpanded },
+                onOpenDatePicker = onOpenDatePicker,
+                onOpenTimeSettings = onOpenTimeSettings,
+                onUpdateSemester = onUpdateSemester
+            )
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0f),
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                            MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.surface
+                        )
+                    )
+                )
+                .padding(horizontal = 20.dp, vertical = 24.dp)
+        ) {
+            Button(
+                onClick = onConfirm,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .height(56.dp)
+                    .shadow(
+                        elevation = 8.dp,
+                        shape = RoundedCornerShape(16.dp),
+                        spotColor = MaterialTheme.colorScheme.primary
+                    ),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(
-                        text = "解析成功",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        text = "共找到 ${uiState.parsedCourses.size} 门课程",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                    )
-                }
+                Icon(Icons.Default.Check, null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("确认导入并存入课表", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         }
-
-        // 课程列表详情
-        if (uiState.parsedCourses.isNotEmpty()) {
-            ParsedCourseList(
-                courses = uiState.parsedCourses,
-                onDelete = { index -> viewModel.deleteParsedCourse(index) }
-            )
-        }
-
-        // 2. 学期设置
-        ImportSettingsSection(title = "学期设置") {
-            // 开学日期
-            ListItem(
-                headlineContent = { Text("开学日期") },
-                supportingContent = {
-                    val date = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDate()
-                    Text(date.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日")))
-                },
-                leadingContent = { Icon(Icons.Default.DateRange, null) },
-                modifier = Modifier.clickable { showDatePicker = true }
-            )
-            
-            HorizontalDivider()
-
-            // 学期周数
-            ListItem(
-                headlineContent = { Text("学期周数") },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledIconButton(
-                            onClick = { 
-                                if (uiState.weekCount > 1) 
-                                    viewModel.updateSemesterSettings(uiState.semesterStartDate, uiState.weekCount - 1) 
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Remove, null) }
-                        
-                        Text(
-                            text = "${uiState.weekCount}周",
-                            modifier = Modifier.widthIn(min = 48.dp),
-                            textAlign = TextAlign.Center
-                        )
-                        
-                        FilledIconButton(
-                            onClick = { 
-                                if (uiState.weekCount < 30) 
-                                    viewModel.updateSemesterSettings(uiState.semesterStartDate, uiState.weekCount + 1) 
-                            },
-                            modifier = Modifier.size(32.dp)
-                        ) { Icon(Icons.Default.Add, null) }
-                    }
-                }
-            )
-        }
-
-        // 3. 作息时间设置
-        ImportSettingsSection(title = "作息时间") {
-            ListItem(
-                headlineContent = { Text("作息时间表") },
-                supportingContent = {
-                    val count = if (uiState.sectionTimes.isNotEmpty()) uiState.sectionTimes.size else uiState.detectedMaxSection
-                    Text("共 $count 节课")
-                },
-                leadingContent = { Icon(Icons.Outlined.Timer, null) },
-                trailingContent = {
-                    Button(onClick = { showTimeSettingDialog = true }) {
-                        Text("设置")
-                    }
-                }
-            )
-
-            HorizontalDivider()
-            
-            // 预览列表
-            if (uiState.sectionTimes.isNotEmpty()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    uiState.sectionTimes.forEachIndexed { index, time ->
-                        if (index < 4 || index >= uiState.sectionTimes.size - 2) { // 只显示前4节和最后2节，避免过长
-                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("第 ${index + 1} 节", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "${time.startTime} - ${time.endTime}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        } else if (index == 4) {
-                             Text(
-                                "...", 
-                                modifier = Modifier.fillMaxWidth(), 
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = { viewModel.confirmImport() },
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(16.dp)
-        ) {
-            Icon(Icons.Default.Check, null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("确认导入")
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
 @Composable
-private fun ImportSettingsSection(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit
+fun ImportHeader(courseCount: Int) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(
+                    "解析成功",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    "共在当前页面找到 $courseCount 门课程",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CourseSection(
+    courses: List<ParsedCourse>,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    onDelete: (Int) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "课程列表",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            if (courses.size > 3) {
+                Text(
+                    text = if (isExpanded) "收起" else "查看全部",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.clickable { onToggle() }.padding(4.dp)
+                )
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            elevation = CardDefaults.cardElevation(0.dp)
+        ) {
+            Column(modifier = Modifier.animateContentSize(spring(stiffness = Spring.StiffnessMediumLow))) {
+                val displayList = if (isExpanded) courses else courses.take(3)
+                displayList.forEachIndexed { index, course ->
+                    ReviewCourseItem(course = course, onDelete = { onDelete(index) })
+                    if (index < displayList.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 20.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
+                        )
+                    }
+                }
+                
+                if (!isExpanded && courses.size > 3) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggle() }
+                            .padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "剩余 ${courses.size - 3} 门课程已折叠",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ReviewCourseItem(course: ParsedCourse, onDelete: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(42.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+        )
+        Spacer(Modifier.width(16.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                course.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val locationTeacher = listOf(course.location, course.teacher).filter { it.isNotBlank() }.joinToString(" · ")
+            if (locationTeacher.isNotBlank()) {
+                Text(
+                    locationTeacher,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                InfoPill("${course.startWeek}-${course.endWeek}周")
+                InfoPill("第 ${course.startSection} 节起")
+            }
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                Icons.Outlined.Delete,
+                null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun InfoPill(text: String) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            fontSize = 10.sp
+        )
+    }
+}
+
+@Composable
+fun ConfigSection(
+    uiState: ImportUiState,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    onOpenDatePicker: () -> Unit,
+    onOpenTimeSettings: () -> Unit,
+    onUpdateSemester: (Long, Int) -> Unit
 ) {
     Column {
         Text(
-            text = title,
+            "导入配置确认",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
         )
+        Spacer(Modifier.height(8.dp))
         Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-            ),
-            modifier = Modifier.fillMaxWidth()
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+            elevation = CardDefaults.cardElevation(0.dp)
         ) {
-            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                content()
+            Column(modifier = Modifier.animateContentSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggle() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Tune,
+                            null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        val date = java.time.Instant.ofEpochMilli(uiState.semesterStartDate)
+                            .atZone(ZoneId.systemDefault())
+                            .toLocalDate()
+                        val dateStr = date.format(DateTimeFormatter.ofPattern("yyyy年MM月dd日"))
+                        val maxSection = if (uiState.sectionTimes.isNotEmpty()) uiState.sectionTimes.size else uiState.detectedMaxSection
+                        Text(
+                            "当前配置：$dateStr 开学",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "共 ${uiState.weekCount} 周 · 每天 $maxSection 节课",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (isExpanded) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f))
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        OutlinedButton(
+                            onClick = onOpenDatePicker,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.DateRange, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("修改开学日期")
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+                        Text("学期周数", style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            FilledIconButton(
+                                onClick = { 
+                                    if (uiState.weekCount > 1) 
+                                        onUpdateSemester(uiState.semesterStartDate, uiState.weekCount - 1) 
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.Remove, null) }
+                            
+                            Text(
+                                text = "${uiState.weekCount}周",
+                                modifier = Modifier.widthIn(min = 64.dp),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            
+                            FilledIconButton(
+                                onClick = { 
+                                    if (uiState.weekCount < 30) 
+                                        onUpdateSemester(uiState.semesterStartDate, uiState.weekCount + 1) 
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) { Icon(Icons.Default.Add, null) }
+                        }
+                        
+                        Spacer(Modifier.height(16.dp))
+                        Text("作息设置", style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.height(8.dp))
+                        
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)),
+                            modifier = Modifier.fillMaxWidth().clickable { onOpenTimeSettings() }
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("作息时间表", style = MaterialTheme.typography.titleSmall)
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.ArrowForward,
+                                        null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                
+                                val previewCount = 4
+                                val displayTimes = uiState.sectionTimes.take(previewCount)
+                                if (displayTimes.isNotEmpty()) {
+                                    displayTimes.forEachIndexed { index, time ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                "第 ${index + 1} 节",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                "${time.startTime} - ${time.endTime}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                    if (uiState.sectionTimes.size > previewCount) {
+                                        Text(
+                                            "... 等共 ${uiState.sectionTimes.size} 节",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(top = 8.dp)
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        "暂无时间数据，点击设置",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
