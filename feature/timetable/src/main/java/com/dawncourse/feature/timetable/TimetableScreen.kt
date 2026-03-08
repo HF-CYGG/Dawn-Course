@@ -75,8 +75,8 @@ fun TimetableRoute(
             when (boundProvider) {
                 SyncProviderType.QIDI -> onNavigateToQidiSync()
                 SyncProviderType.ZF -> onNavigateToZfSync()
-                SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令一键更新已下线，请绑定起迪/正方账号")
-                null -> viewModel.showUserMessage("未绑定一键更新账号，请在设置→数据与同步绑定起迪/正方")
+                SyncProviderType.WAKEUP -> viewModel.showUserMessage("WakeUp 口令一键更新已下线，请绑定正方教务账号")
+                null -> viewModel.showUserMessage("未绑定自动更新账号，请在设置→数据与同步绑定正方教务")
             }
         },
         onSettingsClick = onSettingsClick,
