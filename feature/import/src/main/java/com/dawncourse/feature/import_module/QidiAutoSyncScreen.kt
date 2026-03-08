@@ -92,9 +92,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.Semester
@@ -278,8 +280,8 @@ fun QidiAutoSyncScreen(
         SyncProviderType.ZF -> "正方"
         else -> "教务"
     }
-    var title by remember { mutableStateOf("$providerName 一键更新（实验）") }
-    var subTitle by remember { mutableStateOf("请确认已在设置中绑定${providerName}账号") }
+    var title by remember { mutableStateOf("$providerName 自动更新（实验）") }
+    var subTitle by remember { mutableStateOf("仅支持新正方系统，功能为实验性质，有待进一步测试") }
     var loading by remember { mutableStateOf(false) }
     var webView: WebView? by remember { mutableStateOf(null) }
     val scope = rememberCoroutineScope()
@@ -343,9 +345,40 @@ fun QidiAutoSyncScreen(
     var diffItems by remember { mutableStateOf<List<DiffItem>>(emptyList()) }
     val diffSelections = remember { mutableStateListOf<Boolean>() }
     var pendingParsedCourses by remember { mutableStateOf<List<ParsedCourse>>(emptyList()) }
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorDialogText by remember { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
+    val autoUpdateSupported = provider == SyncProviderType.ZF
+    var autoStartRequested by remember { mutableStateOf(false) }
+    var autoStarted by remember { mutableStateOf(false) }
+    var autoTermApplied by remember { mutableStateOf(false) }
+    var autoExtractTriggered by remember { mutableStateOf(false) }
 
     fun addLog(message: String, type: SyncLogType = SyncLogType.INFO) {
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
+    }
+
+    fun buildErrorPayload(reason: String, throwable: Throwable? = null): String {
+        val logs = logItems.takeLast(12).joinToString("\n") { item ->
+            "[${item.time}] ${item.type.name} ${item.message}"
+        }
+        val exceptionText = if (throwable != null) {
+            "${throwable::class.java.simpleName}: ${throwable.message.orEmpty()}".trim()
+        } else {
+            ""
+        }
+        return listOf(
+            "原因：$reason",
+            "当前步骤：$currentStep",
+            "页面地址：$addressBar",
+            "异常信息：$exceptionText".trim(),
+            "最近日志：\n$logs"
+        ).filter { it.isNotBlank() }.joinToString("\n")
+    }
+
+    fun reportError(reason: String, throwable: Throwable? = null) {
+        errorDialogText = buildErrorPayload(reason, throwable)
+        showErrorDialog = true
     }
 
     fun applyOptionSnapshot(raw: String) {
@@ -379,52 +412,6 @@ fun QidiAutoSyncScreen(
         }
         if (terms.isNotEmpty()) {
             selectedTerm = terms.firstOrNull { it.first == termValue }?.first ?: terms.first().first
-        }
-    }
-
-    fun fetchSelectableOptions() {
-        val wv = webView
-        if (wv == null) {
-            addLog("WebView 未就绪", SyncLogType.WARNING)
-            return
-        }
-        scope.launch {
-            val res = suspendEvaluateJs(
-                wv,
-                """
-                (function(){
-                  try{
-                    // 修复：同时兼容 id 与 name 的学年学期下拉框
-                    var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
-                    var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
-                    var years=[];
-                    var terms=[];
-                    if(y && y.options){
-                      for(var i=0;i<y.options.length;i++){
-                        var o=y.options[i];
-                        if(o && o.value){ years.push({value:o.value,text:o.text}); }
-                      }
-                    }
-                    if(t && t.options){
-                      for(var j=0;j<t.options.length;j++){
-                        var o2=t.options[j];
-                        if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
-                      }
-                    }
-                    var yv = y ? y.value : '';
-                    var tv = t ? t.value : '';
-                    return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv});
-                  }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:''}); }
-                })();
-                """.trimIndent()
-            )
-            val txt = parseJsReturn(res)
-            if (txt.isNotBlank()) {
-                applyOptionSnapshot(txt)
-                addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-            } else {
-                addLog("未读取到学年学期选项", SyncLogType.WARNING)
-            }
         }
     }
 
@@ -519,6 +506,7 @@ fun QidiAutoSyncScreen(
                 subTitle = "未绑定${providerName}凭据，请在设置中绑定"
                 currentStep = "未绑定账号"
                 addLog("未绑定${providerName}凭据", SyncLogType.WARNING)
+                reportError("未绑定${providerName}凭据")
                 return@launch
             }
             val endpoint = creds.endpointUrl
@@ -531,6 +519,7 @@ fun QidiAutoSyncScreen(
                 subTitle = "请设置${providerName}教务入口地址"
                 showEndpointDialog = true
                 addLog("入口地址为空，等待用户输入", SyncLogType.WARNING)
+                reportError("入口地址为空，无法自动更新")
                 return@launch
             }
             loading = true
@@ -543,12 +532,19 @@ fun QidiAutoSyncScreen(
                 subTitle = "入口地址无效，请在设置中重新绑定"
                 currentStep = "入口地址无效"
                 addLog("入口地址无效", SyncLogType.WARNING)
+                reportError("入口地址无效")
                 return@launch
             }
             addressBar = normalized
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
         }
+    }
+
+    fun triggerAutoStartIfReady() {
+        if (!autoUpdateSupported || !autoStartRequested || autoStarted || webView == null) return
+        autoStarted = true
+        startSyncFlow()
     }
 
     fun startExtractFlow() {
@@ -563,6 +559,7 @@ fun QidiAutoSyncScreen(
                 subTitle = "WebView 未初始化"
                 currentStep = "WebView 未初始化"
                 addLog("WebView 未初始化", SyncLogType.ERROR)
+                reportError("WebView 未初始化")
                 return@launch
             }
             try {
@@ -705,6 +702,7 @@ fun QidiAutoSyncScreen(
                     loading = false
                     currentStep = "未提取到有效内容"
                     addLog("未提取到有效内容", SyncLogType.ERROR)
+                    reportError("未提取到有效内容")
                     return@launch
                 }
                 addLog("页面数据已获取", SyncLogType.SUCCESS)
@@ -727,6 +725,7 @@ fun QidiAutoSyncScreen(
                     loading = false
                     currentStep = "解析失败"
                     addLog("解析失败或未发现课程", SyncLogType.ERROR)
+                    reportError("解析失败或未发现课程")
                     return@launch
                 }
                 currentStep = "对比课表"
@@ -792,6 +791,64 @@ fun QidiAutoSyncScreen(
                 subTitle = "提取失败：请重试或更换入口"
                 currentStep = "提取失败"
                 addLog("提取失败", SyncLogType.ERROR)
+                reportError("提取失败")
+            }
+        }
+    }
+
+    fun fetchSelectableOptions() {
+        val wv = webView
+        if (wv == null) {
+            addLog("WebView 未就绪", SyncLogType.WARNING)
+            return
+        }
+        scope.launch {
+            val res = suspendEvaluateJs(
+                wv,
+                """
+                (function(){
+                  try{
+                    // 修复：同时兼容 id 与 name 的学年学期下拉框
+                    var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
+                    var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
+                    var years=[];
+                    var terms=[];
+                    if(y && y.options){
+                      for(var i=0;i<y.options.length;i++){
+                        var o=y.options[i];
+                        if(o && o.value){ years.push({value:o.value,text:o.text}); }
+                      }
+                    }
+                    if(t && t.options){
+                      for(var j=0;j<t.options.length;j++){
+                        var o2=t.options[j];
+                        if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
+                      }
+                    }
+                    var yv = y ? y.value : '';
+                    var tv = t ? t.value : '';
+                    return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv});
+                  }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:''}); }
+                })();
+                """.trimIndent()
+            )
+            val txt = parseJsReturn(res)
+            if (txt.isNotBlank()) {
+                applyOptionSnapshot(txt)
+                addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
+                if (autoUpdateSupported && syncStep == SyncStep.SelectTerm && !autoTermApplied) {
+                    autoTermApplied = true
+                    applySelectedTermToPage {
+                        syncStep = SyncStep.Compare
+                        subTitle = "已选择学年学期，正在自动提取与对比"
+                        if (!autoExtractTriggered) {
+                            autoExtractTriggered = true
+                            startExtractFlow()
+                        }
+                    }
+                }
+            } else {
+                addLog("未读取到学年学期选项", SyncLogType.WARNING)
             }
         }
     }
@@ -804,11 +861,16 @@ fun QidiAutoSyncScreen(
 
     LaunchedEffect(provider) {
         addLog("初始化同步页面：$providerName", SyncLogType.INFO)
+        if (!autoUpdateSupported) {
+            subTitle = "仅支持新正方系统自动更新"
+            return@LaunchedEffect
+        }
         val creds = viewModel.loadQidiCredentials()
         val needProvider = provider
         if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
             subTitle = "未绑定${providerName}凭据，请在设置中绑定"
             addLog("未找到可用凭据或提供者不一致", SyncLogType.WARNING)
+            reportError("未绑定${providerName}凭据")
             return@LaunchedEffect
         }
         credsForAutoFill = creds
@@ -818,6 +880,7 @@ fun QidiAutoSyncScreen(
             if (normalized.isNullOrBlank()) {
                 subTitle = "入口地址无效，请在设置中重新绑定"
                 addLog("入口地址无效：$endpoint", SyncLogType.WARNING)
+                reportError("入口地址无效")
                 return@LaunchedEffect
             }
             addressBar = normalized
@@ -830,9 +893,12 @@ fun QidiAutoSyncScreen(
                 subTitle = "正在打开${providerName}教务系统..."
                 addLog("等待 WebView 初始化", SyncLogType.INFO)
             }
+            autoStartRequested = true
+            triggerAutoStartIfReady()
         } else {
             subTitle = "请在上方地址栏手动输入或通过门户进入${providerName}教务系统，系统将自动记录入口"
             addLog("入口地址为空，等待手动输入", SyncLogType.WARNING)
+            autoStartRequested = true
         }
     }
 
@@ -851,6 +917,37 @@ fun QidiAutoSyncScreen(
             )
         }
     ) { paddingValues ->
+        if (showErrorDialog) {
+            AlertDialog(
+                onDismissRequest = { showErrorDialog = false },
+                title = { Text("自动更新出现错误") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "已自动汇总错误信息，可点击复制发送给开发者。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = errorDialogText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(errorDialogText))
+                            showErrorDialog = false
+                        }
+                    ) { Text("复制") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showErrorDialog = false }) { Text("关闭") }
+                }
+            )
+        }
         if (showEndpointDialog) {
             AlertDialog(
                 onDismissRequest = { showEndpointDialog = false },
@@ -1286,6 +1383,12 @@ fun QidiAutoSyncScreen(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 4.dp, top = 8.dp)
                 )
+                Text(
+                    text = "仅支持新正方系统，功能为实验性质，有待进一步测试",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp)
+                )
 
                 AnimatedStepCard(
                     stepNumber = 1,
@@ -1299,19 +1402,12 @@ fun QidiAutoSyncScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "点击下方按钮，后台将自动启动引擎并尝试登录教务系统。",
+                            text = "系统将自动启动引擎并尝试登录教务系统。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Button(
-                            onClick = { startSyncFlow() },
-                            enabled = !loading,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("开始连接", fontWeight = FontWeight.Bold)
+                        if (loading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -1416,19 +1512,12 @@ fun QidiAutoSyncScreen(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            text = "将从页面提取数据，并与本地当前学期课表进行差异对比。",
+                            text = "系统将自动提取数据，并与本地当前学期课表进行差异对比。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Button(
-                            onClick = { startExtractFlow() },
-                            enabled = !loading && !needManualLogin,
-                            modifier = Modifier.fillMaxWidth().height(50.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("立即提取", fontWeight = FontWeight.Bold)
+                        if (loading) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -1450,6 +1539,7 @@ fun QidiAutoSyncScreen(
                         wv.loadUrl(url)
                         addLog("触发预加载：$url", SyncLogType.INFO)
                     }
+                    triggerAutoStartIfReady()
                 },
                 onPageStarted = { url ->
                     loading = true
@@ -1606,8 +1696,8 @@ fun QidiAutoSyncScreen(
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
                                 }
-                            } catch (_: Throwable) {
-                                // ignore
+                            } catch (e: Throwable) {
+                                reportError("页面状态解析失败", e)
                             }
                         }
                     }
@@ -1649,7 +1739,8 @@ fun QidiAutoSyncScreen(
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
                                 }
-                            } catch (_: Throwable) {
+                            } catch (e: Throwable) {
+                                reportError("页面状态解析失败", e)
                             }
                         }
                     }
@@ -1662,6 +1753,7 @@ fun QidiAutoSyncScreen(
                             currentStep = "页面加载失败"
                             addLog("页面加载失败：$desc", SyncLogType.ERROR)
                         }
+                        reportError("页面加载失败：$desc")
                     }
                 }
             )

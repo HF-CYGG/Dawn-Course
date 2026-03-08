@@ -239,7 +239,6 @@ private sealed class SettingsDialogState {
     data object SectionTime : SettingsDialogState()
     data object BatchUpdateDuration : SettingsDialogState()
     data object SyncProvider : SettingsDialogState()
-    data object BindQidi : SettingsDialogState()
     data object BindZf : SettingsDialogState()
     data object ClearAllData : SettingsDialogState()
     data object Permission : SettingsDialogState()
@@ -786,7 +785,7 @@ private fun DataSyncSection(
                         Text("解绑")
                     }
                 } else {
-                    TextButton(onClick = { onShowDialog(SettingsDialogState.SyncProvider) }) { Text("绑定") }
+                    TextButton(onClick = { onShowDialog(SettingsDialogState.BindZf) }) { Text("绑定") }
                 }
             },
             showDivider = true
@@ -886,29 +885,15 @@ private fun SettingsDialogManager(
         SettingsDialogState.SyncProvider -> {
             AlertDialog(
                 onDismissRequest = onDismiss,
-                title = { Text("选择绑定方式") },
+                title = { Text("绑定正方教务") },
                 text = {
                     Column {
                         Text(
-                            text = "请选择教务系统进行账号绑定，绑定后可一键同步课程。",
+                            text = "仅支持正方教务账号绑定，绑定后可一键同步课程。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Card(
-                            onClick = { onChangeDialog(SettingsDialogState.BindQidi) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                            )
-                        ) {
-                            ListItem(
-                                leadingContent = { Icon(Icons.Default.School, null) },
-                                headlineContent = { Text("起迪教务") },
-                                supportingContent = { Text("适用于起迪教务系统账号登录") },
-                                modifier = Modifier.clickable { onChangeDialog(SettingsDialogState.BindQidi) }
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
                         Card(
                             onClick = { onChangeDialog(SettingsDialogState.BindZf) },
                             colors = CardDefaults.cardColors(
@@ -926,16 +911,6 @@ private fun SettingsDialogManager(
                 },
                 confirmButton = {
                     TextButton(onClick = onDismiss) { Text("取消") }
-                }
-            )
-        }
-        SettingsDialogState.BindQidi -> {
-            BindAccountDialog(
-                title = "绑定起迪教务",
-                onDismiss = onDismiss,
-                onConfirm = { endpoint, username, password ->
-                    viewModel.bindQidiCredentials(endpoint = endpoint, username = username, password = password)
-                    onDismiss()
                 }
             )
         }
