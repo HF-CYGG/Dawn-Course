@@ -54,14 +54,15 @@ function scheduleHtmlParser(html) {
             for (var c = 0; c < cells.length; c++) {
                 // 使用通用 stripTags 获取纯文本
                 var text = stripTags(cells[c]);
+                var reverseIdx = cells.length - 1 - c;
                 
-                if (text.indexOf("星期一") !== -1 || text.indexOf("周一") !== -1) dayMap[c] = 1;
-                else if (text.indexOf("星期二") !== -1 || text.indexOf("周二") !== -1) dayMap[c] = 2;
-                else if (text.indexOf("星期三") !== -1 || text.indexOf("周三") !== -1) dayMap[c] = 3;
-                else if (text.indexOf("星期四") !== -1 || text.indexOf("周四") !== -1) dayMap[c] = 4;
-                else if (text.indexOf("星期五") !== -1 || text.indexOf("周五") !== -1) dayMap[c] = 5;
-                else if (text.indexOf("星期六") !== -1 || text.indexOf("周六") !== -1) dayMap[c] = 6;
-                else if (text.indexOf("星期日") !== -1 || text.indexOf("周日") !== -1 || text.indexOf("星期天") !== -1) dayMap[c] = 7;
+                if (text.indexOf("星期一") !== -1 || text.indexOf("周一") !== -1) dayMap[reverseIdx] = 1;
+                else if (text.indexOf("星期二") !== -1 || text.indexOf("周二") !== -1) dayMap[reverseIdx] = 2;
+                else if (text.indexOf("星期三") !== -1 || text.indexOf("周三") !== -1) dayMap[reverseIdx] = 3;
+                else if (text.indexOf("星期四") !== -1 || text.indexOf("周四") !== -1) dayMap[reverseIdx] = 4;
+                else if (text.indexOf("星期五") !== -1 || text.indexOf("周五") !== -1) dayMap[reverseIdx] = 5;
+                else if (text.indexOf("星期六") !== -1 || text.indexOf("周六") !== -1) dayMap[reverseIdx] = 6;
+                else if (text.indexOf("星期日") !== -1 || text.indexOf("周日") !== -1 || text.indexOf("星期天") !== -1) dayMap[reverseIdx] = 7;
             }
             
             if (Object.keys(dayMap).length > 0) {
@@ -71,7 +72,8 @@ function scheduleHtmlParser(html) {
         } else {
             // 阶段二：解析数据行
             for (var c = 0; c < cells.length; c++) {
-                var day = dayMap[c];
+                var reverseIdx = cells.length - 1 - c;
+                var day = dayMap[reverseIdx];
                 if (!day) continue; 
 
                 var cellContent = cells[c];
