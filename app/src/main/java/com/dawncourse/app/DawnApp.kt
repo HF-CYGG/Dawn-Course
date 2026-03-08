@@ -17,5 +17,7 @@ class DawnApp : Application() {
         super.onCreate()
         // 调度 Widget 后台更新任务
         WidgetSyncManager.scheduleUpdate(this)
+        // 注册时间变化监听 (处理手动改时间/日期场景)
+        WidgetSyncManager.registerTimeChangeReceiver(this)
     }
 }

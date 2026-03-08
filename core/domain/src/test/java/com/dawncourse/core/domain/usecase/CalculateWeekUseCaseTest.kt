@@ -32,6 +32,30 @@ class CalculateWeekUseCaseTest {
     }
 
     @Test
+    fun `用户验证_模拟2026年3月9日开学场景`() {
+        val zone = ZoneId.systemDefault()
+        // 设定开学日期为 2026-03-09
+        val semesterStartDate = LocalDate.of(2026, 3, 9)
+        val startMillis = semesterStartDate.atStartOfDay(zone).toInstant().toEpochMilli()
+
+        // 场景1：当前日期为 2026-03-08 (开学前一天)
+        val dateBefore = LocalDate.of(2026, 3, 8)
+        val currentMillisBefore = dateBefore.atStartOfDay(zone).toInstant().toEpochMilli()
+        val weekBefore = useCase(startDateMillis = startMillis, currentMillis = currentMillisBefore)
+        
+        // 预期：第 0 周
+        assertEquals("3月8日应为第0周", 0, weekBefore)
+
+        // 场景2：当前日期为 2026-03-09 (开学当天)
+        val dateStart = LocalDate.of(2026, 3, 9)
+        val currentMillisStart = dateStart.atStartOfDay(zone).toInstant().toEpochMilli()
+        val weekStart = useCase(startDateMillis = startMillis, currentMillis = currentMillisStart)
+
+        // 预期：第 1 周
+        assertEquals("3月9日应为第1周", 1, weekStart)
+    }
+
+    @Test
     fun `跨周边界第8天返回第2周`() {
         val zone = ZoneId.systemDefault()
         val startDate = LocalDate.of(2026, 3, 2)
@@ -70,4 +94,3 @@ class CalculateWeekUseCaseTest {
         assertEquals(-1, week)
     }
 }
-

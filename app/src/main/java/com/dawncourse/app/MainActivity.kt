@@ -44,6 +44,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
+import com.dawncourse.feature.widget.worker.WidgetSyncManager
+
 /**
  * 应用程序主 Activity
  *
@@ -52,6 +54,12 @@ import androidx.compose.material3.TextButton
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    override fun onStart() {
+        super.onStart()
+        // 每次回到前台时，强制刷新 Widget，以防系统时间变更或其他状态变化未及时同步
+        WidgetSyncManager.updateWidgetNow(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
