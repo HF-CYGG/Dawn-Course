@@ -75,6 +75,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val ENABLE_PERSISTENT_NOTIFICATION = booleanPreferencesKey("enable_persistent_notification")
         val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
         val IGNORED_UPDATE_VERSION = intPreferencesKey("ignored_update_version")
+        val LAST_IMPORT_URL = stringPreferencesKey("last_import_url")
         val BLURRED_WALLPAPER_URI = stringPreferencesKey("blurred_wallpaper_uri")
         val BACKGROUND_BLUR = floatPreferencesKey("background_blur")
         val BACKGROUND_BRIGHTNESS = floatPreferencesKey("background_brightness")
@@ -139,6 +140,7 @@ class SettingsRepositoryImpl @Inject constructor(
         val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
         val enableAutoMute = preferences[PreferencesKeys.ENABLE_AUTO_MUTE] ?: false
         val ignoredUpdateVersion = preferences[PreferencesKeys.IGNORED_UPDATE_VERSION] ?: 0
+        val lastImportUrl = preferences[PreferencesKeys.LAST_IMPORT_URL]
         val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
         val backgroundBlur = preferences[PreferencesKeys.BACKGROUND_BLUR] ?: 0f
         val backgroundBrightness = preferences[PreferencesKeys.BACKGROUND_BRIGHTNESS] ?: 1.0f
@@ -173,6 +175,7 @@ class SettingsRepositoryImpl @Inject constructor(
             reminderMinutes = reminderMinutes,
             enablePersistentNotification = enablePersistentNotification,
             enableAutoMute = enableAutoMute,
+            lastImportUrl = lastImportUrl,
             ignoredUpdateVersion = ignoredUpdateVersion,
             blurredWallpaperUri = blurredWallpaperUri,
             backgroundBlur = backgroundBlur,
@@ -314,6 +317,10 @@ class SettingsRepositoryImpl @Inject constructor(
         dataStore.edit { it[PreferencesKeys.ENABLE_CLASS_REMINDER] = enable }
     }
 
+    override suspend fun clearAllSettings() {
+        dataStore.edit { it.clear() }
+    }
+
     override suspend fun setReminderMinutes(minutes: Int) {
         dataStore.edit { it[PreferencesKeys.REMINDER_MINUTES] = minutes }
     }
@@ -328,6 +335,16 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setIgnoredUpdateVersion(versionCode: Int) {
         dataStore.edit { it[PreferencesKeys.IGNORED_UPDATE_VERSION] = versionCode }
+    }
+
+    override suspend fun setLastImportUrl(url: String) {
+        dataStore.edit { preferences ->
+            if (url.isBlank()) {
+                preferences.remove(PreferencesKeys.LAST_IMPORT_URL)
+            } else {
+                preferences[PreferencesKeys.LAST_IMPORT_URL] = url
+            }
+        }
     }
 
     override suspend fun setBlurredWallpaperUri(uri: String?) {

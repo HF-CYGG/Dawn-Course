@@ -1,31 +1,25 @@
 package com.dawncourse.core.data.repository
 
+import androidx.room.withTransaction
 import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SyncCredentialType
-import com.dawncourse.core.domain.model.SyncCredentials
+import com.dawncourse.core.domain.model.SyncErrorCode
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.TimetableSyncResult
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
-import androidx.room.withTransaction
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.max
-import kotlin.math.min
+import kotlinx.coroutines.flow.first
 
+/**
+ * 课表同步仓库实现（WakeUp 提供者）
+ *
+ * 仅实现 WAKEUP 类型的一键更新：使用口令（TOKEN）拉取课程数据并替换当前学期的课程。
+ */
 @Singleton
 class TimetableSyncRepositoryImpl @Inject constructor(
     private val credentialsRepository: CredentialsRepository,
@@ -34,145 +28,144 @@ class TimetableSyncRepositoryImpl @Inject constructor(
     private val database: AppDatabase
 ) : TimetableSyncRepository {
 
-    override suspend fun syncCurrentSemester(): TimetableSyncResult = withContext(Dispatchers.IO) {
-        val currentSemester = semesterRepository.getCurrentSemester().firstOrNull()
-            ?: return@withContext TimetableSyncResult.Failure("未设置当前学期")
-        
-        val credentials = credentialsRepository.getCredentials()
-            ?: return@withContext TimetableSyncResult.Failure("未绑定同步账号")
+    override suspend fun syncCurrentSemester(): TimetableSyncResult {
+        val creds = credentialsRepository.getCredentials()
+            ?: return TimetableSyncResult.Failure(
+                code = SyncErrorCode.NO_CREDENTIALS,
+                message = "未绑定账号或口令"
+            )
 
-        return@withContext when (credentials.provider) {
-            SyncProviderType.WAKEUP -> syncWakeUp(credentials, currentSemester.id)
-            else -> TimetableSyncResult.Failure("暂不支持该教务系统同步: ${credentials.provider.name}")
-        }
-    }
-
-    private suspend fun syncWakeUp(
-        credentials: SyncCredentials,
-        semesterId: Long
-    ): TimetableSyncResult {
-        return try {
-            val rawCourses = fetchWakeUpCourses(credentials.secret)
-            if (rawCourses.isEmpty()) {
-                return TimetableSyncResult.Success("未获取到任何课程数据")
+        return when (creds.provider) {
+            SyncProviderType.WAKEUP -> {
+                syncWakeUp(creds)
             }
-
-            // 转换为领域模型
-            val newCourses = rawCourses.map { raw ->
-                Course(
-                    id = 0, // 自增 ID
-                    semesterId = semesterId,
-                    name = raw.name,
-                    teacher = raw.teacher,
-                    location = raw.room,
-                    dayOfWeek = raw.day,
-                    startSection = raw.startNode,
-                    duration = raw.step,
-                    startWeek = raw.startWeek,
-                    endWeek = raw.endWeek,
-                    weekType = Course.WEEK_TYPE_ALL, // 默认为全周
-                    color = generateRandomColor(),
-                    originId = 0, // 默认为 0
-                    isModified = false,
-                    note = ""
+            SyncProviderType.QIDI, SyncProviderType.ZF -> {
+                TimetableSyncResult.Failure(
+                    code = SyncErrorCode.AUTH_FAILED,
+                    message = "当前绑定为教务账号，请在主界面使用“一键更新”进入同步页面"
                 )
             }
-
-            // 执行数据库事务：清空当前学期旧数据 -> 插入新数据
-            // 注意：这里简单粗暴地清空重写，会丢失用户手动修改的信息。
-            // 但考虑到是“同步”，通常意味着以服务端为准。
-            val courseDao = database.courseDao()
-            // 获取当前学期所有课程并删除
-            // 由于 Dao 没有直接 deleteBySemester，我们先查询再逐个删除，或者使用 RawQuery (更高效但这里为了安全先用 Dao)
-            // 实际上为了性能，这里应该在 Dao 加一个 deleteBySemesterId，但为了不改动 Dao 接口导致重编译过多，先这样实现。
-            val existingCourses = courseDao.getCoursesBySemester(semesterId).first()
-            
-            // 使用 Room 事务保证原子性
-            database.withTransaction {
-                existingCourses.forEach { entity ->
-                    courseDao.deleteCourseById(entity.id)
-                }
-                // 批量插入需要转换成 Entity，但 CourseRepository 接口操作的是 Model。
-                // 这里我们直接调用 Repository 的 insertCourses 方法，它会处理转换。
-                // 但 Repository 方法是 suspend，不能直接在 Room 事务块中调用（除非 Room 支持 suspend 事务块，Room 2.1+ 支持）
-                // 我们的 withTransaction 是 suspend 函数，所以可以直接调用 suspend Dao 方法。
-                // 但 Repository 方法可能包装了 Dao 方法。
-                // 为了简单，我们直接调用 Repository。
-                // 但 withTransaction 需要 database 实例。
-                // 我们可以直接用 Dao 插入。
-                // 但我们需要把 Model 转 Entity。这在 Data 层是可以做的，但 Entity 是 internal 的吗？
-                // CourseEntity 是 public 的。
-                // 让我们直接用 Repository 的 insertCourses。
-                courseRepository.insertCourses(newCourses)
-            }
-
-            TimetableSyncResult.Success("已更新 ${newCourses.size} 门课程")
-        } catch (e: Exception) {
-            e.printStackTrace()
-            TimetableSyncResult.Failure(e.message ?: "同步失败")
         }
     }
 
-    private fun fetchWakeUpCourses(key: String): List<RawCourse> {
-        val urlString = "https://i.wakeup.fun/share_schedule/get?key=$key"
-        val url = URL(urlString)
-        val conn = url.openConnection() as HttpURLConnection
+    private suspend fun syncWakeUp(creds: com.dawncourse.core.domain.model.SyncCredentials): TimetableSyncResult {
+        if (creds.type != SyncCredentialType.TOKEN) {
+            return TimetableSyncResult.Failure(
+                code = SyncErrorCode.AUTH_FAILED,
+                message = "凭据类型错误（需 TOKEN/口令）"
+            )
+        }
+        val token = creds.secret
+
+        val currentSemester = semesterRepository.getCurrentSemester().first()
+            ?: return TimetableSyncResult.Failure(
+                code = SyncErrorCode.SERVER_ERROR,
+                message = "未设置当前学期"
+            )
+
+        val parsedCourses = try {
+            fetchWakeUpCourses(token)
+        } catch (e: java.net.SocketTimeoutException) {
+            return TimetableSyncResult.Failure(SyncErrorCode.NETWORK_ERROR, "网络超时")
+        } catch (e: java.io.IOException) {
+            return TimetableSyncResult.Failure(SyncErrorCode.NETWORK_ERROR, "网络异常：${e.message}")
+        } catch (e: org.json.JSONException) {
+            return TimetableSyncResult.Failure(SyncErrorCode.PARSE_ERROR, "数据解析失败")
+        } catch (e: Exception) {
+            return TimetableSyncResult.Failure(SyncErrorCode.UNKNOWN, "未知错误：${e.message}")
+        }
+
+        // 映射为领域模型
+        val domainCourses = parsedCourses.map { rc ->
+            Course(
+                semesterId = currentSemester.id,
+                name = rc.name,
+                teacher = rc.teacher,
+                location = rc.location,
+                dayOfWeek = rc.dayOfWeek,
+                startSection = rc.startSection,
+                duration = rc.duration,
+                startWeek = rc.startWeek,
+                endWeek = rc.endWeek
+            )
+        }
+
+        // 原子替换：删除当前学期课程 -> 插入新课程
+        database.withTransaction {
+            courseRepository.deleteCoursesBySemester(currentSemester.id)
+            if (domainCourses.isNotEmpty()) {
+                courseRepository.insertCourses(domainCourses)
+            }
+        }
+
+        return TimetableSyncResult.Success(
+            updatedCount = domainCourses.size,
+            message = "已更新 ${domainCourses.size} 门课程"
+        )
+    }
+
+    /**
+     * 远端结果的简化模型（仅保留映射所需字段）
+     */
+    private data class RawCourse(
+        val name: String,
+        val teacher: String,
+        val location: String,
+        val dayOfWeek: Int,
+        val startSection: Int,
+        val duration: Int,
+        val startWeek: Int,
+        val endWeek: Int
+    )
+
+    private fun fetchWakeUpCourses(token: String): List<RawCourse> {
+        val urlStr = "https://i.wakeup.fun/share_schedule/get?key=$token"
+        val url = java.net.URL(urlStr)
+        val conn = url.openConnection() as java.net.HttpURLConnection
         conn.requestMethod = "GET"
         conn.setRequestProperty("User-Agent", "okhttp/3.14.9")
         conn.setRequestProperty("version", "243")
         conn.connectTimeout = 10000
         conn.readTimeout = 10000
 
-        val responseCode = conn.responseCode
-        if (responseCode == 401 || responseCode == 403) {
-            throw IllegalStateException("AUTH") // 对应 bytecode 的 "AUTH"
+        if (conn.responseCode != 200) {
+            if (conn.responseCode == 401 || conn.responseCode == 403) {
+                throw IllegalStateException("AUTH")
+            }
+            throw java.io.IOException("HTTP ${conn.responseCode}")
         }
-        if (responseCode != 200) {
-            throw java.io.IOException("HTTP $responseCode")
-        }
+        val responseText = conn.inputStream.bufferedReader().use { it.readText() }
 
-        val responseBody = conn.inputStream.use { stream ->
-            BufferedReader(InputStreamReader(stream)).readText()
-        }
-
-        val json = JSONObject(responseBody)
-        val code = json.optInt("code")
-        if (code != 200) {
-            val msg = json.optString("msg")
+        val rootJson = org.json.JSONObject(responseText)
+        if (rootJson.optInt("code") != 200) {
+            val msg = rootJson.optString("msg")
             throw java.io.IOException("API Error: $msg")
         }
-
-        val dataStr = json.optString("data")
-        if (dataStr.isBlank()) return emptyList()
-
-        // 解析数据格式：Split by \n
-        // Part 3: Course names map
-        // Part 4: Schedule list
-        val parts = dataStr.split("\n", limit = 6)
+        val dataStr = rootJson.optString("data")
+        val parts = dataStr.split("\n")
         if (parts.size < 5) {
             throw org.json.JSONException("invalid parts")
         }
 
-        val namesJson = JSONArray(parts[3])
-        val courseNameMap = mutableMapOf<Int, String>()
-        for (i in 0 until namesJson.length()) {
-            val item = namesJson.getJSONObject(i)
+        // 课程名称映射 (parts[3])
+        val nameArray = org.json.JSONArray(parts[3])
+        val nameMap = mutableMapOf<Int, String>()
+        for (i in 0 until nameArray.length()) {
+            val item = nameArray.getJSONObject(i)
             val id = item.optInt("id")
             val name = item.optString("courseName")
-            courseNameMap[id] = name
+            nameMap[id] = name
         }
 
-        val scheduleJson = JSONArray(parts[4])
-        val result = ArrayList<RawCourse>()
-
-        for (i in 0 until scheduleJson.length()) {
-            val item = scheduleJson.getJSONObject(i)
+        // 课程明细 (parts[4])
+        val rawCourses = org.json.JSONArray(parts[4])
+        val result = mutableListOf<RawCourse>()
+        for (i in 0 until rawCourses.length()) {
+            val item = rawCourses.getJSONObject(i)
             val id = item.optInt("id")
-            val name = courseNameMap[id] ?: "-"
-            
+            val name = nameMap[id] ?: "-"
             val room = item.optString("room", "-")
             val teacher = item.optString("teacher", "-")
-            
             val startWeek = item.optInt("startWeek")
             val endWeek = item.optInt("endWeek")
             val day = item.optInt("day")
@@ -183,37 +176,15 @@ class TimetableSyncRepositoryImpl @Inject constructor(
                 RawCourse(
                     name = name,
                     teacher = teacher,
-                    room = room,
-                    day = day,
-                    startNode = startNode,
-                    step = step,
+                    location = room,
+                    dayOfWeek = day,
+                    startSection = startNode,
+                    duration = step,
                     startWeek = startWeek,
                     endWeek = endWeek
                 )
             )
         }
         return result
-    }
-
-    private data class RawCourse(
-        val name: String,
-        val teacher: String,
-        val room: String,
-        val day: Int,
-        val startNode: Int,
-        val step: Int,
-        val startWeek: Int,
-        val endWeek: Int
-    )
-
-    private fun generateRandomColor(): String {
-        // Material Colors 500
-        val colors = listOf(
-            "#F44336", "#E91E63", "#9C27B0", "#673AB7", "#3F51B5",
-            "#2196F3", "#03A9F4", "#00BCD4", "#009688", "#4CAF50",
-            "#8BC34A", "#CDDC39", "#FFEB3B", "#FFC107", "#FF9800",
-            "#FF5722", "#795548", "#9E9E9E", "#607D8B"
-        )
-        return colors.random()
     }
 }

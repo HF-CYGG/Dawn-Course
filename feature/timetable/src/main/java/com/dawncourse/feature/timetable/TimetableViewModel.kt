@@ -10,8 +10,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.dawncourse.core.domain.model.SyncProviderType
+import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
+import com.dawncourse.core.domain.usecase.RunTimetableSyncUseCase
+import com.dawncourse.core.domain.model.TimetableSyncResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -69,7 +73,9 @@ sealed interface TimetableUiState {
 class TimetableViewModel @Inject constructor(
     private val repository: CourseRepository,
     private val semesterRepository: SemesterRepository,
-    private val calculateWeekUseCase: CalculateWeekUseCase
+    private val calculateWeekUseCase: CalculateWeekUseCase,
+    private val runTimetableSyncUseCase: RunTimetableSyncUseCase,
+    private val credentialsRepository: CredentialsRepository
 ) : ViewModel() {
 
     /**
@@ -163,6 +169,13 @@ class TimetableViewModel @Inject constructor(
             initialValue = TimetableUiState.Loading
         )
 
+    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
     /**
      * 更新当前展示的周次
      *
@@ -200,6 +213,10 @@ class TimetableViewModel @Inject constructor(
      */
     fun userMessageShown() {
         _userMessage.value = null
+    }
+
+    fun showUserMessage(message: String) {
+        _userMessage.value = message
     }
 
     /**
@@ -256,6 +273,24 @@ class TimetableViewModel @Inject constructor(
      */
     fun deleteCourse(course: Course) {
         deleteCoursesWithUndo(listOf(course))
+    }
+
+    /**
+     * 一键更新课表
+     *
+     * 调用用例执行同步流程，并通过用户消息反馈结果。
+     */
+    fun syncNow() {
+        viewModelScope.launch {
+            when (val result = runTimetableSyncUseCase()) {
+                is TimetableSyncResult.Success -> {
+                    _userMessage.value = "更新成功：${result.message}"
+                }
+                is TimetableSyncResult.Failure -> {
+                    _userMessage.value = "更新失败：${result.message}"
+                }
+            }
+        }
     }
 
     /**

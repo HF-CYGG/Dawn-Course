@@ -99,4 +99,12 @@ class CourseRepositoryImpl @Inject constructor(
     override suspend fun getMaxWeekInSemester(semesterId: Long): Int {
         return courseDao.getMaxWeekInSemester(semesterId) ?: 0
     }
+
+    override suspend fun deleteCoursesBySemester(semesterId: Long) {
+        courseDao.deleteCoursesBySemester(semesterId)
+    }
+
+    override suspend fun deleteAllCourses() {
+        courseDao.deleteAllCourses()
+    }
 }

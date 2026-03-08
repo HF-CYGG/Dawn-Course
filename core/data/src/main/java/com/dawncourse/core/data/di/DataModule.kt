@@ -69,7 +69,7 @@ object DatabaseModule {
         .fallbackToDestructiveMigration()
         .build()
     }
-
+    
     /**
      * 提供 [CourseDao] 实例
      *
@@ -129,13 +129,13 @@ abstract class RepositoryModule {
 
     @Binds
     @Singleton
-    abstract fun bindTimetableSyncRepository(
-        impl: TimetableSyncRepositoryImpl
-    ): TimetableSyncRepository
-
-    @Binds
-    @Singleton
     abstract fun bindSyncStateRepository(
         impl: SyncStateRepositoryImpl
     ): SyncStateRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindTimetableSyncRepository(
+        impl: TimetableSyncRepositoryImpl
+    ): TimetableSyncRepository
 }

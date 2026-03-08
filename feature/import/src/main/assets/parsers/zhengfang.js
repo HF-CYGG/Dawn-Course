@@ -59,7 +59,7 @@ function parseNewZhengfang(html) {
             teacher = extractTextByTitle(blockHtml, "教师");
             if (!teacher) teacher = extractTextByTitle(blockHtml, "任课教师");
             if (teacher) {
-                teacher = teacher.replace(/教师\s*[:：]?\s*/g, "").replace(/任课教师\s*[:：]?\s*/g, "").trim();
+                teacher = cleanTeacherName(teacher);
             }
             location = extractTextByTitle(blockHtml, "上课地点");
             if (!location) location = extractTextByTitle(blockHtml, "教室");
@@ -85,7 +85,7 @@ function parseNewZhengfang(html) {
                 if (!teacher) {
                     var teacherTextMatch = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(text);
                     if (teacherTextMatch) {
-                        teacher = teacherTextMatch[1].trim();
+                        teacher = cleanTeacherName(teacherTextMatch[1].trim());
                     }
                     if (!teacher) {
                         var teacherTextMatch2 = /(教师|任课教师)\s*[:：]?\s*([\s\S]*?)(?=周数|节次|上课地点|教室|校区|$)/.exec(text);
@@ -145,7 +145,12 @@ function parseNewZhengfang(html) {
         var listTeacher = extractTextByTitle(listBlockHtml, "教师");
         if (!listTeacher) listTeacher = extractTextByTitle(listBlockHtml, "任课教师");
         if (listTeacher) {
-            listTeacher = listTeacher.replace(/教师\s*[:：]?\s*/g, "").replace(/任课教师\s*[:：]?\s*/g, "").trim();
+            listTeacher = cleanTeacherName(listTeacher);
+        } else {
+            var listTeacherMatch = /教师\s*[:：]?\s*([^\s/，,;；]+)/.exec(listText);
+            if (listTeacherMatch) {
+                listTeacher = cleanTeacherName(listTeacherMatch[1].trim());
+            }
         }
         var listLocation = extractTextByTitle(listBlockHtml, "上课地点");
         if (!listLocation) listLocation = extractTextByTitle(listBlockHtml, "教室");
@@ -248,7 +253,7 @@ function parseOldZhengfang(html) {
                 
                 var name = rawInfo[idx-1];
                 var timeStr = rawInfo[idx];
-                var teacher = (idx + 1 < rawInfo.length) ? rawInfo[idx+1] : "";
+                var teacher = (idx + 1 < rawInfo.length) ? cleanTeacherName(rawInfo[idx+1]) : "";
                 var location = (idx + 2 < rawInfo.length) ? rawInfo[idx+2] : "";
                 
                 // 解析 Day
@@ -311,4 +316,181 @@ function parseOldTimeRanges(rawTime) {
         result.push(range);
     }
     return result;
+}
+function sanitizePlainText(rawHtml) {
+    if (!rawHtml) return "";
+    var text = String(rawHtml);
+    text = removeHtmlTags(text);
+    text = decodeHtmlEntities(text);
+    // Decode后再次清洗，防止实体解码产生新标签
+    text = removeHtmlTags(text);
+    return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 移除HTML标签（循环移除防止嵌套绕过）
+ */
+function removeHtmlTags(rawText) {
+    var result = String(rawText);
+    var previous;
+    do {
+        previous = result;
+        result = result.replace(/<[^>]*>/g, "");
+    } while (result !== previous);
+    return result.replace(/[<>]/g, "");
+}
+
+/**
+ * 解码HTML实体
+ */
+function decodeHtmlEntities(text) {
+    if (!text) return "";
+    var entities = {
+        '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>',
+        '&quot;': '"', '&apos;': "'", '&#039;': "'"
+    };
+    return text.replace(/&[a-zA-Z0-9#]+;/g, function(match) {
+        return entities[match] || match;
+    });
+}
+
+function stripTags(html) {
+    var text = removeHtmlTags(html);
+    text = decodeHtmlEntities(text);
+    return removeHtmlTags(text).replace(/\s+/g, " ").trim();
+}
+
+function normalizeText(html) {
+    return stripTags(html).replace(/\s+/g, " ").replace(/：/g, ":").trim();
+}
+
+function cleanTeacherName(raw) {
+    if (!raw) return "";
+    var text = stripTags(raw);
+    text = text.replace(/教师\s*[:：]?\s*/g, "").trim();
+    var keywordRegex = /(教学班组成|教学班|选课备注|考核方式|课程学时组成|总学时|学时|学分|班级|课程性质|课程类别)\s*[:：]?/;
+    var match = keywordRegex.exec(text);
+    if (match) {
+        text = text.substring(0, match.index).trim();
+    }
+    text = text.replace(/[，,;；]\s*$/, "").trim();
+    return text;
+}
+
+function extractName(blockHtml) {
+    var titleMatch = /<([a-zA-Z]+)[^>]*class=["']?title[^>]*>([\s\S]*?)<\/\1>/i.exec(blockHtml);
+    if (titleMatch) {
+        return stripTags(titleMatch[2]).trim();
+    }
+    var altMatch = /<u[^>]*class=["']?title[^>]*>([\s\S]*?)<\/u>/i.exec(blockHtml);
+    if (altMatch) {
+        return stripTags(altMatch[1]).trim();
+    }
+    return "";
+}
+
+function extractTextByTitle(blockHtml, titleText) {
+    var pattern = 'title=["\']?' + titleText + '\\s*["\']?[^>]*>[\\s\\S]*?<\\/span>\\s*<font[^>]*>([\\s\\S]*?)<\\/font>';
+    var match = new RegExp(pattern, "i").exec(blockHtml);
+    if (match) {
+        return stripTags(match[1]).trim();
+    }
+    return "";
+}
+
+function extractWeeksStr(text) {
+    var weeksMatch = /周数\s*[:：]?\s*([^教师节次校区]+?周[^教师节次校区]*)/i.exec(text);
+    if (weeksMatch) return weeksMatch[1].trim();
+    var rangeMatch = /(\d+\s*[-至~～—－]\s*\d+\s*周[^\s]*)/i.exec(text);
+    if (rangeMatch) return rangeMatch[1].trim();
+    var singleMatch = /(\d+\s*周[^\s]*)/i.exec(text);
+    if (singleMatch) return singleMatch[1].trim();
+    return "";
+}
+
+function extractSectionsStr(text) {
+    var sectionMatch = /节次\s*[:：]?\s*(\d+)\s*[-至~～—－]\s*(\d+)/i.exec(text);
+    if (sectionMatch) return sectionMatch[1] + "-" + sectionMatch[2] + "节";
+    var rangeMatch = /第?\s*(\d+)\s*[-至~～—－]\s*(\d+)\s*节/i.exec(text);
+    if (rangeMatch) return rangeMatch[1] + "-" + rangeMatch[2] + "节";
+    var singleMatch = /第?\s*(\d+)\s*节/i.exec(text);
+    if (singleMatch) return singleMatch[1] + "节";
+    return "";
+}
+
+function dedupeCourses(courses) {
+    var map = {};
+    var result = [];
+    for (var i = 0; i < courses.length; i++) {
+        var course = courses[i];
+        var key = [
+            course.name || "",
+            course.teacher || "",
+            course.position || "",
+            course.day || "",
+            (course.weeks || []).join("_"),
+            (course.sections || []).join("_")
+        ].join("|");
+        if (!map[key]) {
+            map[key] = true;
+            result.push(course);
+        }
+    }
+    return result;
+}
+
+function parseWeeks(str) {
+    var weeks = [];
+    if (!str) return weeks;
+
+    var type = 0; // 0:全, 1:单, 2:双
+    if (str.indexOf("单") > -1) type = 1;
+    if (str.indexOf("双") > -1) type = 2;
+
+    str = str.replace(/周数[:：]/g, '');
+    str = str.replace(/共\d+周|共\d+次|共\d+节/g, '');
+    str = str.replace(/[至~～—－]/g, '-');
+    str = str.replace(/周|单|双|\(|\)|（|）/g, '');
+    
+    var parts = str.split(/[,，;、]/); 
+
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i].trim();
+        if (part.indexOf('-') > -1) {
+            var range = part.split('-');
+            var start = parseInt(range[0]);
+            var end = parseInt(range[1]);
+            if (!isNaN(start) && !isNaN(end)) {
+                for (var w = start; w <= end; w++) {
+                    if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) {
+                        weeks.push(w);
+                    }
+                }
+            }
+        } else if (part !== '') {
+            var week = parseInt(part);
+            if (!isNaN(week)) {
+                 if (type === 0 || (type === 1 && week % 2 !== 0) || (type === 2 && week % 2 === 0)) {
+                    weeks.push(week);
+                }
+            }
+        }
+    }
+    return weeks;
+}
+
+function parseSections(sectionsString) {
+    var sections = [];
+    var str = sectionsString.replace(/第/g, "").replace(/节次[:：]/g, "").replace(/节/g, "").replace(/[\(（\)）]/g, "");
+    str = str.replace(/[至~～—－]/g, "-");
+    var parts = str.split("-");
+    var start = parseInt(parts[0]);
+    var end = parseInt(parts[1] || parts[0]);
+    
+    if (!isNaN(start)) {
+        for (var s = start; s <= end; s++) {
+            sections.push(s);
+        }
+    }
+    return sections;
 }

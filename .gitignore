@@ -56,13 +56,10 @@ hs_err_pid*.log
 replay_pid*.log
 
 # Specific project ignores
-/docs/
 /server/
 /e.g/
 /scripts/git-smart-proxy.ps1
-docs/releases/
-
+/docs/
+/docs/releases/
 /ios-app
 /classCrawl-main
-/e.g
-

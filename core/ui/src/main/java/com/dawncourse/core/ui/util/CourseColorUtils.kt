@@ -28,6 +28,11 @@ object CourseColorUtils {
     )
 
     /**
+     * 获取课程预设色列表（用于颜色选择器与课表展示统一）
+     */
+    fun getPresetColors(): List<String> = PRESET_COLORS
+
+    /**
      * 为课程获取显示颜色
      *
      * 如果课程已有自定义颜色，则使用之。

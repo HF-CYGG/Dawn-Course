@@ -12,47 +12,53 @@ import com.dawncourse.core.domain.model.LastSyncInfo
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
-private val Context.syncStateDataStore: DataStore<Preferences> by preferencesDataStore(name = "sync_state")
+private val Context.syncDataStore: DataStore<Preferences> by preferencesDataStore(name = "sync_state")
 
+/**
+ * 同步状态仓库实现
+ *
+ * 使用 DataStore Preferences 持久化最近一次同步信息。
+ */
 @Singleton
 class SyncStateRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context
 ) : SyncStateRepository {
-    private val dataStore = context.syncStateDataStore
+
+    private val dataStore = context.syncDataStore
 
     private object Keys {
-        val TIMESTAMP = longPreferencesKey("last_sync_timestamp")
-        val SUCCESS = booleanPreferencesKey("last_sync_success")
-        val MESSAGE = stringPreferencesKey("last_sync_message")
-        val PROVIDER = stringPreferencesKey("last_sync_provider")
+        val LAST_SYNC_TS = longPreferencesKey("dc_sync.last_ts")
+        val LAST_SYNC_SUCCESS = booleanPreferencesKey("dc_sync.last_success")
+        val LAST_SYNC_MSG = stringPreferencesKey("dc_sync.last_msg")
+        val LAST_SYNC_PROVIDER = stringPreferencesKey("dc_sync.last_provider")
     }
 
     override val lastSyncInfo: Flow<LastSyncInfo> = dataStore.data.map { prefs ->
-        val providerName = prefs[Keys.PROVIDER]
+        val providerName = prefs[Keys.LAST_SYNC_PROVIDER]
         val provider = providerName?.let { runCatching { SyncProviderType.valueOf(it) }.getOrNull() }
         LastSyncInfo(
-            timestamp = prefs[Keys.TIMESTAMP] ?: 0L,
-            success = prefs[Keys.SUCCESS] ?: false,
-            message = prefs[Keys.MESSAGE] ?: "",
+            timestamp = prefs[Keys.LAST_SYNC_TS] ?: 0L,
+            success = prefs[Keys.LAST_SYNC_SUCCESS] ?: false,
+            message = prefs[Keys.LAST_SYNC_MSG] ?: "",
             provider = provider
         )
     }
 
     override suspend fun setLastSyncInfo(info: LastSyncInfo) {
         dataStore.edit { prefs ->
-            prefs[Keys.TIMESTAMP] = info.timestamp
-            prefs[Keys.SUCCESS] = info.success
-            prefs[Keys.MESSAGE] = info.message
+            prefs[Keys.LAST_SYNC_TS] = info.timestamp
+            prefs[Keys.LAST_SYNC_SUCCESS] = info.success
+            prefs[Keys.LAST_SYNC_MSG] = info.message
             val provider = info.provider
             if (provider == null) {
-                prefs.remove(Keys.PROVIDER)
+                prefs.remove(Keys.LAST_SYNC_PROVIDER)
             } else {
-                prefs[Keys.PROVIDER] = provider.name
+                prefs[Keys.LAST_SYNC_PROVIDER] = provider.name
             }
         }
     }

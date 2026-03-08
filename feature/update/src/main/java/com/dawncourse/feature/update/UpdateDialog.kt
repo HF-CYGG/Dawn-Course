@@ -46,12 +46,12 @@ import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.rounded.ArrowDropDown
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -198,7 +198,7 @@ fun UpdateDialog(
                                         Icon(Icons.Rounded.ArrowDropDown, contentDescription = "更多选项")
                                     }
                                     
-                                    DropdownMenu(
+                                    AnimatedDropdownMenu(
                                         expanded = expanded,
                                         onDismissRequest = { expanded = false }
                                     ) {

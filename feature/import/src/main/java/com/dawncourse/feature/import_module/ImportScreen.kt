@@ -2,9 +2,14 @@ package com.dawncourse.feature.import_module
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.URLUtil
+import android.webkit.WebResourceError
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -488,7 +493,6 @@ private fun SelectionStep(
             icon = Icons.Default.Security,
             onClick = { onOpenQiangZhiDialog(deriveQiangZhiBaseUrl(uiState.webUrl)) }
         )
-
         // 选项卡：ICS 文件导入
         ImportOptionCard(
             title = "ICS 日历文件导入",
@@ -634,6 +638,50 @@ private fun WebViewStep(
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
+    var showNoDataDialog by remember { mutableStateOf(false) }
+    var pendingHtmlForExport by remember { mutableStateOf("") }
+    val noDataMessage = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载"
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        if (uri == null) {
+            pendingHtmlForExport = ""
+            return@rememberLauncherForActivityResult
+        }
+        runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+                stream.write(pendingHtmlForExport.toByteArray())
+            }
+        }.onSuccess {
+            Toast.makeText(context, "已保存页面源码文件", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            Toast.makeText(context, "保存失败，请重试", Toast.LENGTH_SHORT).show()
+        }
+        pendingHtmlForExport = ""
+    }
+
+    fun normalizeUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isBlank()) return null
+        val cleaned = trimmed.trimStart { it == ';' || it == ' ' || it == '\u3000' }
+        val guessed = URLUtil.guessUrl(cleaned)
+        return if (URLUtil.isNetworkUrl(guessed)) guessed else null
+    }
+
+    LaunchedEffect(uiState.webUrl) {
+        if (uiState.webUrl.isNotBlank()) {
+            val normalized = normalizeUrl(uiState.webUrl) ?: uiState.webUrl
+            if (normalized != inputUrl) {
+                inputUrl = normalized
+            }
+        }
+    }
+
+    LaunchedEffect(uiState.resultText) {
+        if (uiState.resultText == noDataMessage) {
+            showNoDataDialog = true
+        }
+    }
 
     fun normalizeHttpUrl(raw: String): String? {
         val trimmed = raw.trim()
@@ -687,9 +735,46 @@ private fun WebViewStep(
         }
     }
 
+    if (showNoDataDialog) {
+        AlertDialog(
+            onDismissRequest = { showNoDataDialog = false },
+            title = { Text("需要帮助解析吗？") },
+            text = {
+                Text(
+                    "可以一键导出当前页面源码为 txt 文件，便于你脱敏后提交给开发者定位问题。" +
+                        "\n导出的文件可能包含个人信息，请先自行或让 AI 脱敏，仅保留页面结构。" +
+                        "\n不想提交可以直接关闭。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            val html = parseJavascriptResult(
+                                evaluateJs("document.documentElement.outerHTML")
+                            )
+                            if (html.isBlank()) {
+                                Toast.makeText(context, "未获取到页面源码", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
+                            pendingHtmlForExport = html
+                            exportLauncher.launch("课表页面源码.txt")
+                        }
+                        showNoDataDialog = false
+                    }
+                ) {
+                    Text("导出并保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNoDataDialog = false }) {
+                    Text("关闭")
+                }
+            }
+        )
+    }
     val qiangZhiBaseUrl = deriveQiangZhiBaseUrl(uiState.webUrl)
     val showQiangZhiHint = remember(uiState.webUrl) { isQiangZhiHost(uiState.webUrl) }
-
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部地址栏
         Surface(
@@ -788,11 +873,27 @@ private fun WebViewStep(
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.databaseEnabled = true
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    settings.loadsImagesAutomatically = true
+                    settings.blockNetworkImage = false
                     settings.useWideViewPort = true
                     settings.loadWithOverviewMode = true
                     settings.setSupportZoom(true)
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
+                    // 允许 Cookie，确保登录态与跳转正常
+                    android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                        android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    }
+                    // 修正部分教务系统对 WebView UA 的屏蔽
+                    settings.userAgentString = settings.userAgentString.replace("wv", "")
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            isLoading = newProgress < 100
+                        }
+                    }
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -812,17 +913,34 @@ private fun WebViewStep(
                             return !isSafeHttpUrl(targetUrl)
                         }
 
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            error: WebResourceError?
+                        ) {
+                            if (request?.isForMainFrame == true) {
+                                isLoading = false
+                                viewModel.updateResultText("页面加载失败，请检查网络或网址后重试。")
+                            }
+                        }
+
                         override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
                             isLoading = true
-                            url?.let { inputUrl = it }
+                            url?.let {
+                                inputUrl = it
+                                viewModel.updateWebUrl(it)
+                            }
                         }
                         
                         
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
                             isLoading = false
-                            url?.let { inputUrl = it }
+                            url?.let {
+                                inputUrl = it
+                                viewModel.updateWebUrl(it)
+                            }
                         }
                     }
                     if (uiState.webUrl.isNotBlank()) {
