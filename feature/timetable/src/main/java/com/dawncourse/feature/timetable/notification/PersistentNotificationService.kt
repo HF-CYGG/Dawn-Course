@@ -10,14 +10,13 @@ import androidx.core.app.NotificationManagerCompat
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
-import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 
 /**
@@ -35,6 +34,8 @@ class PersistentNotificationService : Service() {
 
     @Inject lateinit var courseRepository: CourseRepository
     @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var semesterRepository: SemesterRepository
+    @Inject lateinit var calculateWeekUseCase: CalculateWeekUseCase
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
@@ -128,20 +129,13 @@ class PersistentNotificationService : Service() {
 
             val today = LocalDate.now()
             val dayOfWeek = today.dayOfWeek.value // 1 (Mon) to 7 (Sun)
-            
-            // Calculate Current Week
-            var currentWeek = 1
-            if (settings.startDateTimestamp > 0L) {
-                val startDate = java.time.Instant.ofEpochMilli(settings.startDateTimestamp)
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate()
-                val daysDiff = ChronoUnit.DAYS.between(startDate, today)
-                if (daysDiff >= 0) {
-                    currentWeek = (daysDiff / 7).toInt() + 1
-                }
+            val currentSemester = semesterRepository.getCurrentSemester().first()
+            val currentWeek = currentSemester?.let { calculateWeekUseCase(it.startDate) } ?: 0
+            val allCourses = if (currentSemester != null && currentWeek > 0 && currentWeek <= currentSemester.weekCount) {
+                courseRepository.getCoursesBySemester(currentSemester.id).first()
+            } else {
+                emptyList()
             }
-
-            val allCourses = courseRepository.getAllCourses().first()
             val todayCourses = allCourses.filter { course ->
                 // 1. Check Day of Week
                 if (course.dayOfWeek != dayOfWeek) return@filter false

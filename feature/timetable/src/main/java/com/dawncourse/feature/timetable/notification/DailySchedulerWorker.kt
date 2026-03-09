@@ -10,6 +10,8 @@ import androidx.work.WorkerParameters
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -19,7 +21,6 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 
 /**
  * 每日调度任务 (WorkManager)
@@ -39,6 +40,8 @@ class DailySchedulerWorker(
     interface WorkerEntryPoint {
         fun courseRepository(): CourseRepository
         fun settingsRepository(): SettingsRepository
+        fun semesterRepository(): SemesterRepository
+        fun calculateWeekUseCase(): CalculateWeekUseCase
     }
 
     override suspend fun doWork(): Result {
@@ -49,28 +52,23 @@ class DailySchedulerWorker(
         )
         val courseRepo = entryPoint.courseRepository()
         val settingsRepo = entryPoint.settingsRepository()
+        val semesterRepo = entryPoint.semesterRepository()
+        val calculateWeekUseCase = entryPoint.calculateWeekUseCase()
         val settings = settingsRepo.settings.first()
 
         // 如果所有相关功能都未开启，直接返回
         if (!settings.enableClassReminder && !settings.enableAutoMute) return Result.success()
 
+        val currentSemester = semesterRepo.getCurrentSemester().first() ?: return Result.success()
         val today = LocalDate.now()
         val dayOfWeek = today.dayOfWeek.value // 1 (Mon) to 7 (Sun)
         
         // 计算当前周次
-        var currentWeek = 1
-        if (settings.startDateTimestamp > 0L) {
-            val startDate = java.time.Instant.ofEpochMilli(settings.startDateTimestamp)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-            val daysDiff = ChronoUnit.DAYS.between(startDate, today)
-            if (daysDiff >= 0) {
-                currentWeek = (daysDiff / 7).toInt() + 1
-            }
-        }
+        val currentWeek = calculateWeekUseCase(currentSemester.startDate)
+        if (currentWeek <= 0 || currentWeek > currentSemester.weekCount) return Result.success()
 
         // 获取并筛选今日课程
-        val allCourses = courseRepo.getAllCourses().first()
+        val allCourses = courseRepo.getCoursesBySemester(currentSemester.id).first()
         val todayCourses = allCourses.filter { course ->
             // 1. 检查星期
             if (course.dayOfWeek != dayOfWeek) return@filter false
