@@ -14,11 +14,28 @@ import java.util.Collections
 import retrofit2.Response
 import retrofit2.Call
 
+/**
+ * 更新检查 API 接口定义
+ * 通过 Retrofit 调用服务端接口获取版本信息
+ */
 interface UpdateApi {
+    /**
+     * 获取最新版本信息
+     * 请求 version.json 文件
+     */
     @GET("version.json")
     fun getUpdateInfo(): Call<UpdateInfo>
 }
 
+/**
+ * 更新仓库
+ * 负责从网络获取最新的应用版本信息，支持多域名备选策略
+ *
+ * 主要职责：
+ * 1. 封装 Retrofit 网络请求
+ * 2. 实现主域名失败后的备用域名重试机制
+ * 3. 统一异常处理，返回 Result 类型
+ */
 @Singleton
 class UpdateRepository @Inject constructor() {
     /**
@@ -33,13 +50,18 @@ class UpdateRepository @Inject constructor() {
         cause: Throwable? = null
     ) : Exception(message, cause)
 
+    // 配置 OkHttpClient，设置超时和连接规格
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间
+        .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
         .readTimeout(15, TimeUnit.SECONDS)
-        // 显式允许明文传输，某些设备可能需要
+        // 显式允许明文传输，某些设备或内网环境可能需要
         .connectionSpecs(listOf(ConnectionSpec.CLEARTEXT, ConnectionSpec.MODERN_TLS))
         .build()
 
+    /**
+     * 创建 Retrofit API 实例
+     * @param baseUrl 基础 URL
+     */
     private fun createApi(baseUrl: String): UpdateApi {
         return Retrofit.Builder()
             .baseUrl(baseUrl)
@@ -49,13 +71,21 @@ class UpdateRepository @Inject constructor() {
             .create(UpdateApi::class.java)
     }
 
+    // 懒加载主 API 实例
     private val primaryApi by lazy { createApi("http://yyh163.xyz:10000/") }
+    // 懒加载备用 API 实例
     private val fallbackApi by lazy { createApi("http://47.105.76.193/") }
 
     /**
      * 检查更新
+     * 依次尝试主域名和备用域名，确保高可用性
      *
-     * @return Result<UpdateInfo> 更新信息
+     * 策略：
+     * 1. 优先请求主域名
+     * 2. 如果主域名请求失败（网络错误、非 200 响应、空 Body），则尝试备用 IP
+     * 3. 如果两者都失败，抛出包含详细原因的异常
+     *
+     * @return Result<UpdateInfo> 更新信息结果封装
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名

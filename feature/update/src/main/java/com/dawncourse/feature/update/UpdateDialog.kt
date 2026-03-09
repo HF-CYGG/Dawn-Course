@@ -54,6 +54,16 @@ import androidx.compose.runtime.setValue
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 
 
+/**
+ * 更新弹窗组件
+ * 展示新版本的详细信息，提供更新、忽略或稍后提醒的选项
+ *
+ * @param info 更新信息数据对象
+ * @param onUpdate 点击“立即更新”时的回调
+ * @param onDismiss 点击“稍后”或关闭时的回调
+ * @param onIgnore 点击“忽略此版本”时的回调
+ * @param isUpdate 是否为更新弹窗（true）还是版本详情弹窗（false）
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdateDialog(
@@ -79,6 +89,7 @@ fun UpdateDialog(
         ) {
             Column {
                 // 1. 顶部视觉区域 (Header Art)
+                // 使用主色调背景，展示图标和版本号 Badge
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -94,6 +105,7 @@ fun UpdateDialog(
                     )
                     
                     // 版本号 Badge (移动到右上角，避免遮挡标题)
+                    // 显示更新类型（标准/功能/修复等）和版本号
                     Card(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -123,6 +135,7 @@ fun UpdateDialog(
                 }
 
                 // 2. 内容区域
+                // 包含标题、发布日期和具体的更新日志
                 Column(modifier = Modifier.padding(24.dp)) {
                     // 标题
                     Text(
@@ -143,6 +156,7 @@ fun UpdateDialog(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // 更新日志 (支持滚动)
+                    // 限制最大高度，防止内容过长导致弹窗超出屏幕
                     Text(
                         text = "更新内容",
                         style = MaterialTheme.typography.titleSmall,
@@ -164,6 +178,7 @@ fun UpdateDialog(
                 }
 
                 // 3. 底部按钮区域
+                // 根据是否强制更新、是否为详情模式显示不同的按钮组合
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -173,6 +188,7 @@ fun UpdateDialog(
                     if (isUpdate) {
                         if (!info.isForce) {
                             // Split Button: 左侧稍后(Dismiss)，右侧下拉忽略(Ignore)
+                            // 允许用户推迟更新或永久忽略该版本
                             Row(
                                 modifier = Modifier.weight(1f),
                                 verticalAlignment = Alignment.CenterVertically
@@ -226,7 +242,7 @@ fun UpdateDialog(
                             Text("立即更新")
                         }
                     } else {
-                        // 显示“我知道了”按钮
+                        // 仅显示版本详情时的“我知道了”按钮
                         Button(
                             onClick = onDismiss,
                             modifier = Modifier.fillMaxWidth(),

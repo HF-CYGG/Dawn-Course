@@ -28,6 +28,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
+/**
+ * 更新错误弹窗组件
+ * 当检查更新失败时显示错误信息，并提供复制功能以便反馈
+ *
+ * @param message 错误信息文本
+ * @param onDismiss 关闭弹窗的回调
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UpdateErrorDialog(
@@ -57,6 +64,7 @@ fun UpdateErrorDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(8.dp))
+                // 使用半透明错误色背景容器展示错误信息
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
@@ -73,6 +81,7 @@ fun UpdateErrorDialog(
             }
         },
         confirmButton = {
+            // 复制按钮
             TextButton(
                 onClick = {
                     clipboardManager.setText(AnnotatedString(message))
@@ -85,6 +94,7 @@ fun UpdateErrorDialog(
             }
         },
         dismissButton = {
+            // 关闭按钮
             TextButton(onClick = onDismiss) {
                 Text("关闭")
             }

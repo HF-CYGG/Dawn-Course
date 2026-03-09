@@ -92,7 +92,9 @@ object DatabaseModule {
 /**
  * 仓库依赖注入模块 (Hilt Module)
  *
- * 负责绑定 Repository 接口与其实现类。
+ * 负责绑定 Domain 层的 Repository 接口与 Data 层的具体实现类。
+ * 通过 @Binds 注解，Hilt 知道当请求某个接口时，应该提供哪个实现类的实例。
+ * 这种方式避免了手动编写 provide 方法，生成的代码更少，性能更好。
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -109,30 +111,50 @@ abstract class RepositoryModule {
         impl: CourseRepositoryImpl
     ): CourseRepository
 
+    /**
+     * 绑定 [SettingsRepository] 接口到 [SettingsRepositoryImpl] 实现
+     * 负责应用设置数据的存取
+     */
     @Binds
     @Singleton
     abstract fun bindSettingsRepository(
         impl: SettingsRepositoryImpl
     ): SettingsRepository
 
+    /**
+     * 绑定 [SemesterRepository] 接口到 [SemesterRepositoryImpl] 实现
+     * 负责学期数据的存取
+     */
     @Binds
     @Singleton
     abstract fun bindSemesterRepository(
         impl: SemesterRepositoryImpl
     ): SemesterRepository
 
+    /**
+     * 绑定 [CredentialsRepository] 接口到 [CredentialsRepositoryImpl] 实现
+     * 负责用户凭证（如登录 Token）的安全存储
+     */
     @Binds
     @Singleton
     abstract fun bindCredentialsRepository(
         impl: CredentialsRepositoryImpl
     ): CredentialsRepository
 
+    /**
+     * 绑定 [SyncStateRepository] 接口到 [SyncStateRepositoryImpl] 实现
+     * 负责同步状态（如上次同步时间）的记录
+     */
     @Binds
     @Singleton
     abstract fun bindSyncStateRepository(
         impl: SyncStateRepositoryImpl
     ): SyncStateRepository
 
+    /**
+     * 绑定 [TimetableSyncRepository] 接口到 [TimetableSyncRepositoryImpl] 实现
+     * 负责课程表数据的网络同步逻辑
+     */
     @Binds
     @Singleton
     abstract fun bindTimetableSyncRepository(
