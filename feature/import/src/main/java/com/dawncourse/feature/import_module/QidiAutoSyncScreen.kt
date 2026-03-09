@@ -6,6 +6,7 @@
 package com.dawncourse.feature.import_module
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -308,6 +309,8 @@ fun QidiAutoSyncScreen(
     val captchaBringRequester = remember { BringIntoViewRequester() }
     var lastAutoFillUrl by remember { mutableStateOf("") }
     var lastZfMenuJumpUrl by remember { mutableStateOf("") }
+    var triedJwglxtFallback by remember { mutableStateOf(false) }
+    var endpointCheckFailed by remember { mutableStateOf(false) }
     val mainScrollState = rememberScrollState()
     var yearMenuExpanded by remember { mutableStateOf(false) }
     var termMenuExpanded by remember { mutableStateOf(false) }
@@ -531,6 +534,8 @@ fun QidiAutoSyncScreen(
                 reportError("入口地址无效")
                 return@launch
             }
+            triedJwglxtFallback = false
+            endpointCheckFailed = false
             addressBar = normalized
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
@@ -997,6 +1002,8 @@ fun QidiAutoSyncScreen(
                                 addLog("输入的地址无效：$endpointInput", SyncLogType.WARNING)
                                 return@TextButton
                             }
+                            triedJwglxtFallback = false
+                            endpointCheckFailed = false
                             addressBar = url
                             wv.loadUrl(url)
                             addLog("手动前往地址：$url", SyncLogType.ACTION)
@@ -1638,6 +1645,30 @@ fun QidiAutoSyncScreen(
                                 val yzmSrcMatch = Regex("\"yzmSrc\":\"(.*?)\"").find(txt)
                                 val yzmSrc = yzmSrcMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
                                 captchaUrl = if (yzm && yzmSrc.isNotBlank()) yzmSrc else ""
+                                val shouldTryFallback = !needManualLogin && !isLogin && !isKebiao && !hasSelect && !hasMenu
+                                if (shouldTryFallback && !triedJwglxtFallback) {
+                                    val sourceUrl = if (pageHref.isNotBlank()) pageHref else addressBar
+                                    val fallbackUrl = buildJwglxtFallbackUrl(sourceUrl)
+                                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != sourceUrl) {
+                                        triedJwglxtFallback = true
+                                        endpointCheckFailed = false
+                                        addressBar = fallbackUrl
+                                        wv.loadUrl(fallbackUrl)
+                                        if (showProgressDialog) {
+                                            currentStep = "尝试 /jwglxt 入口"
+                                            addLog("未识别到登录入口，尝试补全 /jwglxt", SyncLogType.ACTION)
+                                        }
+                                        return@launch
+                                    }
+                                }
+                                if (shouldTryFallback && triedJwglxtFallback && !endpointCheckFailed) {
+                                    endpointCheckFailed = true
+                                    subTitle = "未识别到登录入口，请检查网址是否正确"
+                                    if (showProgressDialog) {
+                                        currentStep = "入口地址可能不正确"
+                                        addLog("未识别到登录入口，请检查网址是否正确", SyncLogType.WARNING)
+                                    }
+                                }
                                 val creds = credsForAutoFill
                                 val autoFillKey = if (pageHref.isNotBlank()) pageHref else addressBar
                                 if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
@@ -1963,11 +1994,27 @@ private fun normalizeEndpointForLoad(raw: String?): String? {
     } else {
         "https://$trimmed"
     }
-    if (URLUtil.isNetworkUrl(withScheme)) {
-        return withScheme
+    val candidate = when {
+        URLUtil.isNetworkUrl(withScheme) -> withScheme
+        else -> URLUtil.guessUrl(withScheme)
     }
-    val guessed = URLUtil.guessUrl(withScheme)
-    return if (URLUtil.isNetworkUrl(guessed)) guessed else null
+    if (!URLUtil.isNetworkUrl(candidate)) return null
+    return candidate
+}
+
+private fun buildJwglxtFallbackUrl(raw: String?): String? {
+    val trimmed = raw?.trim().orEmpty()
+    if (trimmed.isBlank()) return null
+    return try {
+        val uri = Uri.parse(trimmed)
+        val host = uri.host.orEmpty()
+        if (host.isBlank()) return null
+        val scheme = uri.scheme ?: "https"
+        val port = if (uri.port in 1..65535) ":${uri.port}" else ""
+        "$scheme://$host$port/jwglxt"
+    } catch (_: Exception) {
+        null
+    }
 }
 
 /**
