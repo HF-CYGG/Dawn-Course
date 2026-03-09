@@ -1,6 +1,8 @@
 package com.dawncourse.feature.widget.worker
 
 import android.content.Context
+import android.app.AlarmManager
+import android.app.PendingIntent
 import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -17,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.dawncourse.feature.widget.MidnightUpdateReceiver
+import com.dawncourse.feature.widget.DawnWidgetReceiver
 
 /**
  * Widget 更新工作器
@@ -38,6 +41,8 @@ class WidgetUpdateWorker(
 
 object WidgetSyncManager {
     private const val UNIQUE_WORK_NAME = "DawnWidgetUpdateWork"
+    private const val NEXT_UPDATE_REQUEST_CODE = 10001
+    private const val ACTION_FORCE_UPDATE = "com.dawncourse.widget.FORCE_UPDATE"
 
     /**
      * 调度后台自动刷新任务
@@ -67,6 +72,39 @@ object WidgetSyncManager {
         val request = OneTimeWorkRequestBuilder<WidgetUpdateWorker>()
             .build()
         WorkManager.getInstance(context).enqueue(request)
+    }
+
+    fun scheduleNextCourseUpdate(context: Context, triggerAtMillis: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, DawnWidgetReceiver::class.java).apply {
+            action = ACTION_FORCE_UPDATE
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            NEXT_UPDATE_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val nowMillis = System.currentTimeMillis()
+        if (triggerAtMillis <= nowMillis) {
+            runCatching { alarmManager.cancel(pendingIntent) }
+            return
+        }
+        try {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMillis,
+                pendingIntent
+            )
+        } catch (e: SecurityException) {
+            runCatching {
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            }
+        }
     }
 
     /**

@@ -43,6 +43,7 @@ import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -247,6 +248,10 @@ class DawnWidget : GlanceAppWidget() {
             "今日课程已结束 🌙"
         } else {
             emptyMessage
+        }
+        val nextUpdateMillis = computeNextCourseEndMillis(courses, sectionTimes, today, now)
+        if (nextUpdateMillis != null) {
+            WidgetSyncManager.scheduleNextCourseUpdate(context, nextUpdateMillis)
         }
 
         provideContent {
@@ -684,6 +689,34 @@ class DawnWidget : GlanceAppWidget() {
             runCatching { return LocalTime.parse(value.trim(), formatter) }
         }
         return null
+    }
+
+    private fun computeNextCourseEndMillis(
+        courses: List<Course>,
+        sectionTimes: List<SectionTime>,
+        today: LocalDate,
+        now: LocalTime
+    ): Long? {
+        if (courses.isEmpty() || sectionTimes.isEmpty()) return null
+        var nextEndTime: LocalTime? = null
+        courses.forEach { course ->
+            val endSectionNum = course.startSection + course.duration - 1
+            val endStr = if (endSectionNum - 1 in sectionTimes.indices) {
+                sectionTimes[endSectionNum - 1].endTime
+            } else {
+                ""
+            }
+            val endTime = parseSectionTime(endStr) ?: return@forEach
+            if (endTime.isAfter(now)) {
+                if (nextEndTime == null || endTime.isBefore(nextEndTime)) {
+                    nextEndTime = endTime
+                }
+            }
+        }
+        val targetTime = nextEndTime ?: return null
+        val triggerAt = today.atTime(targetTime).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val nowMillis = java.time.Instant.now().toEpochMilli()
+        return if (triggerAt > nowMillis) triggerAt else null
     }
 
     private fun isCourseActive(course: Course, sectionTimes: List<SectionTime>, now: LocalTime): Boolean {
