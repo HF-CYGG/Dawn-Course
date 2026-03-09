@@ -67,9 +67,12 @@ class DailySchedulerWorker(
         val currentWeek = calculateWeekUseCase(currentSemester.startDate)
         if (currentWeek <= 0 || currentWeek > currentSemester.weekCount) return Result.success()
 
-        // 获取并筛选今日课程
-        val allCourses = courseRepo.getCoursesBySemester(currentSemester.id).first()
-        val todayCourses = allCourses.filter { course ->
+        val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val allCourses = courseRepo.getAllCourses().first()
+        cancelExistingAlarms(allCourses, alarmManager)
+
+        val currentSemesterCourses = allCourses.filter { it.semesterId == currentSemester.id }
+        val todayCourses = currentSemesterCourses.filter { course ->
             // 1. 检查星期
             if (course.dayOfWeek != dayOfWeek) return@filter false
             
@@ -85,7 +88,6 @@ class DailySchedulerWorker(
         }
 
         val reminderMinutes = settings.reminderMinutes
-        val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val sectionTimes = settings.sectionTimes
         
         todayCourses.forEach { course ->
@@ -101,7 +103,8 @@ class DailySchedulerWorker(
                          
                          // 仅调度未来的提醒
                          if (triggerTime.isAfter(LocalDateTime.now())) {
-                             val intent = Intent(applicationContext, ReminderReceiver::class.java).apply {
+                            val intent = Intent(applicationContext, ReminderReceiver::class.java).apply {
+                                putExtra("COURSE_ID", course.id)
                                  putExtra("COURSE_NAME", course.name)
                                  putExtra("LOCATION", course.location)
                              }
@@ -213,6 +216,54 @@ class DailySchedulerWorker(
         if (hour !in 0..23) return null
         if (minute !in 0..59) return null
         return LocalTime.of(hour, minute)
+    }
+
+    private fun cancelExistingAlarms(courses: List<Course>, alarmManager: AlarmManager) {
+        courses.forEach { course ->
+            runCatching {
+                val reminderIntent = Intent(applicationContext, ReminderReceiver::class.java)
+                val reminderPendingIntent = PendingIntent.getBroadcast(
+                    applicationContext,
+                    course.id.toInt(),
+                    reminderIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                )
+                if (reminderPendingIntent != null) {
+                    alarmManager.cancel(reminderPendingIntent)
+                    reminderPendingIntent.cancel()
+                }
+            }
+            runCatching {
+                val muteIntent = Intent(applicationContext, SilenceReceiver::class.java).apply {
+                    action = SilenceReceiver.ACTION_MUTE
+                }
+                val mutePendingIntent = PendingIntent.getBroadcast(
+                    applicationContext,
+                    course.id.toInt() + 10000,
+                    muteIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                )
+                if (mutePendingIntent != null) {
+                    alarmManager.cancel(mutePendingIntent)
+                    mutePendingIntent.cancel()
+                }
+            }
+            runCatching {
+                val unmuteIntent = Intent(applicationContext, SilenceReceiver::class.java).apply {
+                    action = SilenceReceiver.ACTION_UNMUTE
+                }
+                val unmutePendingIntent = PendingIntent.getBroadcast(
+                    applicationContext,
+                    course.id.toInt() + 20000,
+                    unmuteIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                )
+                if (unmutePendingIntent != null) {
+                    alarmManager.cancel(unmutePendingIntent)
+                    unmutePendingIntent.cancel()
+                }
+            }
+        }
     }
 
     private fun setExactAlarm(alarmManager: AlarmManager, triggerTime: LocalDateTime, pendingIntent: PendingIntent) {
