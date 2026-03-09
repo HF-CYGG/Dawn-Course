@@ -548,7 +548,9 @@ class ImportViewModel @Inject constructor(
                 val safeDefaultDuration = mostFrequentDuration.coerceIn(1, 4)
                 settingsRepository.setDefaultCourseDuration(safeDefaultDuration)
                 
-                // 2. 创建新学期并插入数据库
+                courseRepository.deleteAllCourses()
+                semesterRepository.deleteAllSemesters()
+
                 val newSemester = Semester(
                     name = "导入学期 ${LocalDate.now()}",
                     startDate = state.semesterStartDate,
@@ -557,19 +559,15 @@ class ImportViewModel @Inject constructor(
                 )
                 val semesterId = semesterRepository.insertSemester(newSemester)
                 
-                // 2.1 关键修正：同步更新 AppSettings (DataStore)
-                // 解决 "导入时设置了开学日期，但在设置页面不生效" 的问题
                 settingsRepository.setCurrentSemesterName(newSemester.name)
                 settingsRepository.setStartDateTimestamp(newSemester.startDate)
                 settingsRepository.setTotalWeeks(newSemester.weekCount)
                 
-                // 3. 插入课程数据 (关联新学期 ID)
                 val domainCourses = state.parsedCourses.map { parsed ->
                     parsed.toDomainCourse().copy(semesterId = semesterId)
                 }
                 courseRepository.insertCourses(domainCourses)
                 
-                // 4. 触发小组件更新广播
                 val intent = android.content.Intent("com.dawncourse.widget.FORCE_UPDATE")
                 intent.setPackage(application.packageName)
                 application.sendBroadcast(intent)
