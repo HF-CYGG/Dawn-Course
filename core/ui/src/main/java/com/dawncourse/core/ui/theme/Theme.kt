@@ -50,6 +50,7 @@ private val LightColorScheme = lightColorScheme(
 
 val LocalAppSettings = staticCompositionLocalOf { AppSettings() }
 // 壁纸动态取色的对比色（用于主页面顶栏等需要与背景形成对比的图标/文字）
+// 壁纸动态取色的对比色（仅用于需要与背景形成对比的图标/文字）
 val LocalWallpaperContrastColor = staticCompositionLocalOf { Color.Unspecified }
 
 /**
@@ -73,7 +74,7 @@ fun DawnTheme(
     var wallpaperColorScheme by remember(appSettings.dynamicColor, appSettings.wallpaperUri, darkTheme) {
         mutableStateOf<ColorScheme?>(null)
     }
-    // 由壁纸亮度推导的中性对比色，避免顶栏图标“太花”
+    // 由壁纸主色推导的对比色，限制在固定 6 色范围内，避免“太花”
     var wallpaperContrastColor by remember(appSettings.dynamicColor, appSettings.wallpaperUri, darkTheme) {
         mutableStateOf<Color?>(null)
     }
@@ -134,7 +135,7 @@ fun DawnTheme(
  * 设计原则：
  * 1. 主色取自壁纸主色，但降低饱和度，避免视觉过于花哨
  * 2. 亮度范围根据深浅主题限制，确保整体可读性
- * 3. 对比色使用中性灰阶，确保顶栏图标与背景形成对比
+ * 3. 对比色从固定 6 色中选择与背景对比最强的颜色
  */
 private suspend fun generateColorSchemeFromWallpaper(
     context: Context,
@@ -164,13 +165,35 @@ private suspend fun generateColorSchemeFromWallpaper(
     } else {
         lightColorScheme(primary = primary, secondary = secondary, tertiary = tertiary)
     }
-    // 对比色：根据壁纸主色亮度选择深灰或浅灰
-    val contrastColor = if (ColorUtils.calculateLuminance(dominant) > 0.6) {
-        Color(0xFF1F1F1F)
-    } else {
-        Color(0xFFF5F5F5)
-    }
+    // 对比色：从固定 6 色中挑选与壁纸主色对比最强的颜色
+    val contrastColor = pickBestContrastColor(dominant)
     return scheme to contrastColor
+}
+
+/**
+ * 在固定 6 色中选择与背景对比度最高的颜色
+ *
+ * 颜色集合：白、浅灰、灰、棕、深棕、黑
+ */
+private fun pickBestContrastColor(backgroundColor: Int): Color {
+    val candidates = listOf(
+        Color(0xFFFFFFFF), // 白
+        Color(0xFFE0E0E0), // 浅灰
+        Color(0xFF9E9E9E), // 灰
+        Color(0xFF8D6E63), // 棕
+        Color(0xFF4E342E), // 深棕
+        Color(0xFF000000)  // 黑
+    )
+    var bestColor = candidates.first()
+    var bestContrast = -1.0
+    candidates.forEach { candidate ->
+        val contrast = ColorUtils.calculateContrast(candidate.toArgb(), backgroundColor)
+        if (contrast > bestContrast) {
+            bestContrast = contrast
+            bestColor = candidate
+        }
+    }
+    return bestColor
 }
 
 /**

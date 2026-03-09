@@ -57,7 +57,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.ColorUtils
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
@@ -653,10 +652,13 @@ fun CourseCard(
 
     // 2. 动态计算内容透明度
     val contentAlpha = if (isCurrentWeek) 1f else 0.75f
-    // 课程标题与详情文字颜色：按背景亮度在固定 6 色中选择
-    val nameTextColor = resolveCourseTextColor(baseColor).copy(alpha = contentAlpha)
-    // 详情文字使用同色系但略降低透明度，保持层级感
-    val detailTextColor = resolveCourseTextColor(baseColor).copy(alpha = contentAlpha * 0.9f)
+    // 课程文字颜色：使用壁纸对比色统一显示，确保与背景形成强对比
+    val timetableTextColor = LocalWallpaperContrastColor.current
+    val resolvedTextColor = if (timetableTextColor != Color.Unspecified) {
+        timetableTextColor
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }.copy(alpha = contentAlpha)
 
     // 3. 边框样式（移除旧版本没有的边框）
     val borderModifier = Modifier
@@ -690,7 +692,7 @@ fun CourseCard(
                     fontWeight = if (isCurrentWeek) FontWeight.Bold else FontWeight.Normal,
                     fontSize = if (isCurrentWeek) 12.sp else 11.sp,
                     lineHeight = 14.sp, // 稍微紧凑一点
-                    color = nameTextColor
+                    color = resolvedTextColor
                 ),
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis
@@ -708,7 +710,7 @@ fun CourseCard(
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
                                 lineHeight = 11.sp,
-                                color = detailTextColor
+                                color = resolvedTextColor
                             ),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -723,7 +725,7 @@ fun CourseCard(
                             style = MaterialTheme.typography.bodySmall.copy(
                                 fontSize = 10.sp,
                                 lineHeight = 11.sp,
-                                color = detailTextColor
+                                color = resolvedTextColor
                             ),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -754,27 +756,6 @@ fun CourseCard(
         }
     }
 }
-
-/**
- * 根据课程卡片背景亮度，映射为可读性稳定的文本颜色
- *
- * 颜色范围限定为：白、浅灰、灰、棕、深棕、黑
- * 亮度越高选越深，亮度越低选越浅，确保文字清晰可读
- */
-private fun resolveCourseTextColor(baseColor: Color): Color {
-    val luminance = ColorUtils.calculateLuminance(baseColor.toArgb())
-    return when {
-        luminance >= 0.85 -> Color(0xFF000000)
-        luminance >= 0.7 -> Color(0xFF4E342E)
-        luminance >= 0.55 -> Color(0xFF8D6E63)
-        luminance >= 0.4 -> Color(0xFF9E9E9E)
-        luminance >= 0.25 -> Color(0xFFE0E0E0)
-        else -> Color(0xFFFFFFFF)
-    }
-}
-
-
-
 
 /**
  * 假期模式视图
