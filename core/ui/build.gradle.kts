@@ -40,6 +40,7 @@ dependencies {
     implementation(libs.ui.tooling.preview)
     implementation(libs.material3)
     implementation(libs.material.icons.extended)
+    implementation(libs.palette.ktx)
 
     debugImplementation(libs.ui.tooling)
     debugImplementation(libs.ui.test.manifest)
