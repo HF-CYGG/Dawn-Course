@@ -232,10 +232,26 @@ class DawnWidget : GlanceAppWidget() {
                 }
             }
         }
+        
+        val now = LocalTime.now()
+        val displayCourses = if (courses.isEmpty()) {
+            courses
+        } else {
+            courses.filter { course ->
+                isCourseCurrentOrFuture(course, sectionTimes, now)
+            }
+        }
+        val finalEmptyMessage = if (displayCourses.isNotEmpty()) {
+            ""
+        } else if (courses.isNotEmpty()) {
+            "今日课程已结束 🌙"
+        } else {
+            emptyMessage
+        }
 
         provideContent {
             GlanceTheme {
-                TimetableWidgetContent(courses, today, currentWeek, sectionTimes, emptyMessage, isBeforeSemesterStart)
+                TimetableWidgetContent(displayCourses, today, currentWeek, sectionTimes, finalEmptyMessage, isBeforeSemesterStart)
             }
         }
     }
@@ -657,6 +673,19 @@ class DawnWidget : GlanceAppWidget() {
          return "${course.startSection}-${endSectionNum}节"
     }
 
+    // 兼容不同时间格式（例如 8:00 / 08:00），避免解析失败导致课程一直被视为未结束
+    private fun parseSectionTime(value: String): LocalTime? {
+        if (value.isBlank()) return null
+        val formatters = listOf(
+            DateTimeFormatter.ofPattern("H:mm"),
+            DateTimeFormatter.ofPattern("HH:mm")
+        )
+        for (formatter in formatters) {
+            runCatching { return LocalTime.parse(value.trim(), formatter) }
+        }
+        return null
+    }
+
     private fun isCourseActive(course: Course, sectionTimes: List<SectionTime>, now: LocalTime): Boolean {
         if (sectionTimes.isEmpty()) return false
         
@@ -667,9 +696,8 @@ class DawnWidget : GlanceAppWidget() {
          } else return false
          
         try {
-            val formatter = DateTimeFormatter.ofPattern("HH:mm")
-            val startTime = LocalTime.parse(startStr, formatter)
-            val endTime = LocalTime.parse(endStr, formatter)
+            val startTime = parseSectionTime(startStr) ?: return false
+            val endTime = parseSectionTime(endStr) ?: return false
             
             return !now.isBefore(startTime) && !now.isAfter(endTime)
         } catch (e: Exception) {
@@ -686,8 +714,7 @@ class DawnWidget : GlanceAppWidget() {
          } else return true
          
          try {
-             val formatter = DateTimeFormatter.ofPattern("HH:mm")
-             val endTime = LocalTime.parse(endStr, formatter)
+            val endTime = parseSectionTime(endStr) ?: return true
              return now.isBefore(endTime)
          } catch (e: Exception) {
              return true
