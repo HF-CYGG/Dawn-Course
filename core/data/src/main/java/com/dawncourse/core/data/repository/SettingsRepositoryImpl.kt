@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -21,6 +22,7 @@ import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -81,7 +83,9 @@ class SettingsRepositoryImpl @Inject constructor(
         val BACKGROUND_BRIGHTNESS = floatPreferencesKey("background_brightness")
     }
 
-    override val settings: Flow<AppSettings> = dataStore.data.map { preferences ->
+    override val settings: Flow<AppSettings> = dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { preferences ->
         val dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: true
         val wallpaperUri = preferences[PreferencesKeys.WALLPAPER_URI]
         val transparency = preferences[PreferencesKeys.TRANSPARENCY] ?: 0f
