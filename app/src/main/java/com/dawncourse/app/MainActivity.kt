@@ -114,10 +114,18 @@ class MainActivity : ComponentActivity() {
                 // 因此 WorkManager 的调度条件必须与上述“任一功能开关”一致：
                 // - 只要【上课提醒】或【自动静音】任一开启，就需要定期运行 Worker 以保证闹钟更新
                 // - 两者都关闭时，应取消 Worker，避免无意义的后台开销
-                LaunchedEffect(settings.enableClassReminder, settings.enableAutoMute) {
+                val sectionTimesHash = settings.sectionTimes.hashCode()
+                LaunchedEffect(
+                    settings.enableClassReminder,
+                    settings.enableAutoMute,
+                    settings.reminderMinutes,
+                    settings.startDateTimestamp,
+                    sectionTimesHash
+                ) {
                     val shouldScheduleDailyWorker = settings.enableClassReminder || settings.enableAutoMute
                     if (shouldScheduleDailyWorker) {
                         ReminderScheduler.scheduleDailyWork(applicationContext)
+                        ReminderScheduler.triggerImmediateWork(applicationContext)
                     } else {
                         ReminderScheduler.cancelWork(applicationContext)
                     }

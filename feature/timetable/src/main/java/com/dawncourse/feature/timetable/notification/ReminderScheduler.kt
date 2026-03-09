@@ -2,6 +2,7 @@ package com.dawncourse.feature.timetable.notification
 
 import android.content.Context
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.time.Duration
@@ -48,6 +49,12 @@ object ReminderScheduler {
             ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
+    }
+
+    fun triggerImmediateWork(context: Context) {
+        val request = OneTimeWorkRequestBuilder<DailySchedulerWorker>()
+            .build()
+        WorkManager.getInstance(context).enqueue(request)
     }
 
     /**

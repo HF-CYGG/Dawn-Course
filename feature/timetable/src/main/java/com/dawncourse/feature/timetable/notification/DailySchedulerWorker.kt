@@ -133,8 +133,27 @@ class DailySchedulerWorker(
                         val startDateTime = LocalDateTime.of(today, startTime)
 
                         if (startDateTime.isAfter(LocalDateTime.now())) {
+                            val endSection = course.startSection + course.duration - 1
+                            val endTimeStr = if (endSection <= sectionTimes.size && endSection > 0) {
+                                sectionTimes[endSection - 1].endTime
+                            } else {
+                                ""
+                            }
+                            val endTime = parseLocalTimeOrNull(endTimeStr)
+                            val endDateTime = if (endTime != null) {
+                                LocalDateTime.of(today, endTime)
+                            } else {
+                                null
+                            }
                             val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
                                 action = SilenceReceiver.ACTION_MUTE
+                                putExtra("COURSE_ID", course.id)
+                                if (endDateTime != null) {
+                                    putExtra(
+                                        "UNMUTE_TIME_MILLIS",
+                                        endDateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                                    )
+                                }
                             }
                             // 使用 ID + 10000 避免与提醒的 RequestCode 冲突
                             val pendingIntent = PendingIntent.getBroadcast(
