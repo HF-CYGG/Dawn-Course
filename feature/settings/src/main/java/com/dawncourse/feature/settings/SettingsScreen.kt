@@ -52,6 +52,7 @@ import android.widget.Toast
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.webkit.URLUtil
 
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.input.KeyboardType
@@ -1078,6 +1079,7 @@ private fun BindAccountDialog(
     var endpoint by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var endpointError by remember { mutableStateOf<String?>(null) }
     val isValid = endpoint.isNotBlank() && username.isNotBlank() && password.isNotBlank()
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1086,14 +1088,25 @@ private fun BindAccountDialog(
             Column {
                 OutlinedTextField(
                     value = endpoint,
-                    onValueChange = { endpoint = it },
+                    onValueChange = {
+                        endpoint = it
+                        if (endpointError != null && (it.isBlank() || isZfEndpoint(it))) {
+                            endpointError = null
+                        }
+                    },
                     label = { Text("教务地址") },
                     placeholder = { Text("例如: http://jwgl.xxx.edu.cn") },
                     leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    isError = endpointError != null,
+                    supportingText = {
+                        if (endpointError != null) {
+                            Text(endpointError!!, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
@@ -1120,12 +1133,36 @@ private fun BindAccountDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(endpoint, username, password) },
+                onClick = {
+                    if (!isZfEndpoint(endpoint)) {
+                        endpointError = "暂时只支持正方教务系统，请填写正方教务入口地址"
+                        return@TextButton
+                    }
+                    onConfirm(endpoint, username, password)
+                },
                 enabled = isValid
             ) { Text("绑定") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+private fun isZfEndpoint(raw: String): Boolean {
+    val trimmed = raw.trim().trimEnd('/')
+    if (trimmed.isBlank()) return false
+    val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        trimmed
+    } else {
+        "https://$trimmed"
+    }
+    val candidate = if (URLUtil.isNetworkUrl(withScheme)) withScheme else URLUtil.guessUrl(withScheme)
+    if (!URLUtil.isNetworkUrl(candidate)) return false
+    return runCatching {
+        val uri = Uri.parse(candidate)
+        val host = uri.host.orEmpty()
+        val path = uri.path.orEmpty()
+        (host + path).lowercase().contains("jwgl")
+    }.getOrDefault(false)
 }
 
 
