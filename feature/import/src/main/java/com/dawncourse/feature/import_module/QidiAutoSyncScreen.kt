@@ -1603,13 +1603,37 @@ fun QidiAutoSyncScreen(
                                           var cs=getComputedStyle(yzmDiv);
                                           yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
                                         }
+                                        var yzmInput = document.querySelector('#yzm') || document.querySelector('input[name="yzm"]') || document.querySelector('input[id*="yzm"]');
+                                        var yzmImg = document.querySelector('#yzmPic') || document.querySelector('img[src*="yzm"]') || document.querySelector('img[src*="captcha"]') || document.querySelector('img[src*="validate"]');
+                                        if(yzmInput){ yzmVis = true; }
                                         var yzmSrc = '';
-                                        var yzmImg = document.querySelector('#yzmPic');
                                         if(yzmImg){
                                           var s = yzmImg.getAttribute('src') || '';
                                           try{ yzmSrc = new URL(s, location.href).href; }catch(e){ yzmSrc = s; }
                                         }
-                                        var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl');
+                                        var userEl = document.querySelector('#yhm')
+                                          || document.querySelector('input[name="yhm"]')
+                                          || document.querySelector('input[name="username"]')
+                                          || document.querySelector('input[name="user"]')
+                                          || document.querySelector('input[name*="account"]')
+                                          || document.querySelector('input[id*="user"]')
+                                          || document.querySelector('input[id*="account"]')
+                                          || document.querySelector('input[name="xh"]')
+                                          || document.querySelector('input[id*="xh"]');
+                                        var passEl = document.querySelector('#mm')
+                                          || document.querySelector('input[name="mm"]')
+                                          || document.querySelector('input[name*="pwd"]')
+                                          || document.querySelector('input[id*="pwd"]')
+                                          || document.querySelector('input[type="password"]');
+                                        var loginBtn = document.querySelector('#dl')
+                                          || document.querySelector('#login')
+                                          || document.querySelector('button[type="submit"]')
+                                          || document.querySelector('input[type="submit"]')
+                                          || document.querySelector('button[id*="login"]')
+                                          || document.querySelector('button[name*="login"]')
+                                          || document.querySelector('input[id*="login"]')
+                                          || document.querySelector('input[name*="login"]');
+                                        var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl') || (!!passEl && (!!userEl || !!loginBtn));
                                         var isKebiao = !!document.querySelector('#ylkbTable') || !!document.querySelector('#ajaxForm');
                                         var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
                                         var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
@@ -1624,11 +1648,18 @@ fun QidiAutoSyncScreen(
                                         var menuLink = Array.from(document.querySelectorAll('a')).find(a=>{
                                           var href=(a.getAttribute('href')||'').toLowerCase();
                                           var txt=(a.textContent||'').trim();
-                                          return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
+                                          return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
+                                            || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
                                         });
                                         var hasMenu = !!(navLink || menuLink);
+                                        var logoutLink = Array.from(document.querySelectorAll('a,button')).find(function(el){
+                                          var txt=(el.textContent||'').trim();
+                                          var href=(el.getAttribute && el.getAttribute('href')||'').toLowerCase();
+                                          return txt.indexOf('退出')>=0 || txt.indexOf('注销')>=0 || href.indexOf('logout')>=0 || href.indexOf('logoff')>=0 || href.indexOf('exit')>=0;
+                                        });
+                                        var loggedIn = !!logoutLink;
                                         var href = location.href;
-                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, hasSelect:hasSelect, hasMenu:hasMenu, href:href});
+                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, hasSelect:hasSelect, hasMenu:hasMenu, loggedIn:loggedIn, href:href});
                                       }catch(e){ return JSON.stringify({wrong:false,yzm:false,yzmSrc:'',isLogin:false,isKebiao:false,href:''}); }
                                     })();
                                     """.trimIndent()
@@ -1640,6 +1671,7 @@ fun QidiAutoSyncScreen(
                                 val isKebiao = txt.contains("\"isKebiao\":true")
                                 val hasSelect = txt.contains("\"hasSelect\":true")
                                 val hasMenu = txt.contains("\"hasMenu\":true")
+                                val loggedIn = txt.contains("\"loggedIn\":true")
                                 val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
                                 val pageHref = hrefMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
                                 needManualLogin = wrong || yzm
@@ -1695,7 +1727,7 @@ fun QidiAutoSyncScreen(
                                         if (captchaUrl.isNotBlank()) addLog("验证码地址已获取", SyncLogType.ACTION)
                                     }
                                 }
-                                if (!needManualLogin && !isLogin && !isKebiao && !hasSelect && hasMenu) {
+                                if (!needManualLogin && !isLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
                                     if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
                                         val openMenuJs = """
                                             (function(){
@@ -1711,7 +1743,8 @@ fun QidiAutoSyncScreen(
                                                 var link = Array.from(document.querySelectorAll('a')).find(a=>{
                                                   var href=(a.getAttribute('href')||'').toLowerCase();
                                                   var txt=(a.textContent||'').trim();
-                                                  return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
+                                                  return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
+                                                    || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
                                                 });
                                                 if(link){ link.click(); return 'ok'; }
                                                 return 'none';
