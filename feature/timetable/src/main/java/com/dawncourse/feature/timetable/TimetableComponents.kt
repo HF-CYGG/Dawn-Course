@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.ColorUtils
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
@@ -646,12 +647,13 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         rawColor.copy(alpha = 0.9f)
     } else {
-        // 非本周：跟随主题色
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        // 非本周：课程原色去饱和 + 降亮度 + 降透明度，保证低干扰且可读
+        buildNonCurrentCourseColor(rawColor)
     }
 
     // 2. 动态计算内容透明度
-    val contentAlpha = if (isCurrentWeek) 1f else 0.75f
+    // 非本周课程文字保持更高透明度，避免因卡片降饱和/降亮度导致难以识别
+    val contentAlpha = if (isCurrentWeek) 1f else 1f
     // 课程文字颜色：使用壁纸对比色统一显示，确保与背景形成强对比
     val timetableTextColor = LocalWallpaperContrastColor.current
     val resolvedTextColor = if (timetableTextColor != Color.Unspecified) {
@@ -755,6 +757,22 @@ fun CourseCard(
             }
         }
     }
+}
+
+/**
+ * 非本周课程卡片颜色计算
+ *
+ * 处理策略：
+ * 1. 基于课程原色
+ * 2. 去饱和、降亮度，降低视觉存在感
+ * 3. 降低透明度，让背景更柔和
+ */
+private fun buildNonCurrentCourseColor(rawColor: Color): Color {
+    val hsl = FloatArray(3)
+    ColorUtils.colorToHSL(rawColor.toArgb(), hsl)
+    hsl[1] = (hsl[1] * 0.35f).coerceIn(0f, 1f)
+    hsl[2] = (hsl[2] * 0.85f).coerceIn(0.35f, 0.9f)
+    return Color(ColorUtils.HSLToColor(hsl)).copy(alpha = 0.45f)
 }
 
 /**
