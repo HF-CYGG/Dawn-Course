@@ -1070,26 +1070,42 @@ private fun SettingsDialogManager(
     }
 }
 
+/**
+ * 绑定教务账号对话框
+ *
+ * 负责收集入口地址、学号与密码，并在提交时进行正方入口校验。
+ *
+ * @param title 对话框标题
+ * @param onDismiss 关闭回调
+ * @param onConfirm 校验通过后的提交回调
+ */
 @Composable
 private fun BindAccountDialog(
     title: String,
     onDismiss: () -> Unit,
     onConfirm: (endpoint: String, username: String, password: String) -> Unit
 ) {
+    // 教务入口地址
     var endpoint by remember { mutableStateOf("") }
+    // 学号（账号）
     var username by remember { mutableStateOf("") }
+    // 密码
     var password by remember { mutableStateOf("") }
+    // 入口校验错误提示
     var endpointError by remember { mutableStateOf<String?>(null) }
+    // 基础必填校验
     val isValid = endpoint.isNotBlank() && username.isNotBlank() && password.isNotBlank()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
             Column {
+                // 入口地址输入
                 OutlinedTextField(
                     value = endpoint,
                     onValueChange = {
                         endpoint = it
+                        // 当地址被清空或通过正方识别时，自动清理错误提示
                         if (endpointError != null && (it.isBlank() || isZfEndpoint(it))) {
                             endpointError = null
                         }
@@ -1101,7 +1117,9 @@ private fun BindAccountDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
+                    // 存在错误时展示红色错误态
                     isError = endpointError != null,
+                    // 入口错误提示
                     supportingText = {
                         if (endpointError != null) {
                             Text(endpointError!!, color = MaterialTheme.colorScheme.error)
@@ -1109,6 +1127,7 @@ private fun BindAccountDialog(
                     }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
+                // 学号输入
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
@@ -1119,6 +1138,7 @@ private fun BindAccountDialog(
                     shape = RoundedCornerShape(12.dp)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
+                // 密码输入
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
@@ -1134,10 +1154,12 @@ private fun BindAccountDialog(
         confirmButton = {
             TextButton(
                 onClick = {
+                    // 先校验入口是否为正方教务系统
                     if (!isZfEndpoint(endpoint)) {
                         endpointError = "暂时只支持正方教务系统，请填写正方教务入口地址"
                         return@TextButton
                     }
+                    // 校验通过后提交
                     onConfirm(endpoint, username, password)
                 },
                 enabled = isValid
@@ -1147,6 +1169,14 @@ private fun BindAccountDialog(
     )
 }
 
+/**
+ * 判断入口地址是否符合正方教务系统特征
+ *
+ * 规则：
+ * - 允许用户省略 scheme（自动补全为 https）
+ * - 必须是合法的网络 URL
+ * - host/path 中包含 “jwgl” 关键字（覆盖常见正方入口）
+ */
 private fun isZfEndpoint(raw: String): Boolean {
     val trimmed = raw.trim().trimEnd('/')
     if (trimmed.isBlank()) return false
