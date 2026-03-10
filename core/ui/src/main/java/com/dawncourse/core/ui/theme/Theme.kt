@@ -223,6 +223,12 @@ private suspend fun loadPaletteBitmap(context: Context, wallpaperUri: String): B
                     BitmapFactory.decodeStream(input, null, options)
                 }
             }
-        }.getOrNull()
+        }.getOrNull()?.let { bitmap ->
+            if (bitmap.config == Bitmap.Config.HARDWARE) {
+                bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            } else {
+                bitmap
+            }
+        }
     }
 }

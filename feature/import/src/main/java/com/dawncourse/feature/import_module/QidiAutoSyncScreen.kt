@@ -123,6 +123,19 @@ import org.json.JSONTokener
 import javax.inject.Inject
 
 /**
+ * 正方教务“自动更新（实验）”页面
+ *
+ * 设计目标：
+ * - 自动使用已绑定的“入口地址 + 用户名 + 密码”进行登录
+ * - 注入现有适配脚本 (qidi_provider.js) 提取课程
+ * - 直接覆盖当前学期的课程数据
+ *
+ * 安全原则：
+ * - 不打印用户名/密码/页面敏感内容
+ * - 仅在用户主动点击时进行登录与提取
+ */
+
+/**
  * 同步日志类型
  */
 private enum class SyncLogType {
@@ -256,18 +269,6 @@ private fun buildDiffItems(
     return items
 }
 
-/**
- * 正方教务“自动更新（实验）”页面
- *
- * 设计目标：
- * - 自动使用已绑定的“入口地址 + 用户名 + 密码”进行登录
- * - 注入现有适配脚本 (qidi_provider.js) 提取课程
- * - 直接覆盖当前学期的课程数据
- *
- * 安全原则：
- * - 不打印用户名/密码/页面敏感内容
- * - 仅在用户主动点击时进行登录与提取
- */
 @Composable
 fun QidiAutoSyncScreen(
     onBackClick: () -> Unit,
