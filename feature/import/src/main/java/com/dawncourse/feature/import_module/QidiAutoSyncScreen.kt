@@ -608,7 +608,12 @@ fun QidiAutoSyncScreen(
                               });
                             }
                             async function openZfTimetableAndQuery(){
-                              if(document.querySelector('#ylkbTable') || document.querySelector('#ajaxForm')){
+                              if(document.querySelector('#ylkbTable')
+                                || document.querySelector('#ajaxForm')
+                                || document.querySelector('#kbtable')
+                                || document.querySelector('#kblist')
+                                || document.querySelector('#kblist_table')
+                                || document.querySelector('#kbgrid_table_0')){
                               }else{
                                 var navLink = (function(){
                                   try{
@@ -622,11 +627,12 @@ fun QidiAutoSyncScreen(
                                   var link = Array.from(document.querySelectorAll('a')).find(a=>{
                                     var href=(a.getAttribute('href')||'').toLowerCase();
                                     var txt=(a.textContent||'').trim();
-                                    return href.indexOf('xskbcx')>=0 || txt.indexOf('个人课表查询')>=0;
+                                  return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
+                                    || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
                                   });
                                   if(link){ link.click(); }
                                 }
-                                await waitForSelector('#ajaxForm, #ylkbTable', 8000);
+                                await waitForSelector('#ajaxForm, #ylkbTable, #kbtable, #kblist, #kblist_table, #kbgrid_table_0', 8000);
                               }
                               
                               try{
@@ -652,7 +658,7 @@ fun QidiAutoSyncScreen(
                               if(btn){ btn.click(); }
                               
                               // 5) 等待表格渲染
-                              await waitForSelector('#ylkbTable, #kblist_table, #kbgrid_table_0', 8000);
+                              await waitForSelector('#ylkbTable, #kbtable, #kblist, #kblist_table, #kbgrid_table_0', 8000);
                               await waitForCourseData(12000);
                             }
                             """.trimIndent()
@@ -1634,7 +1640,12 @@ fun QidiAutoSyncScreen(
                                           || document.querySelector('input[id*="login"]')
                                           || document.querySelector('input[name*="login"]');
                                         var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl') || (!!passEl && (!!userEl || !!loginBtn));
-                                        var isKebiao = !!document.querySelector('#ylkbTable') || !!document.querySelector('#ajaxForm');
+                                        var isKebiao = !!document.querySelector('#ylkbTable')
+                                          || !!document.querySelector('#ajaxForm')
+                                          || !!document.querySelector('#kbtable')
+                                          || !!document.querySelector('#kblist')
+                                          || !!document.querySelector('#kblist_table')
+                                          || !!document.querySelector('#kbgrid_table_0');
                                         var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
                                         var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
                                         var hasSelect = !!(y || t);
