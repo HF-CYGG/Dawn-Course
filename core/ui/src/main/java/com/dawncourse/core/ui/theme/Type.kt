@@ -4,6 +4,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
 import com.dawncourse.core.domain.model.AppFontStyle
 
@@ -20,7 +22,12 @@ val Typography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp,
         lineHeight = 24.sp,
-        letterSpacing = 0.5.sp
+        letterSpacing = 0.5.sp,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Center,
+            trim = LineHeightStyle.Trim.None
+        )
     )
 )
 
@@ -30,6 +37,11 @@ fun getTypography(style: AppFontStyle): Typography {
         AppFontStyle.SERIF -> FontFamily.Serif
         AppFontStyle.MONOSPACE -> FontFamily.Monospace
     }
+    val platformStyle = PlatformTextStyle(includeFontPadding = false)
+    val lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.None
+    )
 
     return Typography(
         bodyLarge = TextStyle(
@@ -37,21 +49,27 @@ fun getTypography(style: AppFontStyle): Typography {
             fontWeight = FontWeight.Normal,
             fontSize = 16.sp,
             lineHeight = 24.sp,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.5.sp,
+            platformStyle = platformStyle,
+            lineHeightStyle = lineHeightStyle
         ),
         titleLarge = TextStyle(
             fontFamily = fontFamily,
             fontWeight = FontWeight.Normal,
             fontSize = 22.sp,
             lineHeight = 28.sp,
-            letterSpacing = 0.sp
+            letterSpacing = 0.sp,
+            platformStyle = platformStyle,
+            lineHeightStyle = lineHeightStyle
         ),
         labelSmall = TextStyle(
             fontFamily = fontFamily,
             fontWeight = FontWeight.Medium,
             fontSize = 11.sp,
             lineHeight = 16.sp,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.5.sp,
+            platformStyle = platformStyle,
+            lineHeightStyle = lineHeightStyle
         )
         // Add other styles as needed, copying defaults but changing fontFamily
     )

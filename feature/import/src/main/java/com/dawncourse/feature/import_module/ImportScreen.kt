@@ -923,7 +923,7 @@ private fun WebViewStep(
                     settings.setAllowFileAccessFromFileURLs(false)
                     settings.setAllowUniversalAccessFromFileURLs(false)
                     settings.javaScriptCanOpenWindowsAutomatically = false
-                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
