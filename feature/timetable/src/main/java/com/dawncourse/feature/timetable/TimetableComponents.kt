@@ -647,16 +647,19 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         rawColor.copy(alpha = 0.9f)
     } else {
-        // 非本周：课程原色去饱和 + 降亮度 + 降透明度，保证低干扰且可读
-        buildNonCurrentCourseColor(rawColor)
+        MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
     }
 
     // 2. 动态计算内容透明度
     // 非本周课程文字保持更高透明度，避免因卡片降饱和/降亮度导致难以识别
-    val contentAlpha = if (isCurrentWeek) 1f else 0.9f
+    val contentAlpha = if (isCurrentWeek) 1f else 0.8f
     val timetableTextColor = LocalWallpaperContrastColor.current
-    val fallbackTextColor = if (timetableTextColor != Color.Unspecified) {
-        timetableTextColor
+    val fallbackTextColor = if (isCurrentWeek) {
+        if (timetableTextColor != Color.Unspecified) {
+            timetableTextColor
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        }
     } else {
         MaterialTheme.colorScheme.onSurface
     }
@@ -667,7 +670,15 @@ fun CourseCard(
     ).copy(alpha = contentAlpha)
 
     // 3. 边框样式（移除旧版本没有的边框）
-    val borderModifier = Modifier
+    val borderModifier = if (isCurrentWeek) {
+        Modifier
+    } else {
+        Modifier.border(
+            width = 0.5.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+            shape = RoundedCornerShape(12.dp)
+        )
+    }
 
     // 性能优化：使用 BoxWithConstraints 替代 Box 以支持响应式布局
     BoxWithConstraints(

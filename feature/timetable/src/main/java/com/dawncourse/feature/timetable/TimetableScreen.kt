@@ -32,7 +32,6 @@ import com.dawncourse.core.ui.theme.LocalAppSettings
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 
@@ -138,7 +137,6 @@ internal fun TimetableScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     val settings = LocalAppSettings.current
-    val isDarkTheme = isSystemInDarkTheme()
 
     // 显示 Snackbar
     LaunchedEffect(userMessage) {
@@ -213,8 +211,7 @@ internal fun TimetableScreen(
             wallpaperMode = settings.wallpaperMode,
             backgroundBlur = settings.backgroundBlur,
             backgroundBrightness = settings.backgroundBrightness,
-            transparency = settings.transparency,
-            isDarkTheme = isDarkTheme
+            transparency = settings.transparency
         )
 
         // 2. 内容层 (Scaffold)
