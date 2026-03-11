@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -32,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -49,8 +51,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,6 +78,35 @@ import kotlin.math.roundToInt
 // 常量定义
 const val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
+
+@Composable
+fun ReadabilityText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    textAlign: TextAlign? = null,
+    isDarkTheme: Boolean = isSystemInDarkTheme(),
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip
+) {
+    val textColor = if (isDarkTheme) Color.White else Color(0xFF1A1A1A)
+    val shadowColor = if (isDarkTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.9f)
+    Text(
+        text = text,
+        modifier = modifier,
+        style = style.copy(
+            color = textColor,
+            shadow = Shadow(
+                color = shadowColor,
+                offset = Offset(1f, 2f),
+                blurRadius = 6f
+            )
+        ),
+        textAlign = textAlign,
+        maxLines = maxLines,
+        overflow = overflow
+    )
+}
 
 /**
  * 课表顶部操作栏
@@ -379,13 +412,12 @@ fun WeekHeader(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text(
+                    ReadabilityText(
                         text = day,
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
                             fontSize = if (isToday) 14.sp else 12.sp // 选中放大
-                        ),
-                        color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f) // 选中色
+                        )
                     )
 
                     // 日期显示 (例如 09.01)
@@ -395,14 +427,12 @@ fun WeekHeader(
                             .plusDays(index.toLong())
                         val dateText = "${date.monthValue}.${date.dayOfMonth}"
                         
-                        Text(
+                        ReadabilityText(
                             text = dateText,
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 10.sp,
                                 fontWeight = if (isToday) FontWeight.Medium else FontWeight.Normal
                             ),
-                            color = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) 
-                                   else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
@@ -436,33 +466,34 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
+                ReadabilityText(
                     text = i.toString(),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 12.sp), // Smaller
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.SansSerif, // Google Sans-like (System Sans)
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) // Darker grey
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.SansSerif
+                    )
                 )
                 // Show configured time or default
                 val sectionTime = settings.sectionTimes.getOrNull(i - 1)
                 val startTime = sectionTime?.startTime ?: "${TIMETABLE_START_HOUR + i - 1}:00"
                 val endTime = sectionTime?.endTime
                 
-                Text(
+                ReadabilityText(
                     text = startTime,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontSize = 8.sp, // Tiny
-                    fontFamily = FontFamily.Monospace,
-                    color = Color.Gray
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 8.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
                 )
                 
                 if (endTime != null) {
-                    Text(
+                    ReadabilityText(
                         text = endTime,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 8.sp, // Tiny
-                        fontFamily = FontFamily.Monospace,
-                        color = Color.Gray.copy(alpha = 0.8f)
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
                     )
                 }
             }
