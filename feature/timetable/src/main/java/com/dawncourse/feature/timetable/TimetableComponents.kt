@@ -382,7 +382,7 @@ fun WeekHeader(
                     fontWeight = if (isToday) FontWeight.ExtraBold else FontWeight.Medium
                 )
 
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(0.dp))
 
                 if (settings.showDateInHeader && semesterStartDate != null) {
                     val baseMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
@@ -396,9 +396,9 @@ fun WeekHeader(
                         fontSize = if (isToday) 11.sp else 10.sp,
                         fontWeight = if (isToday) FontWeight.Bold else FontWeight.Light
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(3.dp))
                 } else {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
 
                 Box(
