@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import kotlinx.coroutines.delay
 
 /**
  * 应用程序主 Activity
@@ -96,6 +97,7 @@ class MainActivity : ComponentActivity() {
 
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {
+                delay(1200)
                 updateViewModel.checkUpdate(isManual = false)
             }
 
