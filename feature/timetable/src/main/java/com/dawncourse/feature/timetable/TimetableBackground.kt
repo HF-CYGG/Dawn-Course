@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.dawncourse.core.domain.model.WallpaperMode
-import kotlin.math.max
 
 /**
  * 课表背景组件
@@ -48,9 +47,6 @@ fun TimetableBackground(
         val context = LocalContext.current
         val configuration = LocalConfiguration.current
         val density = LocalDensity.current
-        val appliedBlur = max(backgroundBlur, 10f)
-        val appliedTransparency = max(transparency, 0.35f)
-        
         // Optimize: Downsample image to screen size to improve blur performance and memory usage
         // This is crucial for performance on high-res wallpapers
         val screenWidthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
@@ -80,7 +76,7 @@ fun TimetableBackground(
             modifier = Modifier
                 .fillMaxSize()
                 .let {
-                    if (appliedBlur > 0f) it.blur(appliedBlur.dp) else it
+                    if (backgroundBlur > 0f) it.blur(backgroundBlur.dp) else it
                 }
         )
 
@@ -89,7 +85,7 @@ fun TimetableBackground(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(overlayColor.copy(alpha = appliedTransparency))
+                .background(overlayColor.copy(alpha = transparency))
         )
     } else {
         // Default Background
