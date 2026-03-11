@@ -114,6 +114,23 @@ class SettingsViewModel @Inject constructor(
                 // 因此这里选择“安全忽略”，避免打印堆栈造成噪音与潜在隐私风险。
             }
         }
+
+        // 课表背景兜底值写回设置，确保设置页面展示与实际渲染一致
+        viewModelScope.launch {
+            try {
+                val cachedSettings = settingsRepository.settings.first()
+                val minBackgroundBlur = 10f
+                val minTransparency = 0.35f
+                if (cachedSettings.backgroundBlur < minBackgroundBlur) {
+                    settingsRepository.setBackgroundBlur(minBackgroundBlur)
+                }
+                if (cachedSettings.transparency < minTransparency) {
+                    settingsRepository.setTransparency(minTransparency)
+                }
+            } catch (_: Throwable) {
+                // 写回兜底值失败时保持现状，避免影响设置页正常加载
+            }
+        }
     }
 
     /**
