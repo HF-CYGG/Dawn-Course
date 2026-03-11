@@ -1738,7 +1738,7 @@ fun QidiAutoSyncScreen(
                                         if (captchaUrl.isNotBlank()) addLog("验证码地址已获取", SyncLogType.ACTION)
                                     }
                                 }
-                                if (!needManualLogin && !isLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
+                                if (!needManualLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
                                     if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
                                         val openMenuJs = """
                                             (function(){
@@ -2181,46 +2181,47 @@ private fun buildAutoFillScript(username: String, password: String): String {
     val passEsc = password.replace("'", "\\'")
     return """
       (function(){
-        function dispatch(el){
-          try{ el.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
-          try{ el.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
-          try{ el.dispatchEvent(new Event('blur',{bubbles:true})); }catch(e){}
-        }
-        function tryFill(doc){
-          try{
-            var U='$userEsc', P='$passEsc';
-            var userEl = doc.querySelector('#yhm') || doc.querySelector('input[name="yhm"]') || doc.querySelector('input[name*="user"]') || doc.querySelector('input[name*="account"]') || doc.querySelector('input[id*="user"]') || doc.querySelector('input[id*="account"]') || doc.querySelector('input[name="xh"]') || doc.querySelector('input[id*="xh"]');
-            var passEl = doc.querySelector('#mm') || doc.querySelector('input[name="mm"]') || doc.querySelector('input[name*="pwd"]') || doc.querySelector('input[id*="pwd"]') || doc.querySelector('input[type="password"]');
-            var hidEl = doc.querySelector('#hidMm') || doc.querySelector('input[type="password"][id*="hid"]');
-            if(userEl){ userEl.value = U; dispatch(userEl); }
-            if(passEl){
-              try{ passEl.type = 'password'; passEl.focus(); }catch(e){}
-              passEl.value = P;
-              dispatch(passEl);
-              try{ passEl.blur(); }catch(e){}
-            }
-            if(hidEl){ hidEl.value = P; dispatch(hidEl); }
-            var yzmEl = doc.querySelector('#yzm') || doc.querySelector('input[name="yzm"]');
-            var yzmDiv = doc.querySelector('#yzmDiv');
-            var needCaptcha = false;
-            try{
-              if(yzmEl){ needCaptcha = true; }
-              if(yzmDiv){
-                var cs = getComputedStyle(yzmDiv);
-                if(!(cs.display==='none' || cs.visibility==='hidden')) needCaptcha = true;
-              }
-            }catch(e){}
-            if(needCaptcha){ return; }
-            var btn = doc.querySelector('#dl') || doc.querySelector('button[type="submit"]') || doc.querySelector('input[type="submit"]') || doc.querySelector('button[id*="login"]') || doc.querySelector('button[name*="login"]');
-            if(btn){ btn.click(); return; }
-            var form = (passEl && passEl.form) || (userEl && userEl.form) || doc.querySelector('form');
-            if(form){ try{ form.submit(); }catch(e){} }
-          }catch(e){}
-        }
-        tryFill(document);
-        var iframes = document.querySelectorAll('iframe');
-        for(var i=0;i<iframes.length;i++){
-          try{ var idoc = iframes[i].contentDocument; if(idoc) tryFill(idoc); }catch(e){}
+        try {
+          var U = '$userEsc';
+          var P = '$passEsc';
+          var userEl = document.getElementById('yhm') || document.querySelector('input[name="yhm"]');
+          var passEl = document.getElementById('mm') || document.querySelector('input[name="mm"]');
+          var hidMm = document.getElementById('hidMm') || document.querySelector('input[id*="hidMm"]');
+          var loginBtn = document.getElementById('dl') || document.querySelector('#dl');
+          if (userEl) userEl.value = U;
+          if (passEl) passEl.value = P;
+          if (hidMm) hidMm.value = P;
+          function triggerEvents(el){
+            if (!el) return;
+            try { el.dispatchEvent(new Event('input', {bubbles:true})); } catch(e){}
+            try { el.dispatchEvent(new Event('change', {bubbles:true})); } catch(e){}
+            try { el.dispatchEvent(new Event('blur', {bubbles:true})); } catch(e){}
+          }
+          triggerEvents(userEl);
+          triggerEvents(passEl);
+          triggerEvents(hidMm);
+          var needCaptcha = false;
+          var yzmEl = document.getElementById('yzm') || document.querySelector('input[name="yzm"]');
+          var yzmDiv = document.getElementById('yzmDiv') || document.querySelector('#yzmDiv');
+          if (yzmEl) {
+            var style1 = window.getComputedStyle(yzmEl);
+            if (style1.display !== 'none' && style1.visibility !== 'hidden') needCaptcha = true;
+          }
+          if (yzmDiv) {
+            var style2 = window.getComputedStyle(yzmDiv);
+            if (style2.display !== 'none' && style2.visibility !== 'hidden') needCaptcha = true;
+          }
+          if (needCaptcha) return "need_captcha";
+          if (loginBtn) {
+            setTimeout(function(){ loginBtn.click(); }, 100);
+            return "clicked";
+          } else {
+            var form = document.querySelector('form');
+            if (form) { form.submit(); return "submitted"; }
+          }
+          return "no_button";
+        } catch(e) {
+          return "error: " + e.message;
         }
       })();
     """.trimIndent()
