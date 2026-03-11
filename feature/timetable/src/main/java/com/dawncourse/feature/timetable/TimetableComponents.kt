@@ -770,9 +770,9 @@ fun CourseCard(
 private fun buildNonCurrentCourseColor(rawColor: Color): Color {
     val hsl = FloatArray(3)
     ColorUtils.colorToHSL(rawColor.toArgb(), hsl)
-    hsl[1] = (hsl[1] * 0.35f).coerceIn(0f, 1f)
-    hsl[2] = (hsl[2] * 0.85f).coerceIn(0.35f, 0.9f)
-    return Color(ColorUtils.HSLToColor(hsl)).copy(alpha = 0.45f)
+    hsl[1] = (hsl[1] * 0.2f).coerceIn(0f, 0.6f)
+    hsl[2] = (hsl[2] * 0.7f).coerceIn(0.3f, 0.8f)
+    return Color(ColorUtils.HSLToColor(hsl)).copy(alpha = 0.3f)
 }
 
 /**
