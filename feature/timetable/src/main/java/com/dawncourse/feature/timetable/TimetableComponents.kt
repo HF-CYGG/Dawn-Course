@@ -653,14 +653,18 @@ fun CourseCard(
 
     // 2. 动态计算内容透明度
     // 非本周课程文字保持更高透明度，避免因卡片降饱和/降亮度导致难以识别
-    val contentAlpha = if (isCurrentWeek) 1f else 1f
-    // 课程文字颜色：使用壁纸对比色统一显示，确保与背景形成强对比
+    val contentAlpha = if (isCurrentWeek) 1f else 0.9f
     val timetableTextColor = LocalWallpaperContrastColor.current
-    val resolvedTextColor = if (timetableTextColor != Color.Unspecified) {
+    val fallbackTextColor = if (timetableTextColor != Color.Unspecified) {
         timetableTextColor
     } else {
         MaterialTheme.colorScheme.onSurface
-    }.copy(alpha = contentAlpha)
+    }
+    val resolvedTextColor = resolveCourseTextColor(
+        baseColor = baseColor,
+        surfaceColor = MaterialTheme.colorScheme.surface,
+        fallback = fallbackTextColor
+    ).copy(alpha = contentAlpha)
 
     // 3. 边框样式（移除旧版本没有的边框）
     val borderModifier = Modifier
@@ -773,6 +777,20 @@ private fun buildNonCurrentCourseColor(rawColor: Color): Color {
     hsl[1] = (hsl[1] * 0.2f).coerceIn(0f, 0.6f)
     hsl[2] = (hsl[2] * 0.7f).coerceIn(0.3f, 0.8f)
     return Color(ColorUtils.HSLToColor(hsl)).copy(alpha = 0.3f)
+}
+
+private fun resolveCourseTextColor(baseColor: Color, surfaceColor: Color, fallback: Color): Color {
+    val baseComposite = Color(
+        ColorUtils.compositeColors(baseColor.toArgb(), surfaceColor.toArgb())
+    )
+    val baseArgb = baseComposite.toArgb()
+    val fallbackContrast = ColorUtils.calculateContrast(fallback.toArgb(), baseArgb)
+    val lightText = Color.White
+    val darkText = Color(0xFF121212)
+    val lightContrast = ColorUtils.calculateContrast(lightText.toArgb(), baseArgb)
+    val darkContrast = ColorUtils.calculateContrast(darkText.toArgb(), baseArgb)
+    val best = if (lightContrast >= darkContrast) lightText else darkText
+    return if (fallbackContrast >= 3.0) fallback else best
 }
 
 /**
