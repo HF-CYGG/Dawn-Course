@@ -16,10 +16,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -33,7 +36,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -51,10 +53,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,35 +78,6 @@ import kotlin.math.roundToInt
 // 常量定义
 const val TIMETABLE_START_HOUR = 8 // 起始时间 8:00
 val TIME_COLUMN_WIDTH = 32.dp // 左侧时间轴宽度
-
-@Composable
-fun ReadabilityText(
-    text: String,
-    modifier: Modifier = Modifier,
-    style: TextStyle = LocalTextStyle.current,
-    textAlign: TextAlign? = null,
-    isDarkTheme: Boolean = isSystemInDarkTheme(),
-    maxLines: Int = Int.MAX_VALUE,
-    overflow: TextOverflow = TextOverflow.Clip
-) {
-    val textColor = if (isDarkTheme) Color.White else Color(0xFF1A1A1A)
-    val shadowColor = if (isDarkTheme) Color.Black.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.9f)
-    Text(
-        text = text,
-        modifier = modifier,
-        style = style.copy(
-            color = textColor,
-            shadow = Shadow(
-                color = shadowColor,
-                offset = Offset(1f, 2f),
-                blurRadius = 6f
-            )
-        ),
-        textAlign = textAlign,
-        maxLines = maxLines,
-        overflow = overflow
-    )
-}
 
 /**
  * 课表顶部操作栏
@@ -369,7 +340,8 @@ fun WeekHeader(
     modifier: Modifier = Modifier,
     isCurrentWeek: Boolean,
     displayedWeek: Int = 1,
-    semesterStartDate: LocalDate? = null
+    semesterStartDate: LocalDate? = null,
+    textColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     val settings = LocalAppSettings.current
     // 性能优化：将静态列表放入 remember 中，避免每次重组重复创建
@@ -385,58 +357,56 @@ fun WeekHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = TIME_COLUMN_WIDTH) // 左侧时间轴偏移
+            .padding(start = TIME_COLUMN_WIDTH)
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         days.forEachIndexed { index, day ->
             val dayValue = index + 1
             val isToday = isCurrentWeek && (dayValue == today)
-            
-            Box(
-                modifier = Modifier.weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                // 今天的高亮胶囊背景
-                if (isToday) {
-                    Box(
-                        modifier = Modifier
-                            .width(36.dp)
-                            .height(42.dp) // 增加高度以容纳日期
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)) // 变淡
-                    )
-                }
-                
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    ReadabilityText(
-                        text = day,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = if (isToday) 14.sp else 12.sp // 选中放大
-                        )
-                    )
+            val dotSize by animateDpAsState(
+                targetValue = if (isToday) 4.dp else 0.dp,
+                animationSpec = spring(stiffness = Spring.StiffnessLow),
+                label = "todayDot"
+            )
 
-                    // 日期显示 (例如 09.01)
-                    if (settings.showDateInHeader && semesterStartDate != null) {
-                        val baseMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-                        val date = baseMonday.plusWeeks((displayedWeek - 1).toLong())
-                            .plusDays(index.toLong())
-                        val dateText = "${date.monthValue}.${date.dayOfMonth}"
-                        
-                        ReadabilityText(
-                            text = dateText,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 10.sp,
-                                fontWeight = if (isToday) FontWeight.Medium else FontWeight.Normal
-                            ),
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = day,
+                    color = if (isToday) textColor else textColor.copy(alpha = 0.7f),
+                    fontSize = if (isToday) 15.sp else 12.sp,
+                    fontWeight = if (isToday) FontWeight.ExtraBold else FontWeight.Medium
+                )
+
+                Spacer(modifier = Modifier.height(2.dp))
+
+                if (settings.showDateInHeader && semesterStartDate != null) {
+                    val baseMonday = semesterStartDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                    val date = baseMonday.plusWeeks((displayedWeek - 1).toLong())
+                        .plusDays(index.toLong())
+                    val dateText = "%02d.%02d".format(date.monthValue, date.dayOfMonth)
+
+                    Text(
+                        text = dateText,
+                        color = if (isToday) textColor else textColor.copy(alpha = 0.5f),
+                        fontSize = if (isToday) 11.sp else 10.sp,
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Light
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
+
+                Box(
+                    modifier = Modifier
+                        .size(dotSize)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
             }
         }
     }
@@ -450,7 +420,10 @@ fun WeekHeader(
  * @param modifier 修饰符
  */
 @Composable
-fun TimeColumnIndicator(modifier: Modifier = Modifier) {
+fun TimeColumnIndicator(
+    modifier: Modifier = Modifier,
+    textColor: Color = MaterialTheme.colorScheme.onSurface
+) {
     val settings = LocalAppSettings.current
     val maxNodes = settings.maxDailySections
     val nodeHeight = settings.courseItemHeightDp.dp
@@ -466,34 +439,37 @@ fun TimeColumnIndicator(modifier: Modifier = Modifier) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                ReadabilityText(
+                Text(
                     text = i.toString(),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.SansSerif
-                    )
+                    ),
+                    color = textColor
                 )
                 // Show configured time or default
                 val sectionTime = settings.sectionTimes.getOrNull(i - 1)
                 val startTime = sectionTime?.startTime ?: "${TIMETABLE_START_HOUR + i - 1}:00"
                 val endTime = sectionTime?.endTime
                 
-                ReadabilityText(
+                Text(
                     text = startTime,
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 8.sp,
                         fontFamily = FontFamily.Monospace
-                    )
+                    ),
+                    color = textColor.copy(alpha = 0.8f)
                 )
                 
                 if (endTime != null) {
-                    ReadabilityText(
+                    Text(
                         text = endTime,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontSize = 8.sp,
                             fontFamily = FontFamily.Monospace
-                        )
+                        ),
+                        color = textColor.copy(alpha = 0.8f)
                     )
                 }
             }
@@ -593,10 +569,12 @@ fun TimetableGrid(
                 content = {
                     layoutItems.forEach { item ->
                         val course = item.course
+                        val isWallpaperSet = settings.wallpaperUri.isNullOrBlank().not()
                         androidx.compose.runtime.key(course.id) {
                             CourseCard(
                                 course = course,
                                 isCurrentWeek = item.isCurrentWeek,
+                                isWallpaperSet = isWallpaperSet,
                                 onClick = { onCourseClick(course) }
                             )
                         }
@@ -671,6 +649,7 @@ fun TimetableGrid(
 fun CourseCard(
     course: Course,
     isCurrentWeek: Boolean,
+    isWallpaperSet: Boolean,
     onClick: () -> Unit
 ) {
     // 1. 动态计算背景颜色
@@ -678,12 +657,16 @@ fun CourseCard(
     val baseColor = if (isCurrentWeek) {
         rawColor.copy(alpha = 0.9f)
     } else {
-        MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+        if (isWallpaperSet) {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        }
     }
 
     // 2. 动态计算内容透明度
     // 非本周课程文字保持更高透明度，避免因卡片降饱和/降亮度导致难以识别
-    val contentAlpha = if (isCurrentWeek) 1f else 0.8f
+    val contentAlpha = if (isCurrentWeek) 1f else 0.6f
     val timetableTextColor = LocalWallpaperContrastColor.current
     val fallbackTextColor = if (isCurrentWeek) {
         if (timetableTextColor != Color.Unspecified) {
@@ -700,15 +683,15 @@ fun CourseCard(
         fallback = fallbackTextColor
     ).copy(alpha = contentAlpha)
 
-    // 3. 边框样式（移除旧版本没有的边框）
-    val borderModifier = if (isCurrentWeek) {
-        Modifier
-    } else {
+    // 3. 边框样式（有壁纸时增强识别度）
+    val borderModifier = if (!isCurrentWeek && isWallpaperSet) {
         Modifier.border(
-            width = 0.5.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+            width = 0.6.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f),
             shape = RoundedCornerShape(12.dp)
         )
+    } else {
+        Modifier
     }
 
     // 性能优化：使用 BoxWithConstraints 替代 Box 以支持响应式布局

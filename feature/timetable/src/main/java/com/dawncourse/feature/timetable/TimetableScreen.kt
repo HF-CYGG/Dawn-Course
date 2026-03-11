@@ -137,6 +137,13 @@ internal fun TimetableScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     
     val settings = LocalAppSettings.current
+    // 壁纸亮度判断结果（true 表示亮图，false 表示暗图）
+    var isWallpaperLight by remember(settings.wallpaperUri) { mutableStateOf(false) }
+    val timetableTextColor = if (settings.wallpaperUri.isNullOrBlank()) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        if (isWallpaperLight) Color(0xFF1A1A1A) else Color.White
+    }
 
     // 显示 Snackbar
     LaunchedEffect(userMessage) {
@@ -211,7 +218,8 @@ internal fun TimetableScreen(
             wallpaperMode = settings.wallpaperMode,
             backgroundBlur = settings.backgroundBlur,
             backgroundBrightness = settings.backgroundBrightness,
-            transparency = settings.transparency
+            transparency = settings.transparency,
+            onWallpaperLightChanged = { isWallpaperLight = it }
         )
 
         // 2. 内容层 (Scaffold)
@@ -272,7 +280,8 @@ internal fun TimetableScreen(
                             WeekHeader(
                                 isCurrentWeek = week == realCurrentWeek,
                                 displayedWeek = week,
-                                semesterStartDate = semesterStartDate
+                                semesterStartDate = semesterStartDate,
+                                textColor = timetableTextColor
                             )
 
                             // 3.2 垂直滚动区域 (时间轴 + 课程网格)
@@ -283,7 +292,7 @@ internal fun TimetableScreen(
                                     .verticalScroll(scrollState)
                             ) {
                                 // 左侧时间轴 (固定宽度)
-                                TimeColumnIndicator()
+                                TimeColumnIndicator(textColor = timetableTextColor)
 
                                 // 右侧课程网格
                                 if (uiState is TimetableUiState.Success) {
