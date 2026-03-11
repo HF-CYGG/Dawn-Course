@@ -19,10 +19,14 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -870,202 +874,210 @@ private fun SettingsDialogManager(
     onDismiss: () -> Unit,
     onChangeDialog: (SettingsDialogState) -> Unit
 ) {
-    when (dialogState) {
-        SettingsDialogState.None -> Unit
-        SettingsDialogState.SectionTime -> {
-            SectionTimeSettingsDialog(
-                settings = settings,
-                viewModel = viewModel,
-                onDismissRequest = onDismiss
-            )
-        }
-        SettingsDialogState.Semester -> {
-            SemesterSettingsDialog(
-                initialName = settings.currentSemesterName,
-                initialWeeks = settings.totalWeeks,
-                initialStartDate = settings.startDateTimestamp,
-                maxCourseWeek = maxCourseWeek,
-                onDismissRequest = onDismiss,
-                onConfirm = { name, weeks, date ->
-                    viewModel.setCurrentSemesterName(name)
-                    viewModel.setTotalWeeks(weeks)
-                    viewModel.setStartDateTimestamp(date)
-                    onDismiss()
-                }
-            )
-        }
-        SettingsDialogState.BatchUpdateDuration -> {
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("批量更新课程时长") },
-                text = { Text("确定要将所有现有课程的时长都修改为 ${settings.defaultCourseDuration} 节吗？\n\n此操作将覆盖所有课程的当前时长，且不可撤销。") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            viewModel.updateAllCoursesDuration(settings.defaultCourseDuration)
-                            onDismiss()
-                        }
-                    ) {
-                        Text("确定")
+    val dialogVisible = dialogState != SettingsDialogState.None
+    // 弹窗卡片渐入/渐出动画
+    AnimatedVisibility(
+        visible = dialogVisible,
+        enter = fadeIn(animationSpec = tween(durationMillis = 180)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 140))
+    ) {
+        when (dialogState) {
+            SettingsDialogState.None -> Unit
+            SettingsDialogState.SectionTime -> {
+                SectionTimeSettingsDialog(
+                    settings = settings,
+                    viewModel = viewModel,
+                    onDismissRequest = onDismiss
+                )
+            }
+            SettingsDialogState.Semester -> {
+                SemesterSettingsDialog(
+                    initialName = settings.currentSemesterName,
+                    initialWeeks = settings.totalWeeks,
+                    initialStartDate = settings.startDateTimestamp,
+                    maxCourseWeek = maxCourseWeek,
+                    onDismissRequest = onDismiss,
+                    onConfirm = { name, weeks, date ->
+                        viewModel.setCurrentSemesterName(name)
+                        viewModel.setTotalWeeks(weeks)
+                        viewModel.setStartDateTimestamp(date)
+                        onDismiss()
                     }
-                },
-                dismissButton = {
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
-                    }
-                }
-            )
-        }
-        SettingsDialogState.SyncProvider -> {
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("绑定正方教务") },
-                text = {
-                    Column {
-                        Text(
-                            text = "仅支持正方教务账号绑定，绑定后可自动更新课表。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 绑定入口卡片
-                        Card(
-                            onClick = { onChangeDialog(SettingsDialogState.BindZf) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer
-                            )
+                )
+            }
+            SettingsDialogState.BatchUpdateDuration -> {
+                AlertDialog(
+                    onDismissRequest = onDismiss,
+                    title = { Text("批量更新课程时长") },
+                    text = { Text("确定要将所有现有课程的时长都修改为 ${settings.defaultCourseDuration} 节吗？\n\n此操作将覆盖所有课程的当前时长，且不可撤销。") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.updateAllCoursesDuration(settings.defaultCourseDuration)
+                                onDismiss()
+                            }
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .background(
-                                            color = MaterialTheme.colorScheme.primaryContainer,
-                                            shape = CircleShape
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AccountBalance,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "正方教务",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "适用于正方教务系统",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            Text("确定")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismiss) {
+                            Text("取消")
+                        }
+                    }
+                )
+            }
+            SettingsDialogState.SyncProvider -> {
+                AlertDialog(
+                    onDismissRequest = onDismiss,
+                    title = { Text("绑定正方教务") },
+                    text = {
+                        Column {
+                            Text(
+                                text = "仅支持正方教务账号绑定，绑定后可自动更新课表。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // 绑定入口卡片
+                            Card(
+                                onClick = { onChangeDialog(SettingsDialogState.BindZf) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer
                                 )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .background(
+                                                color = MaterialTheme.colorScheme.primaryContainer,
+                                                shape = CircleShape
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AccountBalance,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "正方教务",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "适用于正方教务系统",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForwardIos,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                }
                             }
                         }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = onDismiss) { Text("取消") }
                     }
-                },
-                confirmButton = {
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                }
-            )
-        }
-        SettingsDialogState.BindZf -> {
-            BindAccountDialog(
-                title = "绑定正方教务",
-                onDismiss = onDismiss,
-                onConfirm = { endpoint, username, password ->
-                    viewModel.bindZfCredentials(endpoint = endpoint, username = username, password = password)
-                    onDismiss()
-                }
-            )
-        }
-        is SettingsDialogState.UnbindConfirm -> {
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("确认解绑") },
-                text = { Text("确定要解除与 ${dialogState.provider.name} 的绑定吗？\n解绑后将无法自动同步课程数据。") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        viewModel.clearSyncCredentials()
+                )
+            }
+            SettingsDialogState.BindZf -> {
+                BindAccountDialog(
+                    title = "绑定正方教务",
+                    onDismiss = onDismiss,
+                    onConfirm = { endpoint, username, password ->
+                        viewModel.bindZfCredentials(endpoint = endpoint, username = username, password = password)
                         onDismiss()
-                        Toast.makeText(context, "已解绑", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Text("确定解绑", color = MaterialTheme.colorScheme.error)
                     }
-                },
-                dismissButton = {
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
-                    }
-                }
-            )
-        }
-        SettingsDialogState.ClearAllData -> {
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("确认清空") },
-                text = { Text("确定要清空所有本地数据吗？此操作不可恢复。") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        viewModel.clearAllData()
-                        onDismiss()
-                        Toast.makeText(context, "已清空", Toast.LENGTH_SHORT).show()
-                    }) {
-                        Text("清空", color = MaterialTheme.colorScheme.error)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                }
-            )
-        }
-        SettingsDialogState.Permission -> {
-            AlertDialog(
-                onDismissRequest = onDismiss,
-                title = { Text("需要权限") },
-                text = { Text("开启自动静音需要授予“勿扰权限”，以便在上课时自动切换静音模式。") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        onDismiss()
-                        val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-                        try {
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "无法打开设置页面", Toast.LENGTH_SHORT).show()
+                )
+            }
+            is SettingsDialogState.UnbindConfirm -> {
+                AlertDialog(
+                    onDismissRequest = onDismiss,
+                    title = { Text("确认解绑") },
+                    text = { Text("确定要解除与 ${dialogState.provider.name} 的绑定吗？\n解绑后将无法自动同步课程数据。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.clearSyncCredentials()
+                            onDismiss()
+                            Toast.makeText(context, "已解绑", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("确定解绑", color = MaterialTheme.colorScheme.error)
                         }
-                    }) {
-                        Text("去授权")
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismiss) {
+                            Text("取消")
+                        }
                     }
-                },
-                dismissButton = {
-                    TextButton(onClick = onDismiss) {
-                        Text("取消")
+                )
+            }
+            SettingsDialogState.ClearAllData -> {
+                AlertDialog(
+                    onDismissRequest = onDismiss,
+                    title = { Text("确认清空") },
+                    text = { Text("确定要清空所有本地数据吗？此操作不可恢复。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.clearAllData()
+                            onDismiss()
+                            Toast.makeText(context, "已清空", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Text("清空", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismiss) { Text("取消") }
                     }
-                }
-            )
+                )
+            }
+            SettingsDialogState.Permission -> {
+                AlertDialog(
+                    onDismissRequest = onDismiss,
+                    title = { Text("需要权限") },
+                    text = { Text("开启自动静音需要授予“勿扰权限”，以便在上课时自动切换静音模式。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            onDismiss()
+                            val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "无法打开设置页面", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Text("去授权")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismiss) {
+                            Text("取消")
+                        }
+                    }
+                )
+            }
         }
     }
 }
