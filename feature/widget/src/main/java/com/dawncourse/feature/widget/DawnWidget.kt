@@ -521,11 +521,9 @@ class DawnWidget : GlanceAppWidget() {
 
     @Composable
     fun ExpandedCourseItem(course: Course, isCurrent: Boolean, sectionTimes: List<SectionTime>, isCompact: Boolean) {
-        val colorIndex = kotlin.math.abs(course.name.hashCode()) % WidgetCourseColors.size
-        val baseColor = WidgetCourseColors[colorIndex]
-        val backgroundColor = baseColor
-        val textColor = WidgetColors.TextPrimary
-        val subTextColor = WidgetColors.TextSecondary
+        val backgroundColor = WidgetColors.Primary
+        val textColor = WidgetColors.OnPrimary
+        val subTextColor = WidgetColors.OnPrimary
         
         val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
         val endTimeStr = getSectionEndTime(course, sectionTimes)
@@ -576,7 +574,7 @@ class DawnWidget : GlanceAppWidget() {
                         provider = ImageProvider(R.drawable.ic_location_on),
                         contentDescription = null,
                         modifier = GlanceModifier.size(12.dp),
-                        colorFilter = ColorFilter.tint(WidgetColors.IconTint)
+                        colorFilter = ColorFilter.tint(WidgetColors.OnPrimary)
                     )
                     Spacer(GlanceModifier.width(4.dp))
                     Text(
