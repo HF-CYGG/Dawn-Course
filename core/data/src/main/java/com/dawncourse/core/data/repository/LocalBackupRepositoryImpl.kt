@@ -159,6 +159,7 @@ class LocalBackupRepositoryImpl @Inject constructor(
                     version = backup.version,
                     exportTime = backup.exportTime,
                     appVersionName = backup.appVersionName,
+                    semesterNames = backup.semesters.map { it.name },
                     semesterCount = backup.semesters.size,
                     courseCount = backup.courses.size
                 )

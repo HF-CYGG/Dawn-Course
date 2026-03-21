@@ -50,6 +50,8 @@ data class LocalBackupPreview(
     val exportTime: Long,
     /** 备份时的应用版本号 */
     val appVersionName: String,
+    /** 学期名称列表 */
+    val semesterNames: List<String>,
     /** 学期数量 */
     val semesterCount: Int,
     /** 课程数量 */

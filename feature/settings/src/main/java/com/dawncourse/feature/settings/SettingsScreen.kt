@@ -1300,6 +1300,12 @@ private fun LocalBackupSheet(
                     val preview = previewState.preview
                     val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                         .format(Date(preview.exportTime))
+                    val semesterNames = preview.semesterNames
+                    val semesterDisplay = if (semesterNames.isEmpty()) {
+                        "未包含学期名称"
+                    } else {
+                        semesterNames.take(3).joinToString("、")
+                    }
                     Card(
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
@@ -1328,6 +1334,11 @@ private fun LocalBackupSheet(
                             )
                             Text(
                                 text = "学期数量：${preview.semesterCount}，课程数量：${preview.courseCount}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "学期名称：$semesterDisplay",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1393,7 +1404,12 @@ private fun LocalBackupSheet(
         val previewDesc = if (preview != null) {
             val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
                 .format(Date(preview.exportTime))
-            "备份时间：$exportTime\n学期数量：${preview.semesterCount}，课程数量：${preview.courseCount}"
+            val semesterNames = if (preview.semesterNames.isEmpty()) {
+                "未包含学期名称"
+            } else {
+                preview.semesterNames.joinToString("、")
+            }
+            "备份时间：$exportTime\n学期数量：${preview.semesterCount}，课程数量：${preview.courseCount}\n学期名称：$semesterNames"
         } else {
             "未读取到备份信息"
         }
