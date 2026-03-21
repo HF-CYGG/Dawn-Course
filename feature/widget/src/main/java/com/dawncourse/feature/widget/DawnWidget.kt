@@ -95,6 +95,9 @@ private object WidgetColors {
     val ActiveTextSecondary = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
     val UpcomingText = ColorProvider(day = Color(0xFF3C4043), night = Color(0xFFE8EAED))
     val UpcomingSubText = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
+    val EdgeFadeStrong = ColorProvider(day = Color(0xE6FFFFFF), night = Color(0xE61C1B1F))
+    val EdgeFadeMedium = ColorProvider(day = Color(0xB3FFFFFF), night = Color(0xB31C1B1F))
+    val EdgeFadeLight = ColorProvider(day = Color(0x66FFFFFF), night = Color(0x661C1B1F))
     
     val IconTint = TextSecondary // Icons follow secondary text color usually
 }
@@ -495,31 +498,76 @@ class DawnWidget : GlanceAppWidget() {
     @Composable
     fun ColumnScope.ScheduleList(courses: List<Course>, sectionTimes: List<SectionTime>) {
         val now = LocalTime.now()
-        val focusIndex = courses.indexOfFirst { course ->
+        val sortedCourses = courses.sortedBy { it.startSection }
+        val focusIndex = sortedCourses.indexOfFirst { course ->
             isCourseCurrentOrFuture(course, sectionTimes, now)
         }.takeIf { it != -1 } ?: 0
+        val displayCourses = sortedCourses.drop(focusIndex).take(4)
 
-        LazyColumn(
-        modifier = GlanceModifier.defaultWeight()
-    ) {
-        itemsIndexed(courses.sortedBy { it.startSection }) { index, course ->
-                val isFocus = index == focusIndex
-                val isPast = index < focusIndex
-
-                if (isPast) {
-                    // 已结束的课程：隐藏
-                } else if (isFocus) {
-                    ExpandedCourseItem(course, sectionTimes)
-                } else {
-                    CompactCourseItem(course, sectionTimes)
-                }
-                
-                if (index >= focusIndex) {
-                    Spacer(GlanceModifier.height(8.dp))
+        Box(modifier = GlanceModifier.defaultWeight()) {
+            LazyColumn(
+                modifier = GlanceModifier.fillMaxSize().padding(vertical = 8.dp)
+            ) {
+                itemsIndexed(displayCourses) { index, course ->
+                    if (index == 0) {
+                        ExpandedCourseItem(course, sectionTimes)
+                    } else {
+                        CompactCourseItem(course, sectionTimes)
+                    }
+                    
+                    if (index < displayCourses.lastIndex) {
+                        Spacer(GlanceModifier.height(8.dp))
+                    }
                 }
             }
-            item {
-                Spacer(GlanceModifier.height(16.dp))
+
+            Column(
+                modifier = GlanceModifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Column(modifier = GlanceModifier.fillMaxWidth()) {
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(WidgetColors.EdgeFadeStrong)
+                    ) {}
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(WidgetColors.EdgeFadeMedium)
+                    ) {}
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(WidgetColors.EdgeFadeLight)
+                    ) {}
+                }
+
+                Spacer(modifier = GlanceModifier.defaultWeight())
+
+                Column(modifier = GlanceModifier.fillMaxWidth()) {
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(WidgetColors.EdgeFadeLight)
+                    ) {}
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(WidgetColors.EdgeFadeMedium)
+                    ) {}
+                    Box(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(WidgetColors.EdgeFadeStrong)
+                    ) {}
+                }
             }
         }
     }
