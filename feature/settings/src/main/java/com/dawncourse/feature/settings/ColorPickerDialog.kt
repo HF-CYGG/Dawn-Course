@@ -32,7 +32,7 @@ fun ColorPickerDialog(
     onDismiss: () -> Unit,
     onConfirm: (Color) -> Unit
 ) {
-    // Initial HSV extraction
+    // 初始化 HSV 值
     var hue by remember { mutableFloatStateOf(0f) }
     var saturation by remember { mutableFloatStateOf(1f) }
     var value by remember { mutableFloatStateOf(1f) }
@@ -65,7 +65,7 @@ fun ColorPickerDialog(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Preview
+                // 颜色预览
                 Box(
                     modifier = Modifier
                         .size(80.dp)
@@ -76,8 +76,8 @@ fun ColorPickerDialog(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Sliders
-                // Hue
+                // 颜色滑杆
+                // 色相
                 ColorSlider(
                     value = hue,
                     onValueChange = { hue = it },
@@ -90,7 +90,7 @@ fun ColorPickerDialog(
                     label = "色相"
                 )
 
-                // Saturation
+                // 饱和度
                 ColorSlider(
                     value = saturation,
                     onValueChange = { saturation = it },
@@ -101,7 +101,7 @@ fun ColorPickerDialog(
                     label = "饱和度"
                 )
 
-                // Value
+                // 亮度
                 ColorSlider(
                     value = value,
                     onValueChange = { value = it },
@@ -131,6 +131,15 @@ fun ColorPickerDialog(
     }
 }
 
+/**
+ * 颜色滑杆
+ *
+ * @param value 当前数值
+ * @param onValueChange 数值变化回调
+ * @param range 数值范围
+ * @param brush 渐变画刷
+ * @param label 标签文本
+ */
 @Composable
 private fun ColorSlider(
     value: Float,
@@ -146,7 +155,7 @@ private fun ColorSlider(
             modifier = Modifier.padding(start = 8.dp)
         )
         Box(contentAlignment = Alignment.Center) {
-            // Track background gradient
+            // 渐变轨道背景
             Spacer(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -154,7 +163,7 @@ private fun ColorSlider(
                     .clip(RoundedCornerShape(2.dp))
                     .background(brush)
             )
-            // Invisible slider for interaction
+            // 使用透明滑杆承接拖动交互
             Slider(
                 value = value,
                 onValueChange = onValueChange,

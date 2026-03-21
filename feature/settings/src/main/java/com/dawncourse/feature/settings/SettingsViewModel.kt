@@ -18,6 +18,8 @@ import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
 import com.dawncourse.core.domain.model.SyncErrorCode
+import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
+import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -498,6 +500,22 @@ class SettingsViewModel @Inject constructor(
      */
     fun setEnableWebDavAutoSync(enable: Boolean) {
         viewModelScope.launch { settingsRepository.setEnableWebDavAutoSync(enable) }
+    }
+
+    fun setWebDavAutoSyncMode(mode: WebDavAutoSyncMode) {
+        viewModelScope.launch { settingsRepository.setWebDavAutoSyncMode(mode) }
+    }
+
+    fun setWebDavAutoSyncFixedAt(timestamp: Long) {
+        viewModelScope.launch { settingsRepository.setWebDavAutoSyncFixedAt(timestamp) }
+    }
+
+    fun setWebDavAutoSyncIntervalValue(value: Int) {
+        viewModelScope.launch { settingsRepository.setWebDavAutoSyncIntervalValue(value) }
+    }
+
+    fun setWebDavAutoSyncIntervalUnit(unit: WebDavAutoSyncIntervalUnit) {
+        viewModelScope.launch { settingsRepository.setWebDavAutoSyncIntervalUnit(unit) }
     }
 
     /**

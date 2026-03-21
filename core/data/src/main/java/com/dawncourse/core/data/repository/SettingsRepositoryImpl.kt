@@ -18,6 +18,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
+import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -117,6 +119,14 @@ class SettingsRepositoryImpl @Inject constructor(
         val ENABLE_AUTO_MUTE = booleanPreferencesKey("enable_auto_mute")
         /** 是否启用 WebDAV 自动同步 */
         val ENABLE_WEBDAV_AUTO_SYNC = booleanPreferencesKey("enable_webdav_auto_sync")
+        /** WebDAV 自动同步模式 */
+        val WEBDAV_AUTO_SYNC_MODE = stringPreferencesKey("webdav_auto_sync_mode")
+        /** WebDAV 固定日期同步时间戳 */
+        val WEBDAV_AUTO_SYNC_FIXED_AT = androidx.datastore.preferences.core.longPreferencesKey("webdav_auto_sync_fixed_at")
+        /** WebDAV 间隔同步数值 */
+        val WEBDAV_AUTO_SYNC_INTERVAL_VALUE = intPreferencesKey("webdav_auto_sync_interval_value")
+        /** WebDAV 间隔同步单位 */
+        val WEBDAV_AUTO_SYNC_INTERVAL_UNIT = stringPreferencesKey("webdav_auto_sync_interval_unit")
         /** 忽略的更新版本号 */
         val IGNORED_UPDATE_VERSION = intPreferencesKey("ignored_update_version")
         /** 上次导入地址 */
@@ -198,6 +208,17 @@ class SettingsRepositoryImpl @Inject constructor(
         val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
         val enableAutoMute = preferences[PreferencesKeys.ENABLE_AUTO_MUTE] ?: false
         val enableWebDavAutoSync = preferences[PreferencesKeys.ENABLE_WEBDAV_AUTO_SYNC] ?: false
+        val webDavAutoSyncModeName = preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_MODE] ?: WebDavAutoSyncMode.INTERVAL.name
+        val webDavAutoSyncMode = try {
+            WebDavAutoSyncMode.valueOf(webDavAutoSyncModeName)
+        } catch (e: Exception) { WebDavAutoSyncMode.INTERVAL }
+        val webDavAutoSyncFixedAt = preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT] ?: 0L
+        val webDavAutoSyncIntervalValue = preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_VALUE] ?: 24
+        val webDavAutoSyncIntervalUnitName = preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_UNIT]
+            ?: WebDavAutoSyncIntervalUnit.HOURS.name
+        val webDavAutoSyncIntervalUnit = try {
+            WebDavAutoSyncIntervalUnit.valueOf(webDavAutoSyncIntervalUnitName)
+        } catch (e: Exception) { WebDavAutoSyncIntervalUnit.HOURS }
         val ignoredUpdateVersion = preferences[PreferencesKeys.IGNORED_UPDATE_VERSION] ?: 0
         val lastImportUrl = preferences[PreferencesKeys.LAST_IMPORT_URL]
         val blurredWallpaperUri = preferences[PreferencesKeys.BLURRED_WALLPAPER_URI]
@@ -236,6 +257,10 @@ class SettingsRepositoryImpl @Inject constructor(
             enablePersistentNotification = enablePersistentNotification,
             enableAutoMute = enableAutoMute,
             enableWebDavAutoSync = enableWebDavAutoSync,
+            webDavAutoSyncMode = webDavAutoSyncMode,
+            webDavAutoSyncFixedAt = webDavAutoSyncFixedAt,
+            webDavAutoSyncIntervalValue = webDavAutoSyncIntervalValue,
+            webDavAutoSyncIntervalUnit = webDavAutoSyncIntervalUnit,
             lastImportUrl = lastImportUrl,
             ignoredUpdateVersion = ignoredUpdateVersion,
             blurredWallpaperUri = blurredWallpaperUri,
@@ -494,6 +519,40 @@ class SettingsRepositoryImpl @Inject constructor(
     }
 
     /**
+     * 设置 WebDAV 自动同步模式
+     */
+    override suspend fun setWebDavAutoSyncMode(mode: WebDavAutoSyncMode) {
+        dataStore.edit { it[PreferencesKeys.WEBDAV_AUTO_SYNC_MODE] = mode.name }
+    }
+
+    /**
+     * 设置 WebDAV 固定日期同步时间
+     */
+    override suspend fun setWebDavAutoSyncFixedAt(timestamp: Long) {
+        dataStore.edit { preferences ->
+            if (timestamp <= 0L) {
+                preferences.remove(PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT)
+            } else {
+                preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT] = timestamp
+            }
+        }
+    }
+
+    /**
+     * 设置 WebDAV 间隔同步数值
+     */
+    override suspend fun setWebDavAutoSyncIntervalValue(value: Int) {
+        dataStore.edit { it[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_VALUE] = value }
+    }
+
+    /**
+     * 设置 WebDAV 间隔同步单位
+     */
+    override suspend fun setWebDavAutoSyncIntervalUnit(unit: WebDavAutoSyncIntervalUnit) {
+        dataStore.edit { it[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_UNIT] = unit.name }
+    }
+
+    /**
      * 设置忽略的更新版本号
      */
     override suspend fun setIgnoredUpdateVersion(versionCode: Int) {
@@ -589,6 +648,14 @@ class SettingsRepositoryImpl @Inject constructor(
             preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] = settings.enablePersistentNotification
             preferences[PreferencesKeys.ENABLE_AUTO_MUTE] = settings.enableAutoMute
             preferences[PreferencesKeys.ENABLE_WEBDAV_AUTO_SYNC] = settings.enableWebDavAutoSync
+            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_MODE] = settings.webDavAutoSyncMode.name
+            if (settings.webDavAutoSyncFixedAt <= 0L) {
+                preferences.remove(PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT)
+            } else {
+                preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT] = settings.webDavAutoSyncFixedAt
+            }
+            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_VALUE] = settings.webDavAutoSyncIntervalValue
+            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_UNIT] = settings.webDavAutoSyncIntervalUnit.name
             preferences[PreferencesKeys.IGNORED_UPDATE_VERSION] = settings.ignoredUpdateVersion
             if (lastImportUrl.isNullOrBlank()) {
                 preferences.remove(PreferencesKeys.LAST_IMPORT_URL)

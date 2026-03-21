@@ -40,6 +40,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
+import com.dawncourse.app.sync.WebDavAutoSyncScheduler
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -131,6 +132,17 @@ class MainActivity : ComponentActivity() {
                     } else {
                         ReminderScheduler.cancelWork(applicationContext)
                     }
+                }
+
+                // 监听 WebDAV 自动同步配置变化，统一调度 WorkManager 任务
+                LaunchedEffect(
+                    settings.enableWebDavAutoSync,
+                    settings.webDavAutoSyncMode,
+                    settings.webDavAutoSyncFixedAt,
+                    settings.webDavAutoSyncIntervalValue,
+                    settings.webDavAutoSyncIntervalUnit
+                ) {
+                    WebDavAutoSyncScheduler.schedule(applicationContext, settings)
                 }
 
                 // 监听设置变化，启动/停止常驻通知服务

@@ -100,6 +100,14 @@ data class AppSettings(
     val enableAutoMute: Boolean = false,
     /** 是否开启 WebDAV 自动同步 */
     val enableWebDavAutoSync: Boolean = false,
+    /** WebDAV 自动同步模式（固定日期/间隔） */
+    val webDavAutoSyncMode: WebDavAutoSyncMode = WebDavAutoSyncMode.INTERVAL,
+    /** 固定日期同步的时间戳（毫秒） */
+    val webDavAutoSyncFixedAt: Long = 0L,
+    /** 间隔同步数值 */
+    val webDavAutoSyncIntervalValue: Int = 24,
+    /** 间隔同步单位 */
+    val webDavAutoSyncIntervalUnit: WebDavAutoSyncIntervalUnit = WebDavAutoSyncIntervalUnit.HOURS,
 
     // 导入设置
     val lastImportUrl: String? = null,
@@ -160,4 +168,26 @@ enum class DividerType {
     DASHED, 
     /** 点线 */
     DOTTED
+}
+
+/**
+ * WebDAV 自动同步模式
+ */
+enum class WebDavAutoSyncMode {
+    /** 固定日期与时间 */
+    FIXED_TIME,
+    /** 按固定间隔 */
+    INTERVAL
+}
+
+/**
+ * WebDAV 自动同步间隔单位
+ */
+enum class WebDavAutoSyncIntervalUnit {
+    /** 分钟 */
+    MINUTES,
+    /** 小时 */
+    HOURS,
+    /** 天 */
+    DAYS
 }

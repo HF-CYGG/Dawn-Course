@@ -80,6 +80,7 @@ class WebDavSyncRepositoryImpl @Inject constructor(
                     localLastModified = localNow
                 )
             }
+            -1 -> WebDavSyncResult(false, "连接失败", SyncErrorCode.NETWORK_ERROR)
             401, 403 -> WebDavSyncResult(false, "账号或密码错误", SyncErrorCode.AUTH_FAILED)
             else -> WebDavSyncResult(false, "云端访问失败", SyncErrorCode.SERVER_ERROR)
         }
@@ -99,6 +100,9 @@ class WebDavSyncRepositoryImpl @Inject constructor(
 
         val localSyncTs = getLastWebDavSyncTime()
         val remote = downloadBackupJson(creds)
+        if (remote.code == -1) {
+            return WebDavSyncResult(false, "连接失败", SyncErrorCode.NETWORK_ERROR)
+        }
         if (remote.code == 200) {
             val remoteBackup = parseBackup(remote.body)
             if (remoteBackup != null && localSyncTs > 0 && remoteBackup.lastModified > localSyncTs && !forceUpload) {
@@ -158,6 +162,9 @@ class WebDavSyncRepositoryImpl @Inject constructor(
             ?: return WebDavSyncResult(false, "未配置 WebDAV 账号", SyncErrorCode.NO_CREDENTIALS)
 
         val response = downloadBackupJson(creds)
+        if (response.code == -1) {
+            return WebDavSyncResult(false, "连接失败", SyncErrorCode.NETWORK_ERROR)
+        }
         if (response.code == 404) {
             return WebDavSyncResult(false, "云端未找到备份", SyncErrorCode.SERVER_ERROR)
         }
@@ -257,7 +264,7 @@ class WebDavSyncRepositoryImpl @Inject constructor(
                 val response = client.newCall(request).execute()
                 WebDavResponse(response.code, response.body?.string())
             } catch (_: Exception) {
-                WebDavResponse(500, null)
+                WebDavResponse(-1, null)
             }
         }
     }

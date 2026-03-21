@@ -24,8 +24,18 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.ui.components.BatchGenerateTimeContent
 
+/**
+ * 节次设置子页面类型
+ */
 private enum class SectionSettingsScreen { List, BatchGenerate }
 
+/**
+ * 节次时间设置弹窗
+ *
+ * @param settings 当前设置
+ * @param viewModel 设置 ViewModel
+ * @param onDismissRequest 关闭回调
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SectionTimeSettingsDialog(
@@ -33,7 +43,9 @@ fun SectionTimeSettingsDialog(
     viewModel: SettingsViewModel,
     onDismissRequest: () -> Unit
 ) {
+    // 正在编辑的节次序号（从 1 开始）
     var showTimePickerDialog by remember { mutableStateOf<Int?>(null) }
+    // 当前子页面
     var currentScreen by remember { mutableStateOf(SectionSettingsScreen.List) }
 
     Dialog(onDismissRequest = onDismissRequest) {
@@ -80,6 +92,7 @@ fun SectionTimeSettingsDialog(
     }
 
 
+    // 弹出时间编辑对话框
     val rawSectionIndex = showTimePickerDialog
     if (rawSectionIndex != null) {
         val maxDailySections = settings.maxDailySections.coerceAtLeast(1)
@@ -115,6 +128,9 @@ fun SectionTimeSettingsDialog(
     }
 }
 
+/**
+ * 节次列表页内容
+ */
 @Composable
 private fun SectionTimeListContent(
     settings: AppSettings,
@@ -221,6 +237,9 @@ private fun SectionTimeListContent(
     }
 }
 
+/**
+ * 时间段编辑弹窗
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimeRangeEditDialog(
@@ -230,6 +249,7 @@ fun TimeRangeEditDialog(
     onDismissRequest: () -> Unit,
     onConfirm: (String, String) -> Unit
 ) {
+    // 解析 "HH:mm"
     fun parse(t: String): Pair<Int, Int> {
         val p = t.split(":").map { it.toIntOrNull() ?: 0 }
         return (p.getOrNull(0) ?: 0) to (p.getOrNull(1) ?: 0)
@@ -301,6 +321,9 @@ fun TimeRangeEditDialog(
     )
 }
 
+/**
+ * 时间段选择 Tab 按钮
+ */
 @Composable
 fun TabButton(text: String, selected: Boolean, onClick: () -> Unit) {
     Box(

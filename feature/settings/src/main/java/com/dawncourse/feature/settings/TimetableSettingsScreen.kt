@@ -45,7 +45,8 @@ fun TimetableSettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
-    var showTimePickerDialog by remember { mutableStateOf<Int?>(null) } // 当前正在编辑的节次序号（从 1 开始），为 null 表示不显示弹窗
+    // 当前正在编辑的节次序号（从 1 开始），为 null 表示不显示弹窗
+    var showTimePickerDialog by remember { mutableStateOf<Int?>(null) }
     var showBatchGenerateDialog by remember { mutableStateOf(false) }
     var showBatchUpdateDurationDialog by remember { mutableStateOf(false) }
 
@@ -108,7 +109,7 @@ fun TimetableSettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 2. 卡片样式 (Card Style)
+            // 2. 卡片样式
             PreferenceCategory(title = "卡片样式") {
                 // 卡片高度
                 SliderSetting(
@@ -169,21 +170,17 @@ fun TimetableSettingsScreen(
                     }
                 }
 
-                // Generate display list (merge settings with defaults)
+                // 生成展示列表（合并设置与默认值）
                 val sectionTimes = remember(settings.sectionTimes, settings.maxDailySections) {
                     (1..settings.maxDailySections).map { index ->
                         if (index <= settings.sectionTimes.size) {
                             settings.sectionTimes[index - 1]
                         } else {
-                            // Default: 8:00 start, 1 hour each
+                            // 默认：从 8:00 开始，每节 1 小时
                             val startHour = 8 + (index - 1)
                             SectionTime(
                                 String.format("%02d:00", startHour),
-                                String.format("%02d:00", startHour + 1) // Default 60 min slots? Or maybe 45? 
-                                // Previous logic was just a start label. Let's assume 45 min + 10 min break default if generating new.
-                                // Actually, user previous logic was: Text("${TIMETABLE_START_HOUR + i - 1}:00")
-                                // So Section 1: 8:00. Section 2: 9:00.
-                                // This implies 60 minute slots starting on the hour.
+                                String.format("%02d:00", startHour + 1)
                             )
                         }
                     }
@@ -221,7 +218,7 @@ fun TimetableSettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 3. 网格样式 (高级)
+            // 4. 网格线设置
             PreferenceCategory(title = "网格线设置") {
                 // 样式选择
                 SettingRow(title = "线样式") {

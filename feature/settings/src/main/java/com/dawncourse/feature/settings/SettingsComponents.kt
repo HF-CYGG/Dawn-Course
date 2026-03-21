@@ -14,6 +14,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+/**
+ * 设置分组容器
+ *
+ * @param title 分组标题
+ * @param content 分组内容
+ */
 @Composable
 fun PreferenceCategory(
     title: String,
@@ -39,6 +45,18 @@ fun PreferenceCategory(
     }
 }
 
+/**
+ * 通用设置行
+ *
+ * @param title 主标题
+ * @param description 描述文本
+ * @param icon 左侧图标
+ * @param action 右侧动作区域
+ * @param onClick 点击回调
+ * @param showArrow 是否显示右侧箭头
+ * @param showDivider 是否显示分割线
+ * @param content 行内扩展内容
+ */
 @Composable
 fun SettingRow(
     title: String,
@@ -103,6 +121,9 @@ fun SettingRow(
     }
 }
 
+/**
+ * 带开关的设置行
+ */
 @Composable
 fun SwitchSetting(
     title: String,
@@ -124,6 +145,9 @@ fun SwitchSetting(
     )
 }
 
+/**
+ * 基础滑杆设置项（实时更新）
+ */
 @Composable
 fun SliderSetting(
     title: String,
@@ -174,6 +198,9 @@ fun SliderSetting(
     }
 }
 
+/**
+ * 平滑滑杆设置项（滑动结束后回调）
+ */
 @Composable
 fun SmoothSliderSetting(
     title: String,
@@ -225,6 +252,9 @@ fun SmoothSliderSetting(
     }
 }
 
+/**
+ * 检查更新入口项
+ */
 @Composable
 fun UpdateSettingItem(
     currentVersion: String,

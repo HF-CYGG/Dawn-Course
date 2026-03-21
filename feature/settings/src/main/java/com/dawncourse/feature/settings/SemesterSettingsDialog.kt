@@ -41,10 +41,15 @@ fun SemesterSettingsDialog(
     onDismissRequest: () -> Unit,
     onConfirm: (String, Int, Long) -> Unit
 ) {
+    // 学期名称
     var name by remember { mutableStateOf(initialName) }
+    // 总周数
     var weeks by remember { mutableFloatStateOf(initialWeeks.toFloat()) }
+    // 开学日期时间戳
     var startDate by remember { mutableLongStateOf(initialStartDate) }
+    // 日期选择器开关
     var showDatePicker by remember { mutableStateOf(false) }
+    // 缩短周数时的二次确认
     var showConfirmDialog by remember { mutableStateOf(false) }
 
     // 日期选择器逻辑

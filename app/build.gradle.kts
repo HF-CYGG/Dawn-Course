@@ -117,6 +117,7 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.navigation.compose)
     implementation(libs.coil.compose)
+    implementation(libs.work.runtime.ktx)
     
     implementation("androidx.core:core-splashscreen:1.0.1")
 }

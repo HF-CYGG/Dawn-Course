@@ -49,8 +49,12 @@ import com.dawncourse.core.domain.model.WallpaperMode
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
+import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
+import com.dawncourse.core.ui.components.DawnDatePickerDialog
+import com.dawncourse.core.ui.components.OptimizedTimePickerDialog
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.Manifest
 import android.os.Build
@@ -62,6 +66,10 @@ import android.webkit.URLUtil
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.input.KeyboardType
@@ -270,6 +278,10 @@ fun SettingsScreen(
             },
             onClear = { viewModel.clearWebDavCredentials() },
             onToggleAutoSync = { viewModel.setEnableWebDavAutoSync(it) },
+            onSetAutoSyncMode = { viewModel.setWebDavAutoSyncMode(it) },
+            onSetAutoSyncFixedAt = { viewModel.setWebDavAutoSyncFixedAt(it) },
+            onSetAutoSyncIntervalValue = { viewModel.setWebDavAutoSyncIntervalValue(it) },
+            onSetAutoSyncIntervalUnit = { viewModel.setWebDavAutoSyncIntervalUnit(it) },
             onRefreshRemote = { viewModel.refreshWebDavRemoteInfo() },
             onUpload = { force -> viewModel.uploadWebDavBackup(force) },
             onDownload = { viewModel.downloadWebDavBackup() }
@@ -1137,19 +1149,34 @@ private fun WebDavSyncSheet(
     onSave: (serverUrl: String, username: String, password: String) -> Unit,
     onClear: () -> Unit,
     onToggleAutoSync: (Boolean) -> Unit,
+    onSetAutoSyncMode: (WebDavAutoSyncMode) -> Unit,
+    onSetAutoSyncFixedAt: (Long) -> Unit,
+    onSetAutoSyncIntervalValue: (Int) -> Unit,
+    onSetAutoSyncIntervalUnit: (WebDavAutoSyncIntervalUnit) -> Unit,
     onRefreshRemote: () -> Unit,
     onUpload: (force: Boolean) -> Unit,
     onDownload: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 账号录入区的输入状态
     var serverUrl by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    // 是否显示账号编辑面板
+    var showEditPanel by remember { mutableStateOf(false) }
     // 防止重复弹 Toast 的消息缓存
     var lastActionMessage by remember { mutableStateOf<String?>(null) }
     // 云端存在更新时的强制覆盖对话框
     var showForceUploadDialog by remember { mutableStateOf(false) }
+    // 日期/时间选择与展示格式
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    val zoneId = remember { ZoneId.systemDefault() }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var pendingDateMillis by remember { mutableStateOf<Long?>(null) }
+    var selectedTime by remember { mutableStateOf(LocalTime.of(8, 0)) }
+    // 间隔输入框文本，需与设置同步
+    var intervalValueText by remember { mutableStateOf(settings.webDavAutoSyncIntervalValue.toString()) }
 
     LaunchedEffect(credentials) {
         // 账号更新时同步到输入框，便于编辑与复用
@@ -1157,10 +1184,12 @@ private fun WebDavSyncSheet(
             serverUrl = ""
             username = ""
             password = ""
+            showEditPanel = true
         } else {
             serverUrl = credentials.serverUrl
             username = credentials.username
             password = credentials.password
+            showEditPanel = false
         }
     }
 
@@ -1177,6 +1206,21 @@ private fun WebDavSyncSheet(
         }
     }
 
+    // 当外部更新固定同步时间时，同步到时间选择器默认值
+    LaunchedEffect(settings.webDavAutoSyncFixedAt) {
+        if (settings.webDavAutoSyncFixedAt > 0L) {
+            val localTime = Instant.ofEpochMilli(settings.webDavAutoSyncFixedAt)
+                .atZone(zoneId)
+                .toLocalTime()
+            selectedTime = localTime.withSecond(0).withNano(0)
+        }
+    }
+
+    // 当外部更新间隔数值时，同步到输入框文本
+    LaunchedEffect(settings.webDavAutoSyncIntervalValue) {
+        intervalValueText = settings.webDavAutoSyncIntervalValue.toString()
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
@@ -1186,7 +1230,8 @@ private fun WebDavSyncSheet(
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 12.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .animateContentSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = "WebDAV 同步", style = MaterialTheme.typography.titleLarge)
@@ -1195,44 +1240,90 @@ private fun WebDavSyncSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            OutlinedTextField(
-                value = serverUrl,
-                onValueChange = { serverUrl = it },
-                label = { Text("服务器地址") },
-                placeholder = { Text("https://example.com/webdav/") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("账号") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("密码") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // 已保存账号摘要区
+            AnimatedVisibility(
+                visible = credentials != null && !showEditPanel,
+                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
             ) {
-                Button(
-                    onClick = { onSave(serverUrl, username, password) },
-                    modifier = Modifier.weight(1f)
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Text("保存账号")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "同步地址：${credentials?.serverUrl.orEmpty()}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "账号：${credentials?.username.orEmpty()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = { showEditPanel = true }) {
+                            Icon(Icons.Default.Edit, contentDescription = "编辑账号")
+                        }
+                    }
                 }
-                OutlinedButton(
-                    onClick = onClear,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("清除账号")
+            }
+            // 账号编辑区
+            AnimatedVisibility(
+                visible = credentials == null || showEditPanel,
+                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text("服务器地址") },
+                        placeholder = { Text("https://example.com/webdav/") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("账号") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("密码") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                onSave(serverUrl, username, password)
+                                showEditPanel = false
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("保存账号")
+                        }
+                        OutlinedButton(
+                            onClick = onClear,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("清除账号")
+                        }
+                    }
                 }
             }
             HorizontalDivider()
@@ -1253,14 +1344,110 @@ private fun WebDavSyncSheet(
                     onCheckedChange = onToggleAutoSync
                 )
             }
+            // 自动同步配置区：开关开启后显示细节设置
+            AnimatedVisibility(
+                visible = settings.enableWebDavAutoSync,
+                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = "同步方式", style = MaterialTheme.typography.bodyMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME,
+                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.FIXED_TIME) },
+                            label = { Text("固定日期") }
+                        )
+                        FilterChip(
+                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.INTERVAL,
+                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.INTERVAL) },
+                            label = { Text("间隔同步") }
+                        )
+                    }
+                    if (settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME) {
+                        // 固定日期同步：展示当前时间并允许选择日期
+                        val fixedAtText = if (settings.webDavAutoSyncFixedAt > 0L) {
+                            dateFormatter.format(Date(settings.webDavAutoSyncFixedAt))
+                        } else {
+                            "未设置"
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "同步时间", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = fixedAtText,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            OutlinedButton(onClick = { showDatePicker = true }) {
+                                Text("选择日期")
+                            }
+                        }
+                    } else {
+                        // 间隔同步：输入数值并选择单位
+                        OutlinedTextField(
+                            value = intervalValueText,
+                            onValueChange = { value ->
+                                if (value.all { it.isDigit() } && value.length <= 4) {
+                                    intervalValueText = value
+                                    val parsed = value.toIntOrNull()
+                                    if (parsed != null && parsed > 0) {
+                                        onSetAutoSyncIntervalValue(parsed)
+                                    }
+                                }
+                            },
+                            label = { Text("间隔数值") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.MINUTES,
+                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.MINUTES) },
+                                label = { Text("分钟") }
+                            )
+                            FilterChip(
+                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.HOURS,
+                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.HOURS) },
+                                label = { Text("小时") }
+                            )
+                            FilterChip(
+                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.DAYS,
+                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.DAYS) },
+                                label = { Text("天") }
+                            )
+                        }
+                    }
+                }
+            }
             // 云端备份更新时间描述
             val remoteTimestamp = remoteInfo?.remoteLastModified
             val remoteDesc = when {
                 remoteInfo == null -> "未检查云端"
+                remoteInfo.success.not() -> remoteInfo.message
                 remoteTimestamp == null -> "云端无备份"
                 else -> "云端备份：${dateFormatter.format(Date(remoteTimestamp))}"
             }
-            Text(text = remoteDesc, style = MaterialTheme.typography.bodySmall)
+            AnimatedVisibility(
+                visible = remoteDesc.isNotBlank(),
+                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
+                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
+            ) {
+                Text(
+                    text = remoteDesc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (remoteInfo != null && !remoteInfo.success) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1286,6 +1473,50 @@ private fun WebDavSyncSheet(
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
+    }
+
+    // 固定日期选择：先选日期，再选时间，组合为最终时间戳
+    if (showDatePicker) {
+        val initialDate = if (settings.webDavAutoSyncFixedAt > 0L) {
+            Instant.ofEpochMilli(settings.webDavAutoSyncFixedAt).atZone(zoneId).toLocalDate()
+        } else {
+            LocalDate.now()
+        }
+        val dateState = rememberDatePickerState(
+            initialSelectedDateMillis = initialDate.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        )
+        DawnDatePickerDialog(
+            state = dateState,
+            onDismissRequest = { showDatePicker = false },
+            onConfirm = {
+                pendingDateMillis = dateState.selectedDateMillis
+                showDatePicker = false
+                showTimePicker = true
+            },
+            title = "选择同步日期"
+        )
+    }
+
+    if (showTimePicker) {
+        val initialTime = if (settings.webDavAutoSyncFixedAt > 0L) {
+            Instant.ofEpochMilli(settings.webDavAutoSyncFixedAt).atZone(zoneId).toLocalTime()
+        } else {
+            selectedTime
+        }
+        OptimizedTimePickerDialog(
+            initialTime = initialTime,
+            onDismiss = { showTimePicker = false },
+            onConfirm = { time ->
+                // 以本地时区组装完整时间戳，并切换为固定日期模式
+                selectedTime = time
+                val dateMillis = pendingDateMillis ?: Instant.now().toEpochMilli()
+                val date = Instant.ofEpochMilli(dateMillis).atZone(ZoneId.of("UTC")).toLocalDate()
+                val timestamp = date.atTime(time).atZone(zoneId).toInstant().toEpochMilli()
+                onSetAutoSyncMode(WebDavAutoSyncMode.FIXED_TIME)
+                onSetAutoSyncFixedAt(timestamp)
+                showTimePicker = false
+            }
+        )
     }
 
     if (showForceUploadDialog) {

@@ -2,6 +2,8 @@ package com.dawncourse.core.domain.repository
 
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
+import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
+import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -252,6 +254,34 @@ interface SettingsRepository {
      * @param enable 是否启用
      */
     suspend fun setEnableWebDavAutoSync(enable: Boolean)
+
+    /**
+     * 设置 WebDAV 自动同步模式
+     *
+     * @param mode 同步模式（固定日期/间隔）
+     */
+    suspend fun setWebDavAutoSyncMode(mode: WebDavAutoSyncMode)
+
+    /**
+     * 设置固定日期同步时间
+     *
+     * @param timestamp 时间戳（毫秒）
+     */
+    suspend fun setWebDavAutoSyncFixedAt(timestamp: Long)
+
+    /**
+     * 设置间隔同步数值
+     *
+     * @param value 间隔数值
+     */
+    suspend fun setWebDavAutoSyncIntervalValue(value: Int)
+
+    /**
+     * 设置间隔同步单位
+     *
+     * @param unit 间隔单位（分钟/小时/天）
+     */
+    suspend fun setWebDavAutoSyncIntervalUnit(unit: WebDavAutoSyncIntervalUnit)
 
     /**
      * 设置忽略的更新版本号
