@@ -8,6 +8,8 @@ import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
 import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
+import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
+import com.dawncourse.core.data.repository.WebDavSyncRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
@@ -17,6 +19,8 @@ import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
+import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
+import com.dawncourse.core.domain.repository.WebDavSyncRepository
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
@@ -160,4 +164,20 @@ abstract class RepositoryModule {
     abstract fun bindTimetableSyncRepository(
         impl: TimetableSyncRepositoryImpl
     ): TimetableSyncRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindWebDavCredentialsRepository(
+        impl: WebDavCredentialsRepositoryImpl
+    ): WebDavCredentialsRepository
+
+    /**
+     * 绑定 [WebDavSyncRepository] 接口到 [WebDavSyncRepositoryImpl] 实现
+     * 负责 WebDAV 备份上传/下载与冲突处理
+     */
+    @Binds
+    @Singleton
+    abstract fun bindWebDavSyncRepository(
+        impl: WebDavSyncRepositoryImpl
+    ): WebDavSyncRepository
 }

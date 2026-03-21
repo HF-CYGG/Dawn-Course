@@ -40,6 +40,8 @@ dependencies {
     
     implementation(libs.datastore.preferences)
     implementation(libs.security.crypto)
+    implementation(libs.gson)
+    implementation(libs.okhttp)
 
     implementation(libs.javax.inject)
 }

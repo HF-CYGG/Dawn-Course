@@ -247,6 +247,13 @@ interface SettingsRepository {
     suspend fun setEnableAutoMute(enable: Boolean)
 
     /**
+     * 设置是否启用 WebDAV 自动同步
+     *
+     * @param enable 是否启用
+     */
+    suspend fun setEnableWebDavAutoSync(enable: Boolean)
+
+    /**
      * 设置忽略的更新版本号
      *
      * @param versionCode 版本号
@@ -266,4 +273,13 @@ interface SettingsRepository {
      * @param uri URI 字符串
      */
     suspend fun setBlurredWallpaperUri(uri: String?)
+
+    /**
+     * 批量覆盖设置
+     *
+     * 用于从云端恢复时一次性写入所有配置项，避免局部写入造成不一致。
+     *
+     * @param settings 完整的设置对象
+     */
+    suspend fun setAllSettings(settings: AppSettings)
 }

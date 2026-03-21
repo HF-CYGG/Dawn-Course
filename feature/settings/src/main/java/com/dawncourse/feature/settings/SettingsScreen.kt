@@ -49,6 +49,8 @@ import com.dawncourse.core.domain.model.WallpaperMode
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.model.DividerType
+import com.dawncourse.core.domain.model.WebDavCredentials
+import com.dawncourse.core.domain.model.WebDavSyncResult
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import android.Manifest
 import android.os.Build
@@ -57,6 +59,9 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import android.webkit.URLUtil
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,9 +94,15 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val boundProvider by viewModel.boundProvider.collectAsState()
     val lastSyncDesc by viewModel.lastSyncDescription.collectAsState()
+    // WebDAV 同步状态
+    val webDavCredentials by viewModel.webDavCredentials.collectAsState()
+    val webDavRemoteInfo by viewModel.webDavRemoteInfo.collectAsState()
+    val webDavActionResult by viewModel.webDavActionResult.collectAsState()
     val context = LocalContext.current
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
+    // WebDAV 底部弹窗显示状态
+    var showWebDavSheet by remember { mutableStateOf(false) }
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -201,7 +212,11 @@ fun SettingsScreen(
                 boundProvider = boundProvider,
                 lastSyncDesc = lastSyncDesc,
                 context = context,
-                onShowDialog = { dialogState = it }
+                onShowDialog = { dialogState = it },
+                onOpenWebDav = {
+                    showWebDavSheet = true
+                    viewModel.refreshWebDavRemoteInfo()
+                }
             )
             AboutSection(
                 context = context,
@@ -241,6 +256,25 @@ fun SettingsScreen(
         onDismiss = { dialogState = SettingsDialogState.None },
         onChangeDialog = { dialogState = it }
     )
+
+    if (showWebDavSheet) {
+        WebDavSyncSheet(
+            settings = settings,
+            credentials = webDavCredentials,
+            remoteInfo = webDavRemoteInfo,
+            actionResult = webDavActionResult,
+            context = context,
+            onDismiss = { showWebDavSheet = false },
+            onSave = { serverUrl, username, password ->
+                viewModel.saveWebDavCredentials(serverUrl, username, password)
+            },
+            onClear = { viewModel.clearWebDavCredentials() },
+            onToggleAutoSync = { viewModel.setEnableWebDavAutoSync(it) },
+            onRefreshRemote = { viewModel.refreshWebDavRemoteInfo() },
+            onUpload = { force -> viewModel.uploadWebDavBackup(force) },
+            onDownload = { viewModel.downloadWebDavBackup() }
+        )
+    }
 }
 
 private sealed class SettingsDialogState {
@@ -806,7 +840,8 @@ private fun DataSyncSection(
     boundProvider: SyncProviderType?,
     lastSyncDesc: String,
     context: Context,
-    onShowDialog: (SettingsDialogState) -> Unit
+    onShowDialog: (SettingsDialogState) -> Unit,
+    onOpenWebDav: () -> Unit
 ) {
     PreferenceCategory(title = "数据与同步") {
         SettingRow(
@@ -832,7 +867,7 @@ private fun DataSyncSection(
             title = "WebDAV 同步",
             description = lastSyncDesc,
             icon = { Icon(Icons.Default.Cloud, null) },
-            onClick = { Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show() },
+            onClick = onOpenWebDav,
             showDivider = true
         )
         SettingRow(
@@ -1079,6 +1114,197 @@ private fun SettingsDialogManager(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+/**
+ * WebDAV 同步配置弹窗
+ *
+ * 负责：
+ * - 账号的录入、保存与清除
+ * - 云端备份状态的展示与刷新
+ * - 上传/下载与冲突强制覆盖的交互
+ */
+private fun WebDavSyncSheet(
+    settings: AppSettings,
+    credentials: WebDavCredentials?,
+    remoteInfo: WebDavSyncResult?,
+    actionResult: WebDavSyncResult?,
+    context: Context,
+    onDismiss: () -> Unit,
+    onSave: (serverUrl: String, username: String, password: String) -> Unit,
+    onClear: () -> Unit,
+    onToggleAutoSync: (Boolean) -> Unit,
+    onRefreshRemote: () -> Unit,
+    onUpload: (force: Boolean) -> Unit,
+    onDownload: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var serverUrl by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    // 防止重复弹 Toast 的消息缓存
+    var lastActionMessage by remember { mutableStateOf<String?>(null) }
+    // 云端存在更新时的强制覆盖对话框
+    var showForceUploadDialog by remember { mutableStateOf(false) }
+    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+
+    LaunchedEffect(credentials) {
+        // 账号更新时同步到输入框，便于编辑与复用
+        if (credentials == null) {
+            serverUrl = ""
+            username = ""
+            password = ""
+        } else {
+            serverUrl = credentials.serverUrl
+            username = credentials.username
+            password = credentials.password
+        }
+    }
+
+    LaunchedEffect(actionResult) {
+        // 操作结果反馈：弹 Toast，并在需要时提示强制上传
+        if (actionResult != null) {
+            if (!actionResult.message.isNullOrBlank() && actionResult.message != lastActionMessage) {
+                Toast.makeText(context, actionResult.message, Toast.LENGTH_SHORT).show()
+                lastActionMessage = actionResult.message
+            }
+            if (actionResult.requiresForceUpload) {
+                showForceUploadDialog = true
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "WebDAV 同步", style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = if (credentials == null) "未配置账号" else "已保存账号，可直接同步",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = serverUrl,
+                onValueChange = { serverUrl = it },
+                label = { Text("服务器地址") },
+                placeholder = { Text("https://example.com/webdav/") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("账号") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("密码") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = { onSave(serverUrl, username, password) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("保存账号")
+                }
+                OutlinedButton(
+                    onClick = onClear,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("清除账号")
+                }
+            }
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("自动同步")
+                    Text(
+                        text = "定期与云端保持一致",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enableWebDavAutoSync,
+                    onCheckedChange = onToggleAutoSync
+                )
+            }
+            // 云端备份更新时间描述
+            val remoteTimestamp = remoteInfo?.remoteLastModified
+            val remoteDesc = when {
+                remoteInfo == null -> "未检查云端"
+                remoteTimestamp == null -> "云端无备份"
+                else -> "云端备份：${dateFormatter.format(Date(remoteTimestamp))}"
+            }
+            Text(text = remoteDesc, style = MaterialTheme.typography.bodySmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onRefreshRemote,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("检查云端")
+                }
+                Button(
+                    onClick = { onUpload(false) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("上传备份")
+                }
+                OutlinedButton(
+                    onClick = onDownload,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("下载备份")
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+
+    if (showForceUploadDialog) {
+        AlertDialog(
+            onDismissRequest = { showForceUploadDialog = false },
+            title = { Text("云端有更新") },
+            text = { Text("云端备份更新时间晚于本地记录，是否强制覆盖上传？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showForceUploadDialog = false
+                        onUpload(true)
+                    }
+                ) { Text("强制上传") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForceUploadDialog = false }) { Text("取消") }
+            }
+        )
     }
 }
 

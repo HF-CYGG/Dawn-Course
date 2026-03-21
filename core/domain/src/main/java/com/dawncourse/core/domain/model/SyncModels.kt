@@ -13,7 +13,8 @@ enum class SyncProviderType {
     /** 起迪教务系统（已弃用） */
     QIDI,
     /** 正方教务系统（用户名+密码登录） */
-    ZF
+    ZF,
+    WEBDAV
 }
 
 /**

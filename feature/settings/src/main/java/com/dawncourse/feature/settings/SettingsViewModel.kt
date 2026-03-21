@@ -10,15 +10,24 @@ import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
+import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
+import com.dawncourse.core.domain.usecase.FetchWebDavRemoteInfoUseCase
+import com.dawncourse.core.domain.usecase.UploadWebDavBackupUseCase
+import com.dawncourse.core.domain.usecase.DownloadWebDavBackupUseCase
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
+import com.dawncourse.core.domain.model.SyncErrorCode
+import com.dawncourse.core.domain.model.WebDavCredentials
+import com.dawncourse.core.domain.model.WebDavSyncResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import android.content.Context
 import android.content.Intent
@@ -43,6 +52,10 @@ class SettingsViewModel @Inject constructor(
     private val semesterRepository: SemesterRepository,
     private val credentialsRepository: CredentialsRepository,
     private val syncStateRepository: SyncStateRepository,
+    private val webDavCredentialsRepository: WebDavCredentialsRepository,
+    private val fetchWebDavRemoteInfoUseCase: FetchWebDavRemoteInfoUseCase,
+    private val uploadWebDavBackupUseCase: UploadWebDavBackupUseCase,
+    private val downloadWebDavBackupUseCase: DownloadWebDavBackupUseCase,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -85,6 +98,19 @@ class SettingsViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = "尚未同步"
         )
+
+    val webDavCredentials: StateFlow<WebDavCredentials?> = webDavCredentialsRepository.credentials
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+
+    private val _webDavRemoteInfo = MutableStateFlow<WebDavSyncResult?>(null)
+    val webDavRemoteInfo: StateFlow<WebDavSyncResult?> = _webDavRemoteInfo.asStateFlow()
+
+    private val _webDavActionResult = MutableStateFlow<WebDavSyncResult?>(null)
+    val webDavActionResult: StateFlow<WebDavSyncResult?> = _webDavActionResult.asStateFlow()
 
     init {
         // 同步 DataStore 设置与数据库中的当前学期数据
@@ -230,6 +256,12 @@ class SettingsViewModel @Inject constructor(
         }
         val guessed = URLUtil.guessUrl(withScheme)
         return if (URLUtil.isNetworkUrl(guessed)) guessed else ""
+    }
+
+    private fun normalizeWebDavUrl(raw: String): String {
+        val normalized = normalizeEndpointInput(raw)
+        if (normalized.isBlank()) return ""
+        return if (normalized.endsWith("/")) normalized else "$normalized/"
     }
 
     /**
@@ -459,6 +491,83 @@ class SettingsViewModel @Inject constructor(
 
     fun setEnableAutoMute(enable: Boolean) {
         viewModelScope.launch { settingsRepository.setEnableAutoMute(enable) }
+    }
+
+    /**
+     * 设置 WebDAV 自动同步开关
+     */
+    fun setEnableWebDavAutoSync(enable: Boolean) {
+        viewModelScope.launch { settingsRepository.setEnableWebDavAutoSync(enable) }
+    }
+
+    /**
+     * 保存 WebDAV 账号信息
+     *
+     * 会先校验服务器地址与账号密码，再写入加密存储。
+     */
+    fun saveWebDavCredentials(serverUrl: String, username: String, password: String) {
+        viewModelScope.launch {
+            val normalizedUrl = normalizeWebDavUrl(serverUrl)
+            if (normalizedUrl.isBlank()) {
+                _webDavActionResult.emit(
+                    WebDavSyncResult(false, "服务器地址无效", SyncErrorCode.UNKNOWN)
+                )
+                return@launch
+            }
+            if (username.isBlank() || password.isBlank()) {
+                _webDavActionResult.emit(
+                    WebDavSyncResult(false, "账号或密码不能为空", SyncErrorCode.UNKNOWN)
+                )
+                return@launch
+            }
+            webDavCredentialsRepository.saveCredentials(
+                WebDavCredentials(
+                    serverUrl = normalizedUrl,
+                    username = username.trim(),
+                    password = password
+                )
+            )
+            _webDavActionResult.emit(WebDavSyncResult(true, "已保存 WebDAV 账号"))
+        }
+    }
+
+    /**
+     * 清除 WebDAV 账号信息
+     */
+    fun clearWebDavCredentials() {
+        viewModelScope.launch {
+            webDavCredentialsRepository.clearCredentials()
+            _webDavActionResult.emit(WebDavSyncResult(true, "已清除 WebDAV 账号"))
+        }
+    }
+
+    /**
+     * 刷新云端备份信息
+     */
+    fun refreshWebDavRemoteInfo() {
+        viewModelScope.launch {
+            _webDavRemoteInfo.emit(fetchWebDavRemoteInfoUseCase())
+        }
+    }
+
+    /**
+     * 上传本地备份到 WebDAV
+     *
+     * @param forceUpload 是否强制覆盖云端
+     */
+    fun uploadWebDavBackup(forceUpload: Boolean) {
+        viewModelScope.launch {
+            _webDavActionResult.emit(uploadWebDavBackupUseCase(forceUpload))
+        }
+    }
+
+    /**
+     * 下载 WebDAV 备份并恢复
+     */
+    fun downloadWebDavBackup() {
+        viewModelScope.launch {
+            _webDavActionResult.emit(downloadWebDavBackupUseCase())
+        }
     }
 
     /**

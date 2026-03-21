@@ -46,6 +46,7 @@ enum class AppFontStyle {
  * @property reminderMinutes 提前提醒分钟数
  * @property enablePersistentNotification 是否启用常驻通知
  * @property enableAutoMute 是否启用自动静音
+ * @property enableWebDavAutoSync 是否启用 WebDAV 自动同步
  * @property lastImportUrl 上次成功网页提取的地址
  * @property blurredWallpaperUri 模糊处理后的壁纸 URI（缓存）
  * @property backgroundBlur 背景模糊半径 (0-100dp)
@@ -97,6 +98,8 @@ data class AppSettings(
     val reminderMinutes: Int = 10,
     val enablePersistentNotification: Boolean = false,
     val enableAutoMute: Boolean = false,
+    /** 是否开启 WebDAV 自动同步 */
+    val enableWebDavAutoSync: Boolean = false,
 
     // 导入设置
     val lastImportUrl: String? = null,

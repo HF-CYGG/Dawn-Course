@@ -18,6 +18,14 @@ interface SemesterDao {
     fun getAllSemesters(): Flow<List<SemesterEntity>>
 
     /**
+     * 一次性查询所有学期（非 Flow）
+     *
+     * 用于备份/恢复等一次性读取场景。
+     */
+    @Query("SELECT * FROM semesters")
+    suspend fun getAllSemestersOnce(): List<SemesterEntity>
+
+    /**
      * 查询当前学期
      */
     @Query("SELECT * FROM semesters WHERE isCurrent = 1 LIMIT 1")

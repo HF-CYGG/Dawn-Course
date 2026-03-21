@@ -45,6 +45,12 @@ class TimetableSyncRepositoryImpl @Inject constructor(
                     message = "当前绑定为教务账号，请在主界面使用“自动更新”进入同步页面"
                 )
             }
+            SyncProviderType.WEBDAV -> {
+                TimetableSyncResult.Failure(
+                    code = SyncErrorCode.AUTH_FAILED,
+                    message = "当前绑定为 WebDAV 账号，请在设置页使用 WebDAV 同步"
+                )
+            }
         }
     }
 
