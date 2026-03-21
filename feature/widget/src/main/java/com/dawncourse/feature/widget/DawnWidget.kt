@@ -9,8 +9,6 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
-import androidx.glance.Image
-import androidx.glance.ImageProvider
 import androidx.glance.LocalSize
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
@@ -57,7 +55,6 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import androidx.glance.text.TextAlign
-import androidx.glance.ColorFilter
 import com.dawncourse.core.domain.model.SectionTime
 import java.time.format.DateTimeFormatter
 
@@ -88,7 +85,12 @@ private object WidgetColors {
     val TextTertiary = ColorProvider(day = Color(0xFF79747E), night = Color(0xFF938F99))
     
     val Divider = ColorProvider(day = Color(0xFFE0E0E0), night = Color(0xFF49454F))
-    val DateBadgeBackground = ColorProvider(day = Color(0xFFE7E0EC), night = Color(0xFF4A4458))
+    val DateBadgeBackground = ColorProvider(day = Color(0xFFF1F3F4), night = Color(0xFF3C4043))
+    val ActiveBackground = ColorProvider(day = Color(0xFFFFF0F0), night = Color(0xFF3A2828))
+    val ActiveTextPrimary = ColorProvider(day = Color(0xFF1A1A1A), night = Color.White)
+    val ActiveTextSecondary = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
+    val UpcomingText = ColorProvider(day = Color(0xFF3C4043), night = Color(0xFFE8EAED))
+    val UpcomingSubText = ColorProvider(day = Color(0xFF5F6368), night = Color(0xFFAAAAAA))
     
     val IconTint = TextSecondary // Icons follow secondary text color usually
 }
@@ -296,8 +298,11 @@ class DawnWidget : GlanceAppWidget() {
                     .fillMaxSize()
                     .background(WidgetColors.Background)
                     .appWidgetBackground()
-                    .cornerRadius(16.dp)
-                    .padding(if (height < 160.dp) 8.dp else 12.dp)
+                    .cornerRadius(24.dp)
+                    .padding(
+                        horizontal = 20.dp,
+                        vertical = if (height < 160.dp) 16.dp else 20.dp
+                    )
                     .clickable(actionStartActivity(getMainActivityClassName())),
                 verticalAlignment = Alignment.Top // 强制置顶！
             ) {
@@ -307,16 +312,16 @@ class DawnWidget : GlanceAppWidget() {
                 if (isVeryCompact) {
                      Row(
                         verticalAlignment = Alignment.Bottom,
-                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 12.dp)
                     ) {
                          Text(
                             text = if (isBeforeSemesterStart) "假期中" else "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                            style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
+                            style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
                         )
                         Spacer(GlanceModifier.width(8.dp))
                         Text(
                             text = "${today.monthValue}月${today.dayOfMonth}日",
-                            style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary)
+                            style = TextStyle(fontSize = 13.sp, color = WidgetColors.TextSecondary)
                         )
                     }
                 } else {
@@ -328,7 +333,7 @@ class DawnWidget : GlanceAppWidget() {
                     EmptyCourseView(emptyMessage)
                 } else {
                     // 关键：LazyColumn 必须设置 weight(1f)，否则可能撑不开
-                    ScheduleList(courses, sectionTimes, isVeryCompact)
+                    ScheduleList(courses, sectionTimes)
                 }
             }
         } else {
@@ -441,7 +446,7 @@ class DawnWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
+                .padding(bottom = 16.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             Text(
@@ -453,7 +458,7 @@ class DawnWidget : GlanceAppWidget() {
             
             Text(
                 text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                style = TextStyle(fontSize = 16.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Medium),
+                style = TextStyle(fontSize = 15.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Medium),
                 modifier = GlanceModifier.padding(bottom = 2.dp)
             )
             
@@ -467,7 +472,7 @@ class DawnWidget : GlanceAppWidget() {
             ) {
                 Text(
                     text = dateInfo,
-                    style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Medium)
+                    style = TextStyle(fontSize = 12.sp, color = WidgetColors.ActiveTextSecondary, fontWeight = FontWeight.Medium)
                 )
             }
         }
@@ -487,7 +492,7 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
-    fun ColumnScope.ScheduleList(courses: List<Course>, sectionTimes: List<SectionTime>, isCompact: Boolean) {
+    fun ColumnScope.ScheduleList(courses: List<Course>, sectionTimes: List<SectionTime>) {
         val now = LocalTime.now()
         val focusIndex = courses.indexOfFirst { course ->
             isCourseCurrentOrFuture(course, sectionTimes, now)
@@ -503,10 +508,9 @@ class DawnWidget : GlanceAppWidget() {
                 if (isPast) {
                     // 已结束的课程：隐藏
                 } else if (isFocus) {
-                    val isCurrent = isCourseActive(course, sectionTimes, now)
-                    ExpandedCourseItem(course, isCurrent, sectionTimes, isCompact)
+                    ExpandedCourseItem(course, sectionTimes)
                 } else {
-                    CompactCourseItem(course, sectionTimes, isCompact)
+                    CompactCourseItem(course, sectionTimes)
                 }
                 
                 if (index >= focusIndex) {
@@ -520,119 +524,123 @@ class DawnWidget : GlanceAppWidget() {
     }
 
     @Composable
-    fun ExpandedCourseItem(course: Course, isCurrent: Boolean, sectionTimes: List<SectionTime>, isCompact: Boolean) {
-        val backgroundColor = WidgetColors.Primary
-        val textColor = WidgetColors.OnPrimary
-        val subTextColor = WidgetColors.OnPrimary
+    fun ExpandedCourseItem(course: Course, sectionTimes: List<SectionTime>) {
+        val timePrimaryColor = WidgetColors.UpcomingText
+        val timeSecondaryColor = WidgetColors.UpcomingSubText
+        val activeBackground = WidgetColors.ActiveBackground
+        val activeTextPrimary = WidgetColors.ActiveTextPrimary
+        val activeTextSecondary = WidgetColors.ActiveTextSecondary
         
         val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
         val endTimeStr = getSectionEndTime(course, sectionTimes)
 
         Row(
-            modifier = GlanceModifier.fillMaxWidth(),
+            modifier = GlanceModifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 时间列 (Compact 模式下隐藏结束时间，缩小宽度)
             Column(
-                modifier = GlanceModifier.width(if (isCompact) 40.dp else 48.dp),
-                horizontalAlignment = Alignment.End
+                modifier = GlanceModifier.width(48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val timeColor = if (isCurrent) WidgetColors.Primary else subTextColor
                 Text(
                     text = startTime,
-                    style = TextStyle(color = timeColor, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End),
+                    style = TextStyle(
+                        color = timePrimaryColor,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    ),
                     maxLines = 1
                 )
-                if (!isCompact && endTimeStr != null) {
+                if (endTimeStr != null) {
+                    Spacer(GlanceModifier.height(3.dp))
                     Text(
                         text = endTimeStr,
-                        style = TextStyle(color = subTextColor, fontSize = 12.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.End),
+                        style = TextStyle(color = timeSecondaryColor, fontSize = 12.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Center),
                         maxLines = 1
                     )
                 }
             }
 
-            Spacer(GlanceModifier.width(8.dp))
+            Spacer(GlanceModifier.width(14.dp))
 
-            Column(
+            Box(
                 modifier = GlanceModifier
                     .defaultWeight()
-                    .background(backgroundColor)
-                    .cornerRadius(16.dp)
-                    .padding(horizontal = if (isCompact) 12.dp else 16.dp, vertical = if (isCompact) 8.dp else 12.dp)
+                    .background(activeBackground)
+                    .cornerRadius(20.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                Text(
-                    text = course.name,
-                    style = TextStyle(color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold),
-                    maxLines = 1
-                )
-                
-                Spacer(GlanceModifier.height(4.dp))
-                
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Image(
-                        provider = ImageProvider(R.drawable.ic_location_on),
-                        contentDescription = null,
-                        modifier = GlanceModifier.size(12.dp),
-                        colorFilter = ColorFilter.tint(WidgetColors.OnPrimary)
-                    )
-                    Spacer(GlanceModifier.width(4.dp))
+                Column {
                     Text(
-                        text = "${course.location}" + if (!isCompact) " · ${course.teacher}" else "",
-                        style = TextStyle(color = subTextColor, fontSize = 12.sp),
+                        text = course.name,
+                        style = TextStyle(
+                            color = activeTextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
                         maxLines = 1
                     )
+
+                    Spacer(GlanceModifier.height(6.dp))
+
+                    val detailText = listOf(course.location, course.teacher)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · ")
+                    if (detailText.isNotBlank()) {
+                        Text(
+                            text = detailText,
+                            style = TextStyle(color = activeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+                            maxLines = 1
+                        )
+                    }
                 }
-            }
-            
-            if (isCurrent) {
-                Spacer(GlanceModifier.width(8.dp))
-                Box(
-                    modifier = GlanceModifier.size(6.dp).background(WidgetColors.Primary).cornerRadius(3.dp)
-                ) {}
             }
         }
     }
 
     @Composable
-    fun CompactCourseItem(course: Course, sectionTimes: List<SectionTime>, isCompact: Boolean) {
-        val textColor = WidgetColors.TextPrimary
-        val subTextColor = WidgetColors.TextSecondary
+    fun CompactCourseItem(course: Course, sectionTimes: List<SectionTime>) {
+        val textColor = WidgetColors.UpcomingText
+        val subTextColor = WidgetColors.UpcomingSubText
         
         val startTime = getSectionStartTime(course.startSection, sectionTimes) ?: "${course.startSection}"
 
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .background(WidgetColors.Surface)
-                .cornerRadius(12.dp)
-                .padding(horizontal = if (isCompact) 8.dp else 12.dp, vertical = if (isCompact) 6.dp else 8.dp),
+                .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = startTime,
-                style = TextStyle(color = subTextColor, fontSize = 12.sp, fontWeight = FontWeight.Medium),
-                modifier = GlanceModifier.width(40.dp)
+                style = TextStyle(color = subTextColor, fontSize = 15.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
+                modifier = GlanceModifier.width(48.dp)
             )
             
-            Box(modifier = GlanceModifier.width(2.dp).height(12.dp).background(WidgetColors.Divider)) {}
+            Spacer(GlanceModifier.width(14.dp))
             
-            Spacer(GlanceModifier.width(8.dp))
+            Box(modifier = GlanceModifier.width(2.dp).height(14.dp).background(WidgetColors.Divider).cornerRadius(1.dp)) {}
+            
+            Spacer(GlanceModifier.width(14.dp))
 
             Row(
                 modifier = GlanceModifier.defaultWeight(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val locationText = course.location.takeIf { it.isNotBlank() }
+                val courseText = if (locationText != null) {
+                    "${course.name} @${locationText}"
+                } else {
+                    course.name
+                }
                 Text(
-                    text = course.name,
-                    style = TextStyle(color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold),
-                    maxLines = 1
-                )
-                Spacer(GlanceModifier.width(6.dp))
-                Text(
-                    text = "@${course.location}",
-                    style = TextStyle(color = subTextColor, fontSize = 11.sp),
-                    maxLines = 1
+                    text = courseText,
+                    style = TextStyle(color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Medium),
+                    maxLines = 1,
+                    modifier = GlanceModifier.defaultWeight()
                 )
             }
         }
