@@ -110,11 +110,15 @@ fun SettingsScreen(
     val webDavCredentials by viewModel.webDavCredentials.collectAsState()
     val webDavRemoteInfo by viewModel.webDavRemoteInfo.collectAsState()
     val webDavActionResult by viewModel.webDavActionResult.collectAsState()
+    // 本地备份弹窗状态
+    val localBackupState by viewModel.localBackupState.collectAsState()
     val context = LocalContext.current
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
     // WebDAV 底部弹窗显示状态
     var showWebDavSheet by remember { mutableStateOf(false) }
+    // 本地备份弹窗显示状态
+    var showLocalBackupSheet by remember { mutableStateOf(false) }
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -128,6 +132,31 @@ fun SettingsScreen(
                 e.printStackTrace()
             }
             viewModel.setWallpaperUri(it.toString())
+        }
+    }
+
+    // 导出备份：通过 SAF 创建文件
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.exportLocalBackup(uri.toString())
+        }
+    }
+
+    // 导入备份：通过 SAF 选择文件
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            viewModel.importLocalBackup(uri.toString())
         }
     }
 
@@ -223,11 +252,15 @@ fun SettingsScreen(
             DataSyncSection(
                 boundProvider = boundProvider,
                 lastSyncDesc = lastSyncDesc,
-                context = context,
                 onShowDialog = { dialogState = it },
                 onOpenWebDav = {
                     showWebDavSheet = true
                     viewModel.refreshWebDavRemoteInfo()
+                },
+                onOpenLocalBackup = {
+                    showLocalBackupSheet = true
+                    // 每次打开重置提示与进度，避免旧状态残留
+                    viewModel.resetLocalBackupState()
                 }
             )
             AboutSection(
@@ -289,6 +322,26 @@ fun SettingsScreen(
             onRefreshRemote = { viewModel.refreshWebDavRemoteInfo() },
             onUpload = { force -> viewModel.uploadWebDavBackup(force) },
             onDownload = { viewModel.downloadWebDavBackup() }
+        )
+    }
+
+    if (showLocalBackupSheet) {
+        LocalBackupSheet(
+            state = localBackupState,
+            onDismiss = {
+                showLocalBackupSheet = false
+                viewModel.resetLocalBackupState()
+            },
+            onExport = {
+                // 生成默认文件名，便于用户区分备份时间
+                val fileName = "DawnCourse_Backup_${
+                    SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                }.json"
+                exportBackupLauncher.launch(fileName)
+            },
+            onImport = {
+                importBackupLauncher.launch(arrayOf("application/json"))
+            }
         )
     }
 }
@@ -855,9 +908,9 @@ private fun NotificationSection(
 private fun DataSyncSection(
     boundProvider: SyncProviderType?,
     lastSyncDesc: String,
-    context: Context,
     onShowDialog: (SettingsDialogState) -> Unit,
-    onOpenWebDav: () -> Unit
+    onOpenWebDav: () -> Unit,
+    onOpenLocalBackup: () -> Unit
 ) {
     PreferenceCategory(title = "数据与同步") {
         SettingRow(
@@ -889,7 +942,7 @@ private fun DataSyncSection(
         SettingRow(
             title = "备份与还原",
             icon = { Icon(Icons.Default.Restore, null) },
-            onClick = { Toast.makeText(context, "开发中", Toast.LENGTH_SHORT).show() },
+            onClick = onOpenLocalBackup,
             showDivider = true
         )
         SettingRow(
@@ -1130,6 +1183,160 @@ private fun SettingsDialogManager(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+/**
+ * 本地备份与还原弹窗
+ *
+ * 通过 SAF 完成文件读写，不申请存储权限：
+ * - 导出：创建 JSON 文件并写入备份数据
+ * - 导入：选择 JSON 文件并覆盖本地数据
+ */
+private fun LocalBackupSheet(
+    state: LocalBackupUiState,
+    onDismiss: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit
+) {
+    // 还原操作需要二次确认
+    var showImportConfirm by remember { mutableStateOf(false) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Icon(
+                    imageVector = Icons.Default.SettingsBackupRestore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(40.dp)
+                )
+                // 标题区
+                Text(
+                    text = "备份与还原",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                // 导出模块
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    elevation = CardDefaults.cardElevation(0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("导出到本地设备", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "将课表与设置导出为备份文件，方便换机或离线保存。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onExport,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !state.isProcessing
+                        ) {
+                            Text("立即导出")
+                        }
+                    }
+                }
+                // 还原模块
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    elevation = CardDefaults.cardElevation(0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("从本地文件恢复", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "选择之前导出的备份文件进行恢复。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "注意：此操作将覆盖当前的全部数据。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        OutlinedButton(
+                            onClick = { showImportConfirm = true },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !state.isProcessing
+                        ) {
+                            Text("选择备份文件")
+                        }
+                    }
+                }
+                // 操作结果提示
+                AnimatedVisibility(visible = state.message.isNotBlank()) {
+                    val messageColor = if (state.success == false) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = messageColor
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            // 处理中的遮罩，防止误触
+            androidx.compose.animation.AnimatedVisibility(
+                visible = state.isProcessing,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+    }
+
+    if (showImportConfirm) {
+        AlertDialog(
+            onDismissRequest = { showImportConfirm = false },
+            title = { Text("确认还原") },
+            text = { Text("还原操作将清空当前的全部课程和设置，且不可逆，是否继续？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showImportConfirm = false
+                        onImport()
+                    }
+                ) { Text("继续", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportConfirm = false }) { Text("取消") }
+            }
+        )
     }
 }
 

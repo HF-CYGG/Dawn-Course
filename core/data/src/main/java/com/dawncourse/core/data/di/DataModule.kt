@@ -6,12 +6,14 @@ import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
+import com.dawncourse.core.data.repository.LocalBackupRepositoryImpl
 import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
 import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavSyncRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
+import com.dawncourse.core.domain.repository.LocalBackupRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
@@ -180,4 +182,10 @@ abstract class RepositoryModule {
     abstract fun bindWebDavSyncRepository(
         impl: WebDavSyncRepositoryImpl
     ): WebDavSyncRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindLocalBackupRepository(
+        impl: LocalBackupRepositoryImpl
+    ): LocalBackupRepository
 }

@@ -14,6 +14,8 @@ import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
 import com.dawncourse.core.domain.usecase.FetchWebDavRemoteInfoUseCase
 import com.dawncourse.core.domain.usecase.UploadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.DownloadWebDavBackupUseCase
+import com.dawncourse.core.domain.usecase.ExportLocalBackupUseCase
+import com.dawncourse.core.domain.usecase.ImportLocalBackupUseCase
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
@@ -22,6 +24,7 @@ import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
 import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
+import com.dawncourse.core.domain.model.LocalBackupResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +61,8 @@ class SettingsViewModel @Inject constructor(
     private val fetchWebDavRemoteInfoUseCase: FetchWebDavRemoteInfoUseCase,
     private val uploadWebDavBackupUseCase: UploadWebDavBackupUseCase,
     private val downloadWebDavBackupUseCase: DownloadWebDavBackupUseCase,
+    private val exportLocalBackupUseCase: ExportLocalBackupUseCase,
+    private val importLocalBackupUseCase: ImportLocalBackupUseCase,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -101,6 +106,11 @@ class SettingsViewModel @Inject constructor(
             initialValue = "尚未同步"
         )
 
+    /**
+     * WebDAV 账号信息状态
+     *
+     * 用于控制 WebDAV 弹窗的“已绑定/未绑定”展示。
+     */
     val webDavCredentials: StateFlow<WebDavCredentials?> = webDavCredentialsRepository.credentials
         .stateIn(
             scope = viewModelScope,
@@ -108,11 +118,25 @@ class SettingsViewModel @Inject constructor(
             initialValue = null
         )
 
+    /**
+     * WebDAV 云端信息查询结果
+     */
     private val _webDavRemoteInfo = MutableStateFlow<WebDavSyncResult?>(null)
     val webDavRemoteInfo: StateFlow<WebDavSyncResult?> = _webDavRemoteInfo.asStateFlow()
 
+    /**
+     * WebDAV 上传/下载操作结果
+     */
     private val _webDavActionResult = MutableStateFlow<WebDavSyncResult?>(null)
     val webDavActionResult: StateFlow<WebDavSyncResult?> = _webDavActionResult.asStateFlow()
+
+    /**
+     * 本地备份与还原状态
+     *
+     * 用于控制 UI 的进度遮罩与提示文案。
+     */
+    private val _localBackupState = MutableStateFlow(LocalBackupUiState())
+    val localBackupState: StateFlow<LocalBackupUiState> = _localBackupState.asStateFlow()
 
     init {
         // 同步 DataStore 设置与数据库中的当前学期数据
@@ -208,6 +232,37 @@ class SettingsViewModel @Inject constructor(
                 endpointUrl = normalized
             )
             credentialsRepository.saveCredentials(creds)
+        }
+    }
+
+    /**
+     * 重置本地备份 UI 状态
+     */
+    fun resetLocalBackupState() {
+        _localBackupState.value = LocalBackupUiState()
+    }
+
+    /**
+     * 导出本地备份
+     *
+     * @param uri SAF 返回的文件 URI 字符串
+     */
+    fun exportLocalBackup(uri: String) {
+        viewModelScope.launch {
+            _localBackupState.value = LocalBackupUiState(isProcessing = true)
+            _localBackupState.value = exportLocalBackupUseCase(uri).toUiState()
+        }
+    }
+
+    /**
+     * 导入本地备份
+     *
+     * @param uri SAF 返回的文件 URI 字符串
+     */
+    fun importLocalBackup(uri: String) {
+        viewModelScope.launch {
+            _localBackupState.value = LocalBackupUiState(isProcessing = true)
+            _localBackupState.value = importLocalBackupUseCase(uri).toUiState()
         }
     }
 
@@ -605,4 +660,28 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.clearAllSettings()
         }
     }
+}
+
+/**
+ * 本地备份 UI 状态
+ *
+ * @property isProcessing 是否正在执行导入/导出
+ * @property success 结果是否成功（null 表示尚未执行）
+ * @property message 当前提示文案
+ */
+data class LocalBackupUiState(
+    val isProcessing: Boolean = false,
+    val success: Boolean? = null,
+    val message: String = ""
+)
+
+/**
+ * 将备份结果映射为 UI 状态
+ */
+private fun LocalBackupResult.toUiState(): LocalBackupUiState {
+    return LocalBackupUiState(
+        isProcessing = false,
+        success = success,
+        message = message
+    )
 }
