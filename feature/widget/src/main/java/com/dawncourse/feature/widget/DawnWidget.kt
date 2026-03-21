@@ -37,6 +37,11 @@ import androidx.glance.layout.ColumnScope
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
+import androidx.glance.text.TextAlign
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.ColorFilter
+import com.dawncourse.feature.widget.R
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
@@ -54,7 +59,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
-import androidx.glance.text.TextAlign
 import com.dawncourse.core.domain.model.SectionTime
 import java.time.format.DateTimeFormatter
 
@@ -299,10 +303,7 @@ class DawnWidget : GlanceAppWidget() {
                     .background(WidgetColors.Background)
                     .appWidgetBackground()
                     .cornerRadius(24.dp)
-                    .padding(
-                        horizontal = 20.dp,
-                        vertical = if (height < 160.dp) 16.dp else 20.dp
-                    )
+                    .padding(12.dp)
                     .clickable(actionStartActivity(getMainActivityClassName())),
                 verticalAlignment = Alignment.Top // 强制置顶！
             ) {
@@ -312,16 +313,16 @@ class DawnWidget : GlanceAppWidget() {
                 if (isVeryCompact) {
                      Row(
                         verticalAlignment = Alignment.Bottom,
-                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 12.dp)
+                        modifier = GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)
                     ) {
                          Text(
                             text = if (isBeforeSemesterStart) "假期中" else "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                            style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
+                            style = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
                         )
                         Spacer(GlanceModifier.width(8.dp))
                         Text(
                             text = "${today.monthValue}月${today.dayOfMonth}日",
-                            style = TextStyle(fontSize = 13.sp, color = WidgetColors.TextSecondary)
+                            style = TextStyle(fontSize = 12.sp, color = WidgetColors.TextSecondary)
                         )
                     }
                 } else {
@@ -446,19 +447,19 @@ class DawnWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
+                .padding(bottom = 10.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             Text(
                 text = weekInfo,
-                style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
+                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold, color = WidgetColors.TextPrimary)
             )
             
             Spacer(GlanceModifier.width(8.dp))
             
             Text(
                 text = "周${getDayOfWeekText(today.dayOfWeek.value)}",
-                style = TextStyle(fontSize = 15.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Medium),
+                style = TextStyle(fontSize = 13.sp, color = WidgetColors.TextSecondary, fontWeight = FontWeight.Medium),
                 modifier = GlanceModifier.padding(bottom = 2.dp)
             )
             
@@ -467,12 +468,12 @@ class DawnWidget : GlanceAppWidget() {
             Box(
                 modifier = GlanceModifier
                     .background(WidgetColors.DateBadgeBackground)
-                    .cornerRadius(12.dp)
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .cornerRadius(10.dp)
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
                 Text(
                     text = dateInfo,
-                    style = TextStyle(fontSize = 12.sp, color = WidgetColors.ActiveTextSecondary, fontWeight = FontWeight.Medium)
+                    style = TextStyle(fontSize = 11.sp, color = WidgetColors.ActiveTextSecondary, fontWeight = FontWeight.Medium)
                 )
             }
         }
@@ -537,11 +538,11 @@ class DawnWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
-                modifier = GlanceModifier.width(48.dp),
+                modifier = GlanceModifier.width(46.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
@@ -555,46 +556,61 @@ class DawnWidget : GlanceAppWidget() {
                     maxLines = 1
                 )
                 if (endTimeStr != null) {
-                    Spacer(GlanceModifier.height(3.dp))
+                    Spacer(GlanceModifier.height(1.dp))
                     Text(
                         text = endTimeStr,
-                        style = TextStyle(color = timeSecondaryColor, fontSize = 12.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Center),
+                        style = TextStyle(color = timeSecondaryColor, fontSize = 10.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Center),
                         maxLines = 1
                     )
                 }
             }
 
-            Spacer(GlanceModifier.width(14.dp))
+            Spacer(GlanceModifier.width(10.dp))
 
             Box(
                 modifier = GlanceModifier
                     .defaultWeight()
                     .background(activeBackground)
-                    .cornerRadius(20.dp)
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .cornerRadius(14.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Column {
                     Text(
                         text = course.name,
                         style = TextStyle(
                             color = activeTextPrimary,
-                            fontSize = 16.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         maxLines = 1
                     )
 
-                    Spacer(GlanceModifier.height(6.dp))
+                    Spacer(GlanceModifier.height(4.dp))
 
                     val detailText = listOf(course.location, course.teacher)
                         .filter { it.isNotBlank() }
                         .joinToString(" · ")
                     if (detailText.isNotBlank()) {
-                        Text(
-                            text = detailText,
-                            style = TextStyle(color = activeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium),
-                            maxLines = 1
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = GlanceModifier.padding(top = 2.dp)
+                        ) {
+                            Image(
+                                provider = ImageProvider(R.drawable.ic_location),
+                                contentDescription = "地点",
+                                modifier = GlanceModifier.size(12.dp),
+                                colorFilter = ColorFilter.tint(activeTextSecondary)
+                            )
+                            
+                            Spacer(modifier = GlanceModifier.width(4.dp))
+                            
+                            Text(
+                                text = detailText,
+                                style = TextStyle(color = activeTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium),
+                                maxLines = 1,
+                                modifier = GlanceModifier.defaultWeight()
+                            )
+                        }
                     }
                 }
             }
@@ -611,37 +627,40 @@ class DawnWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp),
+                .padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = startTime,
-                style = TextStyle(color = subTextColor, fontSize = 15.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
-                modifier = GlanceModifier.width(48.dp)
+                style = TextStyle(color = subTextColor, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center),
+                modifier = GlanceModifier.width(46.dp)
             )
             
-            Spacer(GlanceModifier.width(14.dp))
+            Spacer(GlanceModifier.width(10.dp))
             
-            Box(modifier = GlanceModifier.width(2.dp).height(14.dp).background(WidgetColors.Divider).cornerRadius(1.dp)) {}
+            Box(modifier = GlanceModifier.width(2.dp).height(12.dp).background(WidgetColors.Divider).cornerRadius(1.dp)) {}
             
-            Spacer(GlanceModifier.width(14.dp))
+            Spacer(GlanceModifier.width(10.dp))
 
             Row(
                 modifier = GlanceModifier.defaultWeight(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val locationText = course.location.takeIf { it.isNotBlank() }
-                val courseText = if (locationText != null) {
-                    "${course.name} @${locationText}"
-                } else {
-                    course.name
-                }
                 Text(
-                    text = courseText,
-                    style = TextStyle(color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Medium),
-                    maxLines = 1,
-                    modifier = GlanceModifier.defaultWeight()
+                    text = course.name,
+                    style = TextStyle(color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                    maxLines = 1
                 )
+                
+                val locationText = course.location.takeIf { it.isNotBlank() }
+                if (locationText != null) {
+                    Spacer(GlanceModifier.width(6.dp))
+                    Text(
+                        text = "@$locationText",
+                        style = TextStyle(color = subTextColor, fontSize = 11.sp),
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
