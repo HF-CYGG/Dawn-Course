@@ -112,6 +112,7 @@ fun SettingsScreen(
     val webDavActionResult by viewModel.webDavActionResult.collectAsState()
     // 本地备份弹窗状态
     val localBackupState by viewModel.localBackupState.collectAsState()
+    val localBackupPreviewState by viewModel.localBackupPreviewState.collectAsState()
     val context = LocalContext.current
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
@@ -156,7 +157,7 @@ fun SettingsScreen(
                 )
             } catch (_: Exception) {
             }
-            viewModel.importLocalBackup(uri.toString())
+            viewModel.loadLocalBackupPreview(uri.toString())
         }
     }
 
@@ -328,6 +329,7 @@ fun SettingsScreen(
     if (showLocalBackupSheet) {
         LocalBackupSheet(
             state = localBackupState,
+            previewState = localBackupPreviewState,
             onDismiss = {
                 showLocalBackupSheet = false
                 viewModel.resetLocalBackupState()
@@ -341,6 +343,9 @@ fun SettingsScreen(
             },
             onImport = {
                 importBackupLauncher.launch(arrayOf("application/json"))
+            },
+            onConfirmImport = {
+                viewModel.confirmImportFromPreview()
             }
         )
     }
@@ -1197,12 +1202,15 @@ private fun SettingsDialogManager(
  */
 private fun LocalBackupSheet(
     state: LocalBackupUiState,
+    previewState: LocalBackupPreviewUiState,
     onDismiss: () -> Unit,
     onExport: () -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    onConfirmImport: () -> Unit
 ) {
     // 还原操作需要二次确认
     var showImportConfirm by remember { mutableStateOf(false) }
+    val isProcessing = state.isProcessing || previewState.isLoading
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1248,7 +1256,7 @@ private fun LocalBackupSheet(
                             onClick = onExport,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp),
-                            enabled = !state.isProcessing
+                            enabled = !isProcessing
                         ) {
                             Text("立即导出")
                         }
@@ -1278,14 +1286,74 @@ private fun LocalBackupSheet(
                             color = MaterialTheme.colorScheme.error
                         )
                         OutlinedButton(
-                            onClick = { showImportConfirm = true },
+                            onClick = onImport,
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(12.dp),
-                            enabled = !state.isProcessing
+                            enabled = !isProcessing
                         ) {
                             Text("选择备份文件")
                         }
                     }
+                }
+                // 预览信息展示
+                if (previewState.preview != null) {
+                    val preview = previewState.preview
+                    val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                        .format(Date(preview.exportTime))
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                        ),
+                        elevation = CardDefaults.cardElevation(0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "已读取备份信息",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "备份时间：$exportTime",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "应用版本：${preview.appVersionName.ifBlank { "未知" }}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "学期数量：${preview.semesterCount}，课程数量：${preview.courseCount}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = { showImportConfirm = true },
+                                modifier = Modifier.fillMaxWidth().height(46.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                enabled = !state.isProcessing
+                            ) {
+                                Text("开始还原")
+                            }
+                        }
+                    }
+                }
+                // 预览/读取提示
+                AnimatedVisibility(visible = previewState.message.isNotBlank()) {
+                    val messageColor = if (previewState.success == false) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(
+                        text = previewState.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = messageColor
+                    )
                 }
                 // 操作结果提示
                 AnimatedVisibility(visible = state.message.isNotBlank()) {
@@ -1304,7 +1372,7 @@ private fun LocalBackupSheet(
             }
             // 处理中的遮罩，防止误触
             androidx.compose.animation.AnimatedVisibility(
-                visible = state.isProcessing,
+                visible = isProcessing,
                 enter = fadeIn(),
                 exit = fadeOut()
             ) {
@@ -1321,15 +1389,23 @@ private fun LocalBackupSheet(
     }
 
     if (showImportConfirm) {
+        val preview = previewState.preview
+        val previewDesc = if (preview != null) {
+            val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                .format(Date(preview.exportTime))
+            "备份时间：$exportTime\n学期数量：${preview.semesterCount}，课程数量：${preview.courseCount}"
+        } else {
+            "未读取到备份信息"
+        }
         AlertDialog(
             onDismissRequest = { showImportConfirm = false },
             title = { Text("确认还原") },
-            text = { Text("还原操作将清空当前的全部课程和设置，且不可逆，是否继续？") },
+            text = { Text("还原操作将清空当前的全部课程和设置，且不可逆，是否继续？\n$previewDesc") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showImportConfirm = false
-                        onImport()
+                        onConfirmImport()
                     }
                 ) { Text("继续", color = MaterialTheme.colorScheme.error) }
             },

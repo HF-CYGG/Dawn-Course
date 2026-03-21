@@ -37,3 +37,35 @@ data class LocalBackupResult(
     /** 展示给用户的提示文案 */
     val message: String
 )
+
+/**
+ * 本地备份预览信息
+ *
+ * 用于在还原前展示备份的核心元数据。
+ */
+data class LocalBackupPreview(
+    /** 备份文件版本号 */
+    val version: Int,
+    /** 导出时间戳（毫秒） */
+    val exportTime: Long,
+    /** 备份时的应用版本号 */
+    val appVersionName: String,
+    /** 学期数量 */
+    val semesterCount: Int,
+    /** 课程数量 */
+    val courseCount: Int
+)
+
+/**
+ * 本地备份预览结果
+ *
+ * 成功时携带预览信息，失败时提供提示文案。
+ */
+data class LocalBackupPreviewResult(
+    /** 是否成功 */
+    val success: Boolean,
+    /** 提示文案 */
+    val message: String,
+    /** 预览数据，失败时为空 */
+    val preview: LocalBackupPreview? = null
+)

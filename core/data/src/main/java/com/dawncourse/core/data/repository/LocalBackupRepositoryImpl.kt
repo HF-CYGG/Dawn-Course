@@ -7,6 +7,8 @@ import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.entity.toDomain
 import com.dawncourse.core.data.local.entity.toEntity
 import com.dawncourse.core.domain.model.LocalBackupData
+import com.dawncourse.core.domain.model.LocalBackupPreview
+import com.dawncourse.core.domain.model.LocalBackupPreviewResult
 import com.dawncourse.core.domain.model.LocalBackupResult
 import com.dawncourse.core.domain.repository.LocalBackupRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
@@ -34,6 +36,39 @@ class LocalBackupRepositoryImpl @Inject constructor(
 
     /** JSON 序列化工具 */
     private val gson = GsonBuilder().create()
+
+    /**
+     * 解析备份文件为结构化数据
+     *
+     * @param uri SAF 返回的文件 URI 字符串
+     */
+    private fun parseBackupFromUri(uri: String): Result<LocalBackupData> {
+        return runCatching {
+            val parsedUri = Uri.parse(uri)
+            val inputStream = context.contentResolver.openInputStream(parsedUri)
+            if (inputStream == null) {
+                throw IllegalStateException("无法读取备份文件")
+            }
+            val json = inputStream.use { it.bufferedReader().readText() }
+            gson.fromJson(json, LocalBackupData::class.java)
+        }
+    }
+
+    /**
+     * 校验备份内容，返回错误文案
+     */
+    private fun validateBackup(backup: LocalBackupData): String? {
+        if (backup.version > LocalBackupData.CURRENT_VERSION) {
+            return "备份文件版本过高，请先升级应用"
+        }
+        if (backup.exportTime <= 0L) {
+            return "备份文件缺少导出时间"
+        }
+        if (backup.semesters.isEmpty() && backup.courses.isEmpty()) {
+            return "备份内容为空"
+        }
+        return null
+    }
 
     /**
      * 导出备份到 SAF 文件
@@ -80,18 +115,13 @@ class LocalBackupRepositoryImpl @Inject constructor(
     override suspend fun importFromUri(uri: String): LocalBackupResult {
         return withContext(Dispatchers.IO) {
             runCatching {
-                val parsedUri = Uri.parse(uri)
-                // 读取 JSON 文本
-                val inputStream = context.contentResolver.openInputStream(parsedUri)
-                if (inputStream == null) {
-                    return@runCatching LocalBackupResult(false, "无法读取备份文件")
+                // 解析并校验备份文件
+                val backup = parseBackupFromUri(uri).getOrElse { error ->
+                    return@runCatching LocalBackupResult(false, "无法读取备份文件：${error.message ?: "未知错误"}")
                 }
-                val json = inputStream.use { it.bufferedReader().readText() }
-                // 解析 JSON
-                val backup = gson.fromJson(json, LocalBackupData::class.java)
-                // 版本校验，避免低版本应用强行还原高版本备份
-                if (backup.version > LocalBackupData.CURRENT_VERSION) {
-                    return@runCatching LocalBackupResult(false, "备份文件版本过高，请先升级应用")
+                val validateMessage = validateBackup(backup)
+                if (validateMessage != null) {
+                    return@runCatching LocalBackupResult(false, validateMessage)
                 }
                 // 数据库替换使用事务，确保原子性
                 database.withTransaction {
@@ -105,6 +135,36 @@ class LocalBackupRepositoryImpl @Inject constructor(
                 LocalBackupResult(true, "已完成数据还原")
             }.getOrElse { error ->
                 LocalBackupResult(false, "还原失败：${error.message ?: "未知错误"}")
+            }
+        }
+    }
+
+    /**
+     * 读取备份预览信息
+     */
+    override suspend fun readPreview(uri: String): LocalBackupPreviewResult {
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val backup = parseBackupFromUri(uri).getOrElse { error ->
+                    return@runCatching LocalBackupPreviewResult(
+                        success = false,
+                        message = "无法读取备份文件：${error.message ?: "未知错误"}"
+                    )
+                }
+                val validateMessage = validateBackup(backup)
+                if (validateMessage != null) {
+                    return@runCatching LocalBackupPreviewResult(false, validateMessage)
+                }
+                val preview = LocalBackupPreview(
+                    version = backup.version,
+                    exportTime = backup.exportTime,
+                    appVersionName = backup.appVersionName,
+                    semesterCount = backup.semesters.size,
+                    courseCount = backup.courses.size
+                )
+                LocalBackupPreviewResult(true, "已读取备份信息", preview)
+            }.getOrElse { error ->
+                LocalBackupPreviewResult(false, "读取备份失败：${error.message ?: "未知错误"}")
             }
         }
     }

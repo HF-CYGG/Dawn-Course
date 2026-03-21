@@ -1,5 +1,6 @@
 package com.dawncourse.core.domain.repository
 
+import com.dawncourse.core.domain.model.LocalBackupPreviewResult
 import com.dawncourse.core.domain.model.LocalBackupResult
 
 /**
@@ -21,4 +22,11 @@ interface LocalBackupRepository {
      * @param uri SAF 返回的文件 URI 字符串
      */
     suspend fun importFromUri(uri: String): LocalBackupResult
+
+    /**
+     * 读取备份预览信息
+     *
+     * @param uri SAF 返回的文件 URI 字符串
+     */
+    suspend fun readPreview(uri: String): LocalBackupPreviewResult
 }

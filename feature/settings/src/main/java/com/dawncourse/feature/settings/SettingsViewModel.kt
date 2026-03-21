@@ -16,6 +16,7 @@ import com.dawncourse.core.domain.usecase.UploadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.DownloadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.ExportLocalBackupUseCase
 import com.dawncourse.core.domain.usecase.ImportLocalBackupUseCase
+import com.dawncourse.core.domain.usecase.ReadLocalBackupPreviewUseCase
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
@@ -24,6 +25,8 @@ import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
 import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
+import com.dawncourse.core.domain.model.LocalBackupPreview
+import com.dawncourse.core.domain.model.LocalBackupPreviewResult
 import com.dawncourse.core.domain.model.LocalBackupResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -63,6 +66,7 @@ class SettingsViewModel @Inject constructor(
     private val downloadWebDavBackupUseCase: DownloadWebDavBackupUseCase,
     private val exportLocalBackupUseCase: ExportLocalBackupUseCase,
     private val importLocalBackupUseCase: ImportLocalBackupUseCase,
+    private val readLocalBackupPreviewUseCase: ReadLocalBackupPreviewUseCase,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -137,6 +141,14 @@ class SettingsViewModel @Inject constructor(
      */
     private val _localBackupState = MutableStateFlow(LocalBackupUiState())
     val localBackupState: StateFlow<LocalBackupUiState> = _localBackupState.asStateFlow()
+
+    /**
+     * 本地备份预览状态
+     *
+     * 用于在还原前展示备份元数据并确认操作。
+     */
+    private val _localBackupPreviewState = MutableStateFlow(LocalBackupPreviewUiState())
+    val localBackupPreviewState: StateFlow<LocalBackupPreviewUiState> = _localBackupPreviewState.asStateFlow()
 
     init {
         // 同步 DataStore 设置与数据库中的当前学期数据
@@ -240,6 +252,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun resetLocalBackupState() {
         _localBackupState.value = LocalBackupUiState()
+        _localBackupPreviewState.value = LocalBackupPreviewUiState()
     }
 
     /**
@@ -264,6 +277,39 @@ class SettingsViewModel @Inject constructor(
             _localBackupState.value = LocalBackupUiState(isProcessing = true)
             _localBackupState.value = importLocalBackupUseCase(uri).toUiState()
         }
+    }
+
+    /**
+     * 读取备份预览信息
+     *
+     * @param uri SAF 返回的文件 URI 字符串
+     */
+    fun loadLocalBackupPreview(uri: String) {
+        viewModelScope.launch {
+            _localBackupPreviewState.value = LocalBackupPreviewUiState(
+                isLoading = true,
+                pendingUri = uri
+            )
+            _localBackupPreviewState.value = readLocalBackupPreviewUseCase(uri).toUiState(uri)
+        }
+    }
+
+    /**
+     * 确认执行备份还原
+     *
+     * 依赖之前的预览结果保存的 URI。
+     */
+    fun confirmImportFromPreview() {
+        val pendingUri = _localBackupPreviewState.value.pendingUri
+        if (pendingUri.isNullOrBlank()) {
+            _localBackupState.value = LocalBackupUiState(
+                isProcessing = false,
+                success = false,
+                message = "未选择备份文件"
+            )
+            return
+        }
+        importLocalBackup(pendingUri)
     }
 
     /**
@@ -676,6 +722,23 @@ data class LocalBackupUiState(
 )
 
 /**
+ * 本地备份预览 UI 状态
+ *
+ * @property isLoading 是否正在读取预览
+ * @property success 结果是否成功（null 表示尚未读取）
+ * @property message 当前提示文案
+ * @property preview 预览数据
+ * @property pendingUri 待还原文件 URI
+ */
+data class LocalBackupPreviewUiState(
+    val isLoading: Boolean = false,
+    val success: Boolean? = null,
+    val message: String = "",
+    val preview: LocalBackupPreview? = null,
+    val pendingUri: String? = null
+)
+
+/**
  * 将备份结果映射为 UI 状态
  */
 private fun LocalBackupResult.toUiState(): LocalBackupUiState {
@@ -683,5 +746,18 @@ private fun LocalBackupResult.toUiState(): LocalBackupUiState {
         isProcessing = false,
         success = success,
         message = message
+    )
+}
+
+/**
+ * 将预览结果映射为 UI 状态
+ */
+private fun LocalBackupPreviewResult.toUiState(pendingUri: String): LocalBackupPreviewUiState {
+    return LocalBackupPreviewUiState(
+        isLoading = false,
+        success = success,
+        message = message,
+        preview = preview,
+        pendingUri = pendingUri
     )
 }
