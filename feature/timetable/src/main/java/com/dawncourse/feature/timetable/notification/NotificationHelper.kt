@@ -70,8 +70,15 @@ object NotificationHelper {
 
     /**
      * 显示上课提醒通知
+     *
+     * @param notificationIdSeed 稳定通知 ID 的种子，用于去重/覆盖同一课程同一天的提醒
      */
-    fun showCourseReminder(context: Context, courseName: String, location: String) {
+    fun showCourseReminder(
+        context: Context,
+        courseName: String,
+        location: String,
+        notificationIdSeed: Long
+    ) {
         // 当通知权限缺失或系统通知被关闭时，直接静默返回：
         // - 避免 SecurityException
         // - 避免“提醒广播”导致应用崩溃
@@ -94,8 +101,8 @@ object NotificationHelper {
             // - 不溢出：避免 System.currentTimeMillis().toInt() 在 2038 之后/极端情况下溢出为负数
             // - 尽量不覆盖：不同提醒尽可能使用不同 ID
             //
-            // 这里基于毫秒时间戳做取模，保证在 int 范围内稳定且非负。
-            val notificationId = generateStableNotificationId(System.currentTimeMillis())
+            // 这里基于稳定种子做取模，保证在 int 范围内稳定且非负。
+            val notificationId = generateStableNotificationId(notificationIdSeed)
             notificationManager.notify(notificationId, builder.build())
         } catch (_: SecurityException) {
             // 兜底：即使上层检查通过，系统/ROM 仍可能在极端情况下抛出异常

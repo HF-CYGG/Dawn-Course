@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.abs
 
 /**
  * 提醒广播接收器
@@ -58,10 +59,48 @@ class ReminderReceiver : BroadcastReceiver() {
                     Course.WEEK_TYPE_ODD -> if (currentWeek % 2 == 0) return@launch
                     Course.WEEK_TYPE_EVEN -> if (currentWeek % 2 != 0) return@launch
                 }
-                NotificationHelper.showCourseReminder(context, course.name, course.location)
+                val nowMillis = System.currentTimeMillis()
+                val dedupeKey = "course_${course.id}_${today.toEpochDay()}"
+                if (shouldSkipDuplicate(context, dedupeKey, nowMillis)) return@launch
+                val notificationSeed = buildStableNotificationSeed(course.id, today.toEpochDay())
+                NotificationHelper.showCourseReminder(
+                    context = context,
+                    courseName = course.name,
+                    location = course.location,
+                    notificationIdSeed = notificationSeed
+                )
             } finally {
                 pendingResult.finish()
             }
         }
+    }
+
+    /**
+     * 判断是否需要跳过重复提醒
+     *
+     * 设计目标：
+     * - 防止同一课程在短时间内被重复广播导致重复通知
+     * - 不依赖数据库或复杂状态，避免对主流程造成额外负担
+     */
+    private fun shouldSkipDuplicate(context: Context, key: String, nowMillis: Long): Boolean {
+        val prefs = context.getSharedPreferences("dc_reminder_dedupe", Context.MODE_PRIVATE)
+        val lastMillis = prefs.getLong(key, 0L)
+        val interval = nowMillis - lastMillis
+        val minIntervalMillis = 2 * 60 * 1000L
+        if (interval in 0 until minIntervalMillis) return true
+        prefs.edit().putLong(key, nowMillis).apply()
+        return false
+    }
+
+    /**
+     * 构建稳定的通知 ID 种子
+     *
+     * 规则：
+     * - 同一课程同一天的提醒使用同一通知 ID
+     * - 发生重复广播时，后续通知会覆盖前一条，避免通知堆叠
+     */
+    private fun buildStableNotificationSeed(courseId: Long, epochDay: Long): Long {
+        val base = abs(courseId) % 100_000L
+        return epochDay * 100_000L + base
     }
 }
