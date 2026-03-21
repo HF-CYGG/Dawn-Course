@@ -52,7 +52,7 @@ buildscript {
             force("org.apache.commons:commons-compress:1.28.0")
             
             // 强制 Protobuf-java (>= 3.25.5)
-            force("com.google.protobuf:protobuf-java:4.34.0")
+            force("com.google.protobuf:protobuf-java:4.34.1")
             
             // 强制 JDOM2 (>= 2.0.6.1)
             force("org.jdom:jdom2:2.0.6.1")
@@ -69,7 +69,7 @@ buildscript {
             dependencySubstitution {
                 substitute(module("commons-io:commons-io")).using(module("commons-io:commons-io:2.21.0"))
                 substitute(module("org.apache.commons:commons-compress")).using(module("org.apache.commons:commons-compress:1.28.0"))
-                substitute(module("com.google.protobuf:protobuf-java")).using(module("com.google.protobuf:protobuf-java:4.34.0"))
+                substitute(module("com.google.protobuf:protobuf-java")).using(module("com.google.protobuf:protobuf-java:4.34.1"))
                 substitute(module("org.jdom:jdom2")).using(module("org.jdom:jdom2:2.0.6.1"))
                 substitute(module("org.bitbucket.b_c:jose4j")).using(module("org.bitbucket.b_c:jose4j:0.9.6"))
                 substitute(module("com.google.guava:guava")).using(module("com.google.guava:guava:33.5.0-android"))

@@ -17,7 +17,7 @@ coroutines = "1.7.3" # Kotlin 协程
 navigation-compose = "2.7.7" # Compose 导航组件
 glance = "1.1.1" # 桌面小组件 (Widget) 框架
 work = "2.9.0" # WorkManager 后台任务
-datastore = "1.2.0" # DataStore 数据存储
+datastore = "1.2.1" # DataStore 数据存储
 quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
 hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
@@ -30,7 +30,7 @@ bouncycastle = "1.83"
 jose4j = "0.9.6"
 commons-compress = "1.28.0"
 commons-io = "2.21.0"
-protobuf = "4.34.0"
+protobuf = "4.34.1"
 jdom = "2.0.6.1"
 guava = "33.5.0-android"
 gson = "2.13.2"
@@ -84,7 +84,7 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
 quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
-security-crypto = { group = "androidx.security", name = "security-crypto-ktx", version = "1.1.0-alpha06" }
+security-crypto = { group = "androidx.security", name = "security-crypto-ktx", version = "1.1.0" }
 
 # Security Fixes (Dependabot)
 netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }
