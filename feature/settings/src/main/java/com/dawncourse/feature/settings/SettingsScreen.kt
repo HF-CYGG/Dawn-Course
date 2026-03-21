@@ -19,14 +19,18 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1177,6 +1181,7 @@ private fun WebDavSyncSheet(
     var selectedTime by remember { mutableStateOf(LocalTime.of(8, 0)) }
     // 间隔输入框文本，需与设置同步
     var intervalValueText by remember { mutableStateOf(settings.webDavAutoSyncIntervalValue.toString()) }
+    val isConfigured = credentials != null && !showEditPanel
 
     LaunchedEffect(credentials) {
         // 账号更新时同步到输入框，便于编辑与复用
@@ -1216,9 +1221,14 @@ private fun WebDavSyncSheet(
         }
     }
 
-    // 当外部更新间隔数值时，同步到输入框文本
     LaunchedEffect(settings.webDavAutoSyncIntervalValue) {
         intervalValueText = settings.webDavAutoSyncIntervalValue.toString()
+    }
+
+    LaunchedEffect(credentials, showEditPanel) {
+        if (credentials != null && !showEditPanel) {
+            onRefreshRemote()
+        }
     }
 
     ModalBottomSheet(
@@ -1234,241 +1244,296 @@ private fun WebDavSyncSheet(
                 .animateContentSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "WebDAV 同步", style = MaterialTheme.typography.titleLarge)
             Text(
-                text = if (credentials == null) "未配置账号" else "已保存账号，可直接同步",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = "WebDAV 同步",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
             )
-            // 已保存账号摘要区
-            AnimatedVisibility(
-                visible = credentials != null && !showEditPanel,
-                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
-                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
-            ) {
-                OutlinedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            AnimatedContent(
+                targetState = isConfigured,
+                transitionSpec = {
+                    (fadeIn() + expandVertically()).togetherWith(fadeOut() + shrinkVertically())
+                },
+                label = "WebDavState"
+            ) { configured ->
+                if (!configured) {
+                    Card(
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        ),
+                        elevation = CardDefaults.cardElevation(0.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                             Text(
-                                text = "同步地址：${credentials?.serverUrl.orEmpty()}",
-                                style = MaterialTheme.typography.bodySmall
+                                text = "配置账号以开启云端备份",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                            Text(
-                                text = "账号：${credentials?.username.orEmpty()}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            OutlinedTextField(
+                                value = serverUrl,
+                                onValueChange = { serverUrl = it },
+                                label = { Text("服务器地址") },
+                                placeholder = { Text("https://dav.example.com/dav/") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
                             )
-                        }
-                        IconButton(onClick = { showEditPanel = true }) {
-                            Icon(Icons.Default.Edit, contentDescription = "编辑账号")
-                        }
-                    }
-                }
-            }
-            // 账号编辑区
-            AnimatedVisibility(
-                visible = credentials == null || showEditPanel,
-                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
-                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = serverUrl,
-                        onValueChange = { serverUrl = it },
-                        label = { Text("服务器地址") },
-                        placeholder = { Text("https://example.com/webdav/") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it },
-                        label = { Text("账号") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("密码") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                onSave(serverUrl, username, password)
-                                showEditPanel = false
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("保存账号")
-                        }
-                        OutlinedButton(
-                            onClick = onClear,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("清除账号")
-                        }
-                    }
-                }
-            }
-            HorizontalDivider()
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("自动同步")
-                    Text(
-                        text = "定期与云端保持一致",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = settings.enableWebDavAutoSync,
-                    onCheckedChange = onToggleAutoSync
-                )
-            }
-            // 自动同步配置区：开关开启后显示细节设置
-            AnimatedVisibility(
-                visible = settings.enableWebDavAutoSync,
-                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
-                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "同步方式", style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME,
-                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.FIXED_TIME) },
-                            label = { Text("固定日期") }
-                        )
-                        FilterChip(
-                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.INTERVAL,
-                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.INTERVAL) },
-                            label = { Text("间隔同步") }
-                        )
-                    }
-                    if (settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME) {
-                        // 固定日期同步：展示当前时间并允许选择日期
-                        val fixedAtText = if (settings.webDavAutoSyncFixedAt > 0L) {
-                            dateFormatter.format(Date(settings.webDavAutoSyncFixedAt))
-                        } else {
-                            "未设置"
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(text = "同步时间", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    text = fixedAtText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            OutlinedTextField(
+                                value = username,
+                                onValueChange = { username = it },
+                                label = { Text("账号") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it },
+                                label = { Text("应用专用密码") },
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = {
+                                    onSave(serverUrl, username, password)
+                                    showEditPanel = false
+                                },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                enabled = serverUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("连接并保存", fontWeight = FontWeight.Bold)
                             }
-                            OutlinedButton(onClick = { showDatePicker = true }) {
-                                Text("选择日期")
+                            if (credentials != null) {
+                                TextButton(
+                                    onClick = onClear,
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("清除账号", color = MaterialTheme.colorScheme.error)
+                                }
                             }
                         }
-                    } else {
-                        // 间隔同步：输入数值并选择单位
-                        OutlinedTextField(
-                            value = intervalValueText,
-                            onValueChange = { value ->
-                                if (value.all { it.isDigit() } && value.length <= 4) {
-                                    intervalValueText = value
-                                    val parsed = value.toIntOrNull()
-                                    if (parsed != null && parsed > 0) {
-                                        onSetAutoSyncIntervalValue(parsed)
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .background(MaterialTheme.colorScheme.secondary, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Default.CloudDone,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "已连接到服务器",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    Text(
+                                        text = credentials?.username.orEmpty(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = credentials?.serverUrl.orEmpty(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                TextButton(onClick = { showEditPanel = true }) {
+                                    Text("修改", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+
+                        Card(
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = "自动同步",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "定期与云端保持一致",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = settings.enableWebDavAutoSync,
+                                        onCheckedChange = onToggleAutoSync
+                                    )
+                                }
+
+                                if (settings.enableWebDavAutoSync) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                    )
+                                    Text(text = "同步方式", style = MaterialTheme.typography.bodyMedium)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(
+                                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME,
+                                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.FIXED_TIME) },
+                                            label = { Text("固定日期") }
+                                        )
+                                        FilterChip(
+                                            selected = settings.webDavAutoSyncMode == WebDavAutoSyncMode.INTERVAL,
+                                            onClick = { onSetAutoSyncMode(WebDavAutoSyncMode.INTERVAL) },
+                                            label = { Text("间隔同步") }
+                                        )
+                                    }
+                                    if (settings.webDavAutoSyncMode == WebDavAutoSyncMode.FIXED_TIME) {
+                                        val fixedAtText = if (settings.webDavAutoSyncFixedAt > 0L) {
+                                            dateFormatter.format(Date(settings.webDavAutoSyncFixedAt))
+                                        } else {
+                                            "未设置"
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(text = "同步时间", style = MaterialTheme.typography.bodyMedium)
+                                                Text(
+                                                    text = fixedAtText,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            OutlinedButton(onClick = { showDatePicker = true }) {
+                                                Text("选择日期")
+                                            }
+                                        }
+                                    } else {
+                                        OutlinedTextField(
+                                            value = intervalValueText,
+                                            onValueChange = { value ->
+                                                if (value.all { it.isDigit() } && value.length <= 4) {
+                                                    intervalValueText = value
+                                                    val parsed = value.toIntOrNull()
+                                                    if (parsed != null && parsed > 0) {
+                                                        onSetAutoSyncIntervalValue(parsed)
+                                                    }
+                                                }
+                                            },
+                                            label = { Text("间隔数值") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            FilterChip(
+                                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.MINUTES,
+                                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.MINUTES) },
+                                                label = { Text("分钟") }
+                                            )
+                                            FilterChip(
+                                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.HOURS,
+                                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.HOURS) },
+                                                label = { Text("小时") }
+                                            )
+                                            FilterChip(
+                                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.DAYS,
+                                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.DAYS) },
+                                                label = { Text("天") }
+                                            )
+                                        }
                                     }
                                 }
-                            },
-                            label = { Text("间隔数值") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.MINUTES,
-                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.MINUTES) },
-                                label = { Text("分钟") }
-                            )
-                            FilterChip(
-                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.HOURS,
-                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.HOURS) },
-                                label = { Text("小时") }
-                            )
-                            FilterChip(
-                                selected = settings.webDavAutoSyncIntervalUnit == WebDavAutoSyncIntervalUnit.DAYS,
-                                onClick = { onSetAutoSyncIntervalUnit(WebDavAutoSyncIntervalUnit.DAYS) },
-                                label = { Text("天") }
-                            )
+
+                                val remoteTimestamp = remoteInfo?.remoteLastModified
+                                val remoteDesc = when {
+                                    remoteInfo == null -> "正在检查云端状态"
+                                    remoteInfo.success.not() -> remoteInfo.message
+                                    remoteTimestamp == null -> "云端无备份"
+                                    else -> "云端备份：${dateFormatter.format(Date(remoteTimestamp))}"
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = remoteDesc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (remoteInfo != null && !remoteInfo.success) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Button(
+                                        onClick = { onUpload(false) },
+                                        modifier = Modifier.weight(1f).height(48.dp),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("备份数据")
+                                    }
+                                    OutlinedButton(
+                                        onClick = onDownload,
+                                        modifier = Modifier.weight(1f).height(48.dp),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Default.CloudDownload, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("恢复数据")
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-            }
-            // 云端备份更新时间描述
-            val remoteTimestamp = remoteInfo?.remoteLastModified
-            val remoteDesc = when {
-                remoteInfo == null -> "未检查云端"
-                remoteInfo.success.not() -> remoteInfo.message
-                remoteTimestamp == null -> "云端无备份"
-                else -> "云端备份：${dateFormatter.format(Date(remoteTimestamp))}"
-            }
-            AnimatedVisibility(
-                visible = remoteDesc.isNotBlank(),
-                enter = fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMedium)),
-                exit = fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMedium))
-            ) {
-                Text(
-                    text = remoteDesc,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (remoteInfo != null && !remoteInfo.success) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onRefreshRemote,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("检查云端")
-                }
-                Button(
-                    onClick = { onUpload(false) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("上传备份")
-                }
-                OutlinedButton(
-                    onClick = onDownload,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("下载备份")
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
