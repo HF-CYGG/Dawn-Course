@@ -110,6 +110,9 @@ converter-gson = { group = "com.squareup.retrofit2", name = "converter-gson", ve
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version = "4.12.0" }
 logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-interceptor", version = "4.12.0" }
 
+# ML Kit (OCR)
+mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version = "16.0.1" }
+
 # Future Phases (Widget & WorkManager)
 glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 glance-material3 = { group = "androidx.glance", name = "glance-material3", version.ref = "glance" }

@@ -63,4 +63,7 @@ dependencies {
 
     // HTML 解析 (Jsoup)
     implementation(libs.jsoup)
+
+    // ML Kit OCR (离线中文版)
+    implementation(libs.mlkit.text.recognition.chinese)
 }

@@ -13,6 +13,7 @@ import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.engine.ocr.CourseParser
 import com.dawncourse.feature.import_module.engine.ocr.DummyOcrEngine
+import com.dawncourse.feature.import_module.engine.ocr.MlKitOcrEngine
 import com.dawncourse.feature.import_module.engine.ocr.GridAnalyzer
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.SectionRange
@@ -612,23 +613,27 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, resultText = "正在初始化 OCR 引擎...") }
             try {
                 val parsedCourses = withContext(Dispatchers.IO) {
-                    // 1. 初始化引擎（此处使用 DummyEngine 作为占位）
-                    val ocrEngine = DummyOcrEngine()
+                    // 1. 初始化引擎（此处使用真实的 ML Kit 引擎）
+                    val ocrEngine = MlKitOcrEngine()
                     ocrEngine.initialize()
                     
-                    // 2. 提取文本块
-                    _uiState.update { it.copy(resultText = "正在识别文本信息...") }
-                    val textBlocks = ocrEngine.extractText(bitmap)
-                    
-                    // 3. 布局分析（网格化）
-                    _uiState.update { it.copy(resultText = "正在恢复课表排版结构...") }
-                    val gridAnalyzer = GridAnalyzer()
-                    val gridCells = gridAnalyzer.analyze(textBlocks)
-                    
-                    // 4. 语义解析
-                    _uiState.update { it.copy(resultText = "正在解析课程语义...") }
-                    val courseParser = CourseParser()
-                    courseParser.parse(gridCells)
+                    try {
+                        // 2. 提取文本块
+                        _uiState.update { it.copy(resultText = "正在识别文本信息...") }
+                        val textBlocks = ocrEngine.extractText(bitmap)
+                        
+                        // 3. 布局分析（网格化）
+                        _uiState.update { it.copy(resultText = "正在恢复课表排版结构...") }
+                        val gridAnalyzer = GridAnalyzer()
+                        val gridCells = gridAnalyzer.analyze(textBlocks)
+                        
+                        // 4. 语义解析
+                        _uiState.update { it.copy(resultText = "正在解析课程语义...") }
+                        val courseParser = CourseParser()
+                        courseParser.parse(gridCells)
+                    } finally {
+                        ocrEngine.release()
+                    }
                 }
 
                 if (parsedCourses.isEmpty()) {
