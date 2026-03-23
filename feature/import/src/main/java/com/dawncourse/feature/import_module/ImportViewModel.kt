@@ -44,8 +44,10 @@ import javax.inject.Inject
 
 enum class ImportStep {
     Input,      // 步骤一：输入源选择
+    OcrCrop,    // 步骤1.5：OCR 图片裁剪
     WebView,    // 步骤二：网页抓取
-    Review      // 步骤三：预览与确认
+    Review,     // 步骤三：预览与确认
+    OcrReview   // 步骤三：OCR 专用可视化预览与确认
 }
 
 /**
@@ -96,6 +98,10 @@ data class ImportUiState(
     val eveStartSection: Int = 9,
 
     val sectionTimes: List<SectionTime> = emptyList(),
+
+    // OCR 专有状态
+    val ocrSourceBitmap: Bitmap? = null,
+    val ocrLoadingProgress: Int = 0, // 用于下载进度 (0-100)
 
     val resultText: String = "",
     val isLoading: Boolean = false
@@ -159,6 +165,10 @@ class ImportViewModel @Inject constructor(
                 isLoading = false
             )
         }
+    }
+
+    fun updateOcrSourceBitmap(bitmap: Bitmap) {
+        _uiState.update { it.copy(ocrSourceBitmap = bitmap, step = ImportStep.OcrCrop) }
     }
 
     fun updateWebUrl(url: String) {
@@ -637,7 +647,7 @@ class ImportViewModel @Inject constructor(
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsedCourses,
-                            step = ImportStep.Review,
+                            step = ImportStep.OcrReview,
                             detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),

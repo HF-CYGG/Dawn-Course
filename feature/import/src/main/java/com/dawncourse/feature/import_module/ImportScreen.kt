@@ -179,8 +179,10 @@ fun ImportScreen(
                     Text(
                         when (uiState.step) {
                             ImportStep.Input -> "导入课程"
+                            ImportStep.OcrCrop -> "裁剪课表"
                             ImportStep.WebView -> "网页提取"
                             ImportStep.Review -> "确认导入"
+                            ImportStep.OcrReview -> "可视化校验"
                         },
                         fontWeight = FontWeight.Bold
                     ) 
@@ -222,6 +224,15 @@ fun ImportScreen(
                         showQiangZhiDialog = true
                     }
                 )
+                ImportStep.OcrCrop -> uiState.ocrSourceBitmap?.let { bitmap ->
+                    OcrCropScreen(
+                        bitmap = bitmap,
+                        onCancel = { viewModel.setStep(ImportStep.Input) },
+                        onCropConfirm = { croppedBitmap ->
+                            viewModel.runOcrImport(croppedBitmap)
+                        }
+                    )
+                }
                 ImportStep.WebView -> WebViewStep(
                     viewModel = viewModel,
                     uiState = uiState,
@@ -233,6 +244,10 @@ fun ImportScreen(
                     }
                 )
                 ImportStep.Review -> ReviewStep(
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize()
+                )
+                ImportStep.OcrReview -> OcrReviewGrid(
                     viewModel = viewModel,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -460,7 +475,7 @@ private fun SelectionStep(
             context.contentResolver.openInputStream(it)?.use { stream ->
                 val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
                 if (bitmap != null) {
-                    viewModel.runOcrImport(bitmap)
+                    viewModel.updateOcrSourceBitmap(bitmap)
                 } else {
                     viewModel.updateResultText("图片加载失败，请重试")
                 }
@@ -544,13 +559,30 @@ private fun SelectionStep(
 
         // 加载状态显示
         if (uiState.isLoading) {
-            Spacer(modifier = Modifier.height(16.dp))
-            CircularProgressIndicator()
-            Text("正在解析数据...", color = MaterialTheme.colorScheme.primary)
-        }
-
-        // 结果/错误信息显示
-        if (uiState.resultText.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(32.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = uiState.resultText.ifBlank { "正在处理..." },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        } else if (uiState.resultText.isNotEmpty()) {
+            // 结果/错误信息显示
             Spacer(modifier = Modifier.height(8.dp))
             Card(
                 colors = CardDefaults.cardColors(

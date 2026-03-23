@@ -87,6 +87,11 @@ class CourseParser {
                 }
             }
 
+            var confidence = 1.0f
+            if (location == "未知地点" || teacher == "未知教师" || name.length < 2) {
+                confidence = 0.5f // 置信度中等，黄牌警告
+            }
+
             parsedCourses.add(
                 ParsedCourse(
                     name = name,
@@ -99,7 +104,7 @@ class CourseParser {
                     startWeek = startWeek,
                     endWeek = endWeek,
                     weekType = weekType
-                )
+                ).apply { this.confidence = confidence }
             )
         }
 

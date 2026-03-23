@@ -33,6 +33,9 @@ data class ParsedCourse(
     val endWeek: Int,
     val weekType: Int // 0=All, 1=Odd, 2=Even
 ) {
+    // 扩展字段：置信度，用于 OCR 导入时的异常状态提示
+    var confidence: Float = 1.0f
+
     val endSection: Int
         get() = startSection + duration - 1
 }
