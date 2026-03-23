@@ -113,6 +113,9 @@ fun SettingsScreen(
     // 本地备份弹窗状态
     val localBackupState by viewModel.localBackupState.collectAsState()
     val localBackupPreviewState by viewModel.localBackupPreviewState.collectAsState()
+    // 日历导出状态
+    val calendarExportState by viewModel.calendarExportState.collectAsState()
+    
     val context = LocalContext.current
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
@@ -120,6 +123,23 @@ fun SettingsScreen(
     var showWebDavSheet by remember { mutableStateOf(false) }
     // 本地备份弹窗显示状态
     var showLocalBackupSheet by remember { mutableStateOf(false) }
+    
+    val calendarExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/calendar")
+    ) { uri: Uri? ->
+        uri?.let {
+            viewModel.exportIcs(it.toString())
+        }
+    }
+    
+    // 监听日历导出结果
+    LaunchedEffect(calendarExportState) {
+        if (calendarExportState.success != null) {
+            Toast.makeText(context, calendarExportState.message, Toast.LENGTH_SHORT).show()
+            viewModel.resetCalendarExportState()
+        }
+    }
+
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -262,8 +282,17 @@ fun SettingsScreen(
                     showLocalBackupSheet = true
                     // 每次打开重置提示与进度，避免旧状态残留
                     viewModel.resetLocalBackupState()
+                },
+                onExportCalendar = {
+                    try {
+                        val fileName = "DawnCourse_${settings.currentSemesterName}.ics"
+                        calendarExportLauncher.launch(fileName)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
+
             AboutSection(
                 context = context,
                 onCheckUpdate = onCheckUpdate
@@ -915,7 +944,8 @@ private fun DataSyncSection(
     lastSyncDesc: String,
     onShowDialog: (SettingsDialogState) -> Unit,
     onOpenWebDav: () -> Unit,
-    onOpenLocalBackup: () -> Unit
+    onOpenLocalBackup: () -> Unit,
+    onExportCalendar: () -> Unit
 ) {
     PreferenceCategory(title = "数据与同步") {
         SettingRow(
@@ -948,6 +978,13 @@ private fun DataSyncSection(
             title = "备份与还原",
             icon = { Icon(Icons.Default.Restore, null) },
             onClick = onOpenLocalBackup,
+            showDivider = true
+        )
+        SettingRow(
+            title = "导出日历 (ICS)",
+            description = "将当前学期课程导出为系统日历格式",
+            icon = { Icon(Icons.Default.Event, null) },
+            onClick = onExportCalendar,
             showDivider = true
         )
         SettingRow(

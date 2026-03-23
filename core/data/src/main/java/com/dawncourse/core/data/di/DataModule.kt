@@ -12,6 +12,8 @@ import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WidgetUpdateRepositoryImpl
+import com.dawncourse.core.domain.repository.CalendarExportRepository
+import com.dawncourse.core.data.repository.CalendarExportRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.LocalBackupRepository
@@ -200,4 +202,14 @@ abstract class RepositoryModule {
     abstract fun bindWidgetUpdateRepository(
         impl: WidgetUpdateRepositoryImpl
     ): WidgetUpdateRepository
+
+    /**
+     * 绑定 [CalendarExportRepository] 接口到 [CalendarExportRepositoryImpl] 实现
+     * 负责将日历文件导出到指定 URI
+     */
+    @Binds
+    @Singleton
+    abstract fun bindCalendarExportRepository(
+        impl: CalendarExportRepositoryImpl
+    ): CalendarExportRepository
 }

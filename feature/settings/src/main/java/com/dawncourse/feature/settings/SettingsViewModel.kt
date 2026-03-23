@@ -1,5 +1,6 @@
 package com.dawncourse.feature.settings
 
+import android.webkit.URLUtil
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.AppFontStyle
@@ -12,12 +13,14 @@ import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
 import com.dawncourse.core.domain.repository.WidgetUpdateRepository
+import com.dawncourse.core.domain.repository.CalendarExportRepository
 import com.dawncourse.core.domain.usecase.FetchWebDavRemoteInfoUseCase
 import com.dawncourse.core.domain.usecase.UploadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.DownloadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.ExportLocalBackupUseCase
 import com.dawncourse.core.domain.usecase.ImportLocalBackupUseCase
 import com.dawncourse.core.domain.usecase.ReadLocalBackupPreviewUseCase
+import com.dawncourse.core.domain.usecase.GenerateIcsUseCase
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncCredentials
@@ -65,7 +68,9 @@ class SettingsViewModel @Inject constructor(
     private val exportLocalBackupUseCase: ExportLocalBackupUseCase,
     private val importLocalBackupUseCase: ImportLocalBackupUseCase,
     private val readLocalBackupPreviewUseCase: ReadLocalBackupPreviewUseCase,
-    private val widgetUpdateRepository: WidgetUpdateRepository
+    private val widgetUpdateRepository: WidgetUpdateRepository,
+    private val generateIcsUseCase: GenerateIcsUseCase,
+    private val calendarExportRepository: CalendarExportRepository
 ) : ViewModel() {
 
     /**
@@ -147,6 +152,12 @@ class SettingsViewModel @Inject constructor(
      */
     private val _localBackupPreviewState = MutableStateFlow(LocalBackupPreviewUiState())
     val localBackupPreviewState: StateFlow<LocalBackupPreviewUiState> = _localBackupPreviewState.asStateFlow()
+
+    /**
+     * 日历导出状态
+     */
+    private val _calendarExportState = MutableStateFlow(CalendarExportUiState())
+    val calendarExportState: StateFlow<CalendarExportUiState> = _calendarExportState.asStateFlow()
 
     init {
         // 同步 DataStore 设置与数据库中的当前学期数据
@@ -275,6 +286,46 @@ class SettingsViewModel @Inject constructor(
             _localBackupState.value = LocalBackupUiState(isProcessing = true)
             _localBackupState.value = importLocalBackupUseCase(uri).toUiState()
         }
+    }
+
+    /**
+     * 导出课程为 ICS 日历文件
+     *
+     * @param uri SAF 返回的文件 URI
+     */
+    fun exportIcs(uri: String) {
+        viewModelScope.launch {
+            _calendarExportState.value = CalendarExportUiState(isProcessing = true)
+            try {
+                val currentSemester = semesterRepository.getCurrentSemester().first()
+                if (currentSemester == null) {
+                    _calendarExportState.value = CalendarExportUiState(success = false, message = "未找到当前学期")
+                    return@launch
+                }
+                val courses = courseRepository.getCoursesBySemester(currentSemester.id).first()
+                if (courses.isEmpty()) {
+                    _calendarExportState.value = CalendarExportUiState(success = false, message = "当前学期没有课程")
+                    return@launch
+                }
+                val appSettings = settingsRepository.settings.first()
+                val icsContent = generateIcsUseCase(courses, currentSemester, appSettings.sectionTimes)
+                val success = calendarExportRepository.exportIcsToUri(uri, icsContent)
+                
+                _calendarExportState.value = CalendarExportUiState(
+                    success = success,
+                    message = if (success) "导出日历成功" else "导出日历失败"
+                )
+            } catch (e: Exception) {
+                _calendarExportState.value = CalendarExportUiState(success = false, message = "导出日历发生错误：${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 重置日历导出状态
+     */
+    fun resetCalendarExportState() {
+        _calendarExportState.value = CalendarExportUiState()
     }
 
     /**
@@ -732,6 +783,15 @@ data class LocalBackupPreviewUiState(
     val message: String = "",
     val preview: LocalBackupPreview? = null,
     val pendingUri: String? = null
+)
+
+/**
+ * 日历导出 UI 状态
+ */
+data class CalendarExportUiState(
+    val isProcessing: Boolean = false,
+    val success: Boolean? = null,
+    val message: String = ""
 )
 
 /**
