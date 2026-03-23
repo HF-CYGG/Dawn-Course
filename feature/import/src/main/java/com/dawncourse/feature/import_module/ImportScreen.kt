@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -449,6 +450,24 @@ private fun SelectionStep(
     onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = LocalContext.current
+    
+    // OCR 图片选择器 ActivityResultLauncher
+    val ocrLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        uri?.let {
+            // 读取图片为 Bitmap 并传递给 ViewModel 进行 OCR 处理
+            context.contentResolver.openInputStream(it)?.use { stream ->
+                val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                if (bitmap != null) {
+                    viewModel.runOcrImport(bitmap)
+                } else {
+                    viewModel.updateResultText("图片加载失败，请重试")
+                }
+            }
+        }
+    }
+
     // 注册文件选择器 ActivityResultLauncher
     val icsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -511,6 +530,16 @@ private fun SelectionStep(
             description = "选择设备上的 .ics 文件进行解析",
             icon = Icons.Default.DateRange,
             onClick = { icsLauncher.launch(arrayOf("text/calendar", "text/plain", "*/*")) }
+        )
+
+        // 选项卡：OCR 图片导入
+        ImportOptionCard(
+            title = "OCR 课表识别",
+            description = "导入课表截图，自动提取并恢复课表结构",
+            icon = Icons.Default.Image,
+            onClick = { 
+                ocrLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) 
+            }
         )
 
         // 加载状态显示

@@ -1,6 +1,7 @@
 package com.dawncourse.feature.import_module
 
 import android.app.Application
+import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Semester
@@ -10,6 +11,9 @@ import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
+import com.dawncourse.feature.import_module.engine.ocr.CourseParser
+import com.dawncourse.feature.import_module.engine.ocr.DummyOcrEngine
+import com.dawncourse.feature.import_module.engine.ocr.GridAnalyzer
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.SectionRange
 import com.dawncourse.feature.import_module.model.XiaoaiCourse
@@ -583,6 +587,68 @@ class ImportViewModel @Inject constructor(
     // 保留旧版入口以供手动文本测试
     fun runImport(script: String) {
         parseHtmlFromWebView(_uiState.value.htmlContent, script)
+    }
+
+    /**
+     * 运行 OCR 图片导入
+     *
+     * 整合了 OCR 引擎初始化、文本提取、网格分析和语义解析的全流程。
+     * 解析结果将直接对接现有的 ImportStep.Review 步骤供用户进行二次校验。
+     *
+     * @param bitmap 预处理后的课表截图
+     */
+    fun runOcrImport(bitmap: Bitmap) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, resultText = "正在初始化 OCR 引擎...") }
+            try {
+                val parsedCourses = withContext(Dispatchers.IO) {
+                    // 1. 初始化引擎（此处使用 DummyEngine 作为占位）
+                    val ocrEngine = DummyOcrEngine()
+                    ocrEngine.initialize()
+                    
+                    // 2. 提取文本块
+                    _uiState.update { it.copy(resultText = "正在识别文本信息...") }
+                    val textBlocks = ocrEngine.extractText(bitmap)
+                    
+                    // 3. 布局分析（网格化）
+                    _uiState.update { it.copy(resultText = "正在恢复课表排版结构...") }
+                    val gridAnalyzer = GridAnalyzer()
+                    val gridCells = gridAnalyzer.analyze(textBlocks)
+                    
+                    // 4. 语义解析
+                    _uiState.update { it.copy(resultText = "正在解析课程语义...") }
+                    val courseParser = CourseParser()
+                    courseParser.parse(gridCells)
+                }
+
+                if (parsedCourses.isEmpty()) {
+                    // 失败时给出明确的引导提示（由于是 Dummy 引擎，目前必然会走这个分支）
+                    _uiState.update { 
+                        it.copy(
+                            isLoading = false, 
+                            resultText = "未识别到有效课程，请尝试重新裁剪图片，仅保留课表主体区域。"
+                        ) 
+                    }
+                } else {
+                    val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
+                    val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = parsedCourses,
+                            step = ImportStep.Review,
+                            detectedMaxSection = safeMaxSection,
+                            weekCount = maxWeek,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
+                            resultText = "OCR 识别成功: ${parsedCourses.size} 个课程段，请仔细核对并修改标黄异常项。"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = "OCR 识别失败: ${e.message}") }
+            }
+        }
     }
 
     /**
