@@ -56,6 +56,9 @@ dependencies {
     implementation(libs.coroutines.core)
     implementation(libs.coroutines.android)
     
+    // App Startup
+    implementation(libs.androidx.startup.runtime)
+
     // Compose (Glance uses Compose runtime)
     implementation(platform(libs.compose.bom))
     implementation(libs.ui)

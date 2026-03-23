@@ -11,6 +11,7 @@ import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
+import com.dawncourse.core.domain.repository.WidgetUpdateRepository
 import com.dawncourse.core.domain.usecase.FetchWebDavRemoteInfoUseCase
 import com.dawncourse.core.domain.usecase.UploadWebDavBackupUseCase
 import com.dawncourse.core.domain.usecase.DownloadWebDavBackupUseCase
@@ -37,10 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
-import android.content.Context
-import android.content.Intent
 import kotlinx.coroutines.flow.map
-import android.webkit.URLUtil
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,7 +65,7 @@ class SettingsViewModel @Inject constructor(
     private val exportLocalBackupUseCase: ExportLocalBackupUseCase,
     private val importLocalBackupUseCase: ImportLocalBackupUseCase,
     private val readLocalBackupPreviewUseCase: ReadLocalBackupPreviewUseCase,
-    @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
+    private val widgetUpdateRepository: WidgetUpdateRepository
 ) : ViewModel() {
 
     /**
@@ -575,9 +573,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun sendWidgetUpdateBroadcast() {
-        val intent = Intent("com.dawncourse.widget.FORCE_UPDATE")
-        intent.setPackage(context.packageName)
-        context.sendBroadcast(intent)
+        widgetUpdateRepository.triggerUpdate()
     }
 
     fun setEnableClassReminder(enable: Boolean) {

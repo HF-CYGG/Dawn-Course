@@ -1,12 +1,9 @@
 package com.dawncourse.feature.update
 
-import android.content.Context
-import androidx.core.content.pm.PackageInfoCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,8 +52,7 @@ sealed interface UpdateEvent {
 @HiltViewModel
 class UpdateViewModel @Inject constructor(
     private val repository: UpdateRepository,
-    private val settingsRepository: SettingsRepository,
-    @ApplicationContext private val context: Context
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     // UI 状态流
@@ -70,8 +66,9 @@ class UpdateViewModel @Inject constructor(
     /**
      * 检查更新
      * @param isManual 是否为手动触发检查（手动触发时，即使无更新也会提示）
+     * @param currentVersionCode 当前应用版本号
      */
-    fun checkUpdate(isManual: Boolean = false) {
+    fun checkUpdate(isManual: Boolean = false, currentVersionCode: Long) {
         viewModelScope.launch {
             _uiState.value = UpdateUiState.Checking
             val result = repository.checkUpdate()
@@ -80,10 +77,6 @@ class UpdateViewModel @Inject constructor(
             
             result.onSuccess { info ->
                 try {
-                    // 获取当前应用版本号
-                    val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                    val currentVersionCode = PackageInfoCompat.getLongVersionCode(packageInfo)
-                    
                     // 判定逻辑：
                     // 1. 远程版本 > 本地版本
                     // 2. 且 (是手动检查 OR (不是手动检查 且 没被用户跳过))

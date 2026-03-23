@@ -96,10 +96,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // 获取当前应用版本号
+            val packageInfo = applicationContext.packageManager.getPackageInfo(applicationContext.packageName, 0)
+            val currentVersionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
+
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {
                 delay(1200)
-                updateViewModel.checkUpdate(isManual = false)
+                updateViewModel.checkUpdate(isManual = false, currentVersionCode = currentVersionCode)
             }
 
             // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
@@ -221,7 +225,7 @@ class MainActivity : ComponentActivity() {
                                         navController.popBackStack()
                                     },
                                     onCheckUpdate = {
-                                        updateViewModel.checkUpdate(isManual = true)
+                                        updateViewModel.checkUpdate(isManual = true, currentVersionCode = currentVersionCode)
                                     }
                                 )
                             }

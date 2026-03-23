@@ -23,6 +23,7 @@ hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
 coil = "2.7.0" # 图片加载框架
 security-crypto = "1.1.0-alpha06" # AndroidX Security Crypto
+startup-runtime = "1.1.1" # App Startup
 
 # Security Fixes (Dependabot)
 netty = "4.1.125.Final"
@@ -84,7 +85,8 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 javax-inject = { group = "javax.inject", name = "javax.inject", version.ref = "javax-inject" }
 quickjs-android = { group = "app.cash.quickjs", name = "quickjs-android", version.ref = "quickjs" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
-security-crypto = { group = "androidx.security", name = "security-crypto-ktx", version = "1.1.0" }
+security-crypto = { group = "androidx.security", name = "security-crypto-ktx", version.ref = "security-crypto" }
+androidx-startup-runtime = { group = "androidx.startup", name = "startup-runtime", version.ref = "startup-runtime" }
 
 # Security Fixes (Dependabot)
 netty-codec-http2 = { group = "io.netty", name = "netty-codec-http2", version.ref = "netty" }

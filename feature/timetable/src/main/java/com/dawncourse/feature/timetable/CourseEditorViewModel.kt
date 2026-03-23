@@ -3,12 +3,10 @@ package com.dawncourse.feature.timetable
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import android.content.Context
-import android.content.Intent
-import dagger.hilt.android.qualifiers.ApplicationContext
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.WidgetUpdateRepository
 import com.dawncourse.core.domain.usecase.DetectConflictUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,7 +34,7 @@ class CourseEditorViewModel @Inject constructor(
     private val repository: CourseRepository,
     private val semesterRepository: SemesterRepository,
     private val detectConflictUseCase: DetectConflictUseCase,
-    @ApplicationContext private val context: Context,
+    private val widgetUpdateRepository: WidgetUpdateRepository,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -70,9 +68,7 @@ class CourseEditorViewModel @Inject constructor(
      * 发送小组件更新广播
      */
     private fun sendWidgetUpdateBroadcast() {
-        val intent = Intent("com.dawncourse.widget.FORCE_UPDATE")
-        intent.setPackage(context.packageName)
-        context.sendBroadcast(intent)
+        widgetUpdateRepository.triggerUpdate()
     }
 
     /**

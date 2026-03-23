@@ -11,6 +11,7 @@ import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
 import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavSyncRepositoryImpl
+import com.dawncourse.core.data.repository.WidgetUpdateRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.LocalBackupRepository
@@ -23,6 +24,7 @@ import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
 import com.dawncourse.core.domain.repository.WebDavSyncRepository
+import com.dawncourse.core.domain.repository.WidgetUpdateRepository
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
@@ -188,4 +190,14 @@ abstract class RepositoryModule {
     abstract fun bindLocalBackupRepository(
         impl: LocalBackupRepositoryImpl
     ): LocalBackupRepository
+
+    /**
+     * 绑定 [WidgetUpdateRepository] 接口到 [WidgetUpdateRepositoryImpl] 实现
+     * 负责解耦组件刷新对 Context 的依赖
+     */
+    @Binds
+    @Singleton
+    abstract fun bindWidgetUpdateRepository(
+        impl: WidgetUpdateRepositoryImpl
+    ): WidgetUpdateRepository
 }
