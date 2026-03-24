@@ -34,58 +34,13 @@ class MlKitOcrEngine : OcrEngine {
 
     override suspend fun extractText(bitmap: Bitmap): List<TextBlock> {
         return withContext(Dispatchers.IO) {
-            // 长截屏分块处理策略 (Phase 4)
-            val isLongImage = bitmap.height > bitmap.width * 2.5 || bitmap.height > 3000
-            val results = mutableListOf<TextBlock>()
-
-            if (isLongImage) {
-                // 设定分块参数
-                val chunkHeight = 2000
-                val overlap = 200
-                var currentY = 0
-
-                while (currentY < bitmap.height) {
-                    val h = if (currentY + chunkHeight > bitmap.height) {
-                        bitmap.height - currentY
-                    } else {
-                        chunkHeight
-                    }
-
-                    // 裁剪当前分块
-                    val chunkBitmap = Bitmap.createBitmap(bitmap, 0, currentY, bitmap.width, h)
-                    val chunkBlocks = extractTextFromChunk(chunkBitmap)
-
-                    // 坐标映射与重叠去重
-                    val mappedBlocks = chunkBlocks.map { block ->
-                        val newBox = OcrBoundingBox(
-                            left = block.boundingBox.left,
-                            top = block.boundingBox.top + currentY,
-                            right = block.boundingBox.right,
-                            bottom = block.boundingBox.bottom + currentY
-                        )
-                        block.copy(boundingBox = newBox)
-                    }
-
-                    for (block in mappedBlocks) {
-                        val isDuplicate = results.any { existing ->
-                            val yOverlap = maxOf(0, minOf(existing.boundingBox.bottom, block.boundingBox.bottom) -
-                                                  maxOf(existing.boundingBox.top, block.boundingBox.top))
-                            yOverlap > block.boundingBox.height * 0.5 && existing.text == block.text
-                        }
-                        if (!isDuplicate) {
-                            results.add(block)
-                        }
-                    }
-
-                    currentY += chunkHeight - overlap
-                    chunkBitmap.recycle()
-                }
+            val safeBitmap = if (bitmap.height > 8000) {
+                val scale = 8000f / bitmap.height
+                Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), 8000, true)
             } else {
-                // 非长图，直接单次推理
-                results.addAll(extractTextFromChunk(bitmap))
+                bitmap
             }
-
-            results
+            extractTextFromChunk(safeBitmap)
         }
     }
 

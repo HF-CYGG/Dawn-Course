@@ -1,6 +1,8 @@
 package com.dawncourse.feature.import_module.engine.ocr
 
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -33,17 +35,20 @@ class GridAnalyzer {
     fun analyze(blocks: List<TextBlock>): List<GridCell> {
         if (blocks.isEmpty()) return emptyList()
 
-        val imageLeft = blocks.minOf { it.boundingBox.left }
-        val imageRight = blocks.maxOf { it.boundingBox.right }
-        val imageTop = blocks.minOf { it.boundingBox.top }
-        val imageBottom = blocks.maxOf { it.boundingBox.bottom }
+        val mergedBlocks = mergeNearbyBlocks(blocks)
+        if (mergedBlocks.isEmpty()) return emptyList()
+
+        val imageLeft = mergedBlocks.minOf { it.boundingBox.left }
+        val imageRight = mergedBlocks.maxOf { it.boundingBox.right }
+        val imageTop = mergedBlocks.minOf { it.boundingBox.top }
+        val imageBottom = mergedBlocks.maxOf { it.boundingBox.bottom }
         val contentWidth = imageRight - imageLeft
         val contentHeight = imageBottom - imageTop
 
         // 1. 寻找时间轴基准 (Y轴划分：第1节到第12节)
         // 通常时间轴在最左侧（前 15% 宽度区域），且文本为纯数字
         val leftBoundary = imageLeft + (contentWidth * 0.15).toInt()
-        val sectionBlocks = blocks.filter { block ->
+        val sectionBlocks = mergedBlocks.filter { block ->
             block.boundingBox.centerX < leftBoundary && parseSectionNumber(block.text) != null
         }.sortedBy { it.boundingBox.centerY }
 
@@ -52,7 +57,7 @@ class GridAnalyzer {
             rowCenters.addAll(sectionBlocks.map { it.boundingBox.centerY })
         } else {
             // 虚拟补线：基于所有文本行的 Y 坐标进行一维聚类
-            val sortedByY = blocks.sortedBy { it.boundingBox.centerY }
+            val sortedByY = mergedBlocks.sortedBy { it.boundingBox.centerY }
             var currentY = sortedByY.first().boundingBox.centerY
             rowCenters.add(currentY)
             for (block in sortedByY) {
@@ -69,22 +74,25 @@ class GridAnalyzer {
         val dayRegex = Regex("一|二|三|四|五|六|日|天")
         val dayHeaderRegex = Regex("^(周|星期)?[一二三四五六日天]$")
         val dateHeaderRegex = Regex("^\\d{1,2}(日|号)?$")
-        val headerCandidateTop = imageTop + (contentHeight * 0.25f).toInt()
-        val headerCandidates = blocks.filter { it.boundingBox.centerY <= headerCandidateTop }
-        val headerBlocks = headerCandidates.filter { block ->
-            val text = block.text.trim()
-            dayHeaderRegex.matches(text) ||
-                dateHeaderRegex.matches(text) ||
-                ((text.contains("周") || text.contains("星期")) && dayRegex.containsMatchIn(text))
-        }.sortedBy { it.boundingBox.centerX }
-        val headerBottom = headerBlocks.maxOfOrNull { it.boundingBox.bottom }
+        val headerCandidates = mergedBlocks.filter { block ->
+            isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex)
+        }
+        val headerRow = findHeaderRow(headerCandidates, imageTop, contentHeight)
+        val headerBlocks = headerRow?.blocks?.sortedBy { it.boundingBox.centerX } ?: emptyList()
+        val headerBottom = headerRow?.bottom
 
         val gridLeft = if (sectionBlocks.isNotEmpty()) {
             sectionBlocks.maxOf { it.boundingBox.right }.toFloat()
         } else {
-            imageLeft + contentWidth * 0.12f
+            val bandLeftCandidates = mergedBlocks.filter { block ->
+                block.boundingBox.centerY in (imageTop + contentHeight * 0.2f).toInt()..(imageBottom - contentHeight * 0.15f).toInt()
+            }
+            bandLeftCandidates.minOfOrNull { it.boundingBox.left }?.toFloat() ?: (imageLeft + contentWidth * 0.12f)
         }
-        val gridRight = imageRight.toFloat()
+        val bandRightCandidates = mergedBlocks.filter { block ->
+            block.boundingBox.centerY in (imageTop + contentHeight * 0.2f).toInt()..(imageBottom - contentHeight * 0.15f).toInt()
+        }
+        val gridRight = bandRightCandidates.maxOfOrNull { it.boundingBox.right }?.toFloat() ?: imageRight.toFloat()
 
         // 提取 7 列的中心点 X 坐标
         val colCenters = if (headerBlocks.size >= 5) {
@@ -103,12 +111,14 @@ class GridAnalyzer {
         if (sectionBlocks.isEmpty() && rowCenters.size > 1 && headerBottom != null) {
             val rowAverage = estimateRowAverage(rowCenters)
             val filteredCenters = rowCenters.filter { it > headerBottom + rowAverage * 0.35f }
-            rowCenters.clear()
-            rowCenters.addAll(if (filteredCenters.size >= 3) filteredCenters else rowCenters)
+            if (filteredCenters.size >= 3) {
+                rowCenters.clear()
+                rowCenters.addAll(filteredCenters)
+            }
         }
 
         // 3. 匹配映射 (将非表头、非时间轴的业务文本映射到网格中)
-        var contentBlocks = blocks - headerBlocks.toSet() - sectionBlocks.toSet()
+        var contentBlocks = mergedBlocks - headerBlocks.toSet() - sectionBlocks.toSet()
         
         // 过滤掉明显的非课表内容 (如未裁剪时顶部的标题、底部的导航栏等)
         // 规则 1: 空间位置过滤。
@@ -146,23 +156,22 @@ class GridAnalyzer {
                 !(isShortHeader && block.boundingBox.centerY <= headerLineBottom)
             }
         }
+        val headerTopLimit = imageTop + (contentHeight * 0.35f).toInt()
+        contentBlocks = contentBlocks.filter { block ->
+            val isHeaderLike = isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex)
+            !(isHeaderLike && block.boundingBox.centerY <= headerTopLimit)
+        }
         
         val cellMap = mutableMapOf<Pair<Int, Int>, MutableList<TextBlock>>()
 
+        val colBounds = buildBounds(colCenters, gridLeft.roundToInt(), gridRight.roundToInt())
+        val rowBounds = buildBounds(rowCenters, imageTop, imageBottom)
         for (block in contentBlocks) {
-            val cx = block.boundingBox.centerX
-            val cy = block.boundingBox.centerY
-
-            // 寻找 X 坐标最接近的列 (1..7)
-            val colIndex = colCenters.indices.minByOrNull { abs(colCenters[it] - cx) } ?: -1
-            val dayOfWeek = colIndex + 1 // 1-based
-
-            // 寻找 Y 坐标最接近的行 (节次)
-            val rowIndex = rowCenters.indices.minByOrNull { abs(rowCenters[it] - cy) } ?: -1
-            val section = rowIndex + 1 // 1-based
-
-            // 仅当映射在有效范围内时才加入
-            if (dayOfWeek in 1..7 && section > 0) {
+            val colIndex = findIndexByOverlapX(block.boundingBox, colBounds)
+            val rowIndex = findIndexByOverlapY(block.boundingBox, rowBounds)
+            if (colIndex >= 0 && rowIndex >= 0) {
+                val dayOfWeek = colIndex + 1
+                val section = rowIndex + 1
                 val key = Pair(section, dayOfWeek)
                 cellMap.getOrPut(key) { mutableListOf() }.add(block)
             }
@@ -245,9 +254,154 @@ class GridAnalyzer {
         if (rowCenters.size <= 1) return 48f
         val sorted = rowCenters.sorted()
         val diffs = sorted.zipWithNext { a, b -> (b - a).coerceAtLeast(1) }
+        if (diffs.isEmpty()) return 48f
         val average = diffs.average().toFloat()
         return average.coerceAtLeast(36f)
     }
+
+    private fun mergeNearbyBlocks(blocks: List<TextBlock>): List<TextBlock> {
+        if (blocks.isEmpty()) return emptyList()
+        val sorted = blocks.sortedWith(compareBy<TextBlock>({ it.boundingBox.centerY }, { it.boundingBox.centerX }))
+        val merged = mutableListOf<TextBlock>()
+
+        for (block in sorted) {
+            val candidateIndex = merged.indexOfLast { existing ->
+                val xThreshold = max(existing.boundingBox.width, block.boundingBox.width) * 0.6f
+                val yThreshold = max(existing.boundingBox.height, block.boundingBox.height) * 1.2f
+                val xClose = abs(existing.boundingBox.centerX - block.boundingBox.centerX) <= xThreshold
+                val verticalGap = block.boundingBox.top - existing.boundingBox.bottom
+                val overlapY = min(existing.boundingBox.bottom, block.boundingBox.bottom) - max(existing.boundingBox.top, block.boundingBox.top)
+                xClose && (verticalGap in 0..yThreshold.toInt() || overlapY >= 0)
+            }
+
+            if (candidateIndex >= 0) {
+                val existing = merged[candidateIndex]
+                val mergedBox = OcrBoundingBox(
+                    left = min(existing.boundingBox.left, block.boundingBox.left),
+                    top = min(existing.boundingBox.top, block.boundingBox.top),
+                    right = max(existing.boundingBox.right, block.boundingBox.right),
+                    bottom = max(existing.boundingBox.bottom, block.boundingBox.bottom)
+                )
+                val isVertical = abs(block.boundingBox.centerY - existing.boundingBox.centerY) > existing.boundingBox.height * 0.5f
+                val separator = if (isVertical) "\n" else " "
+                val mergedText = if (block.boundingBox.top >= existing.boundingBox.top || (!isVertical && block.boundingBox.left >= existing.boundingBox.left)) {
+                    "${existing.text}$separator${block.text}"
+                } else {
+                    "${block.text}$separator${existing.text}"
+                }
+                merged[candidateIndex] = existing.copy(text = mergedText, boundingBox = mergedBox)
+            } else {
+                merged.add(block)
+            }
+        }
+        return merged
+    }
+
+    private data class Bound(val start: Int, val end: Int)
+
+    private fun buildBounds(centers: List<Int>, minBound: Int, maxBound: Int): List<Bound> {
+        if (centers.isEmpty()) return emptyList()
+        val sorted = centers.sorted()
+        val bounds = mutableListOf<Bound>()
+        for (i in sorted.indices) {
+            val left = if (i == 0) {
+                minBound
+            } else {
+                ((sorted[i - 1] + sorted[i]) / 2f).roundToInt()
+            }
+            val right = if (i == sorted.lastIndex) {
+                maxBound
+            } else {
+                ((sorted[i] + sorted[i + 1]) / 2f).roundToInt()
+            }
+            bounds.add(Bound(left, right))
+        }
+        return bounds
+    }
+
+    private fun findIndexByOverlapX(box: OcrBoundingBox, bounds: List<Bound>): Int {
+        if (bounds.isEmpty()) return -1
+        var bestIndex = -1
+        var bestScore = 0f
+        val width = box.width.coerceAtLeast(1)
+        for (i in bounds.indices) {
+            val bound = bounds[i]
+            val overlapX = max(0, min(box.right, bound.end) - max(box.left, bound.start))
+            val overlapRatioX = overlapX.toFloat() / width
+            if (overlapRatioX < 0.3f) continue
+            if (overlapRatioX > bestScore || (overlapRatioX == bestScore && bestIndex >= 0 && i < bestIndex)) {
+                bestScore = overlapRatioX
+                bestIndex = i
+            }
+        }
+        return bestIndex
+    }
+
+    private fun findIndexByOverlapY(box: OcrBoundingBox, bounds: List<Bound>): Int {
+        if (bounds.isEmpty()) return -1
+        var bestIndex = -1
+        var bestScore = 0f
+        val height = box.height.coerceAtLeast(1)
+        for (i in bounds.indices) {
+            val bound = bounds[i]
+            val overlapY = max(0, min(box.bottom, bound.end) - max(box.top, bound.start))
+            val overlapRatioY = overlapY.toFloat() / height
+            if (overlapRatioY < 0.3f) continue
+            if (overlapRatioY > bestScore || (overlapRatioY == bestScore && bestIndex >= 0 && i < bestIndex)) {
+                bestScore = overlapRatioY
+                bestIndex = i
+            }
+        }
+        return bestIndex
+    }
+
+    private fun isHeaderText(
+        raw: String,
+        dayRegex: Regex,
+        dayHeaderRegex: Regex,
+        dateHeaderRegex: Regex
+    ): Boolean {
+        val text = raw.trim()
+        if (text.isBlank()) return false
+        return dayHeaderRegex.matches(text) ||
+            dateHeaderRegex.matches(text) ||
+            ((text.contains("周") || text.contains("星期")) && dayRegex.containsMatchIn(text))
+    }
+
+    private data class HeaderRow(val blocks: List<TextBlock>, val bottom: Int)
+
+    private fun findHeaderRow(
+        candidates: List<TextBlock>,
+        imageTop: Int,
+        contentHeight: Int
+    ): HeaderRow? {
+        if (candidates.isEmpty()) return null
+        val topLimit = imageTop + (contentHeight * 0.45f).toInt()
+        val filtered = candidates.filter { it.boundingBox.centerY <= topLimit }
+        if (filtered.isEmpty()) return null
+        val heightAverage = filtered.map { it.boundingBox.height }.average().toFloat().coerceAtLeast(12f)
+        val threshold = (heightAverage * 1.2f).coerceAtLeast(12f)
+        val sorted = filtered.sortedBy { it.boundingBox.centerY }
+        val groups = mutableListOf<MutableList<TextBlock>>()
+        var current = mutableListOf<TextBlock>()
+        var currentY = sorted.first().boundingBox.centerY
+        for (block in sorted) {
+            if (kotlin.math.abs(block.boundingBox.centerY - currentY) <= threshold) {
+                current.add(block)
+            } else {
+                groups.add(current)
+                current = mutableListOf(block)
+                currentY = block.boundingBox.centerY
+            }
+        }
+        if (current.isNotEmpty()) {
+            groups.add(current)
+        }
+        val best = groups.maxByOrNull { it.size } ?: return null
+        val bottom = best.maxOf { it.boundingBox.bottom }
+        return HeaderRow(best, bottom)
+    }
+
 
     /**
      * 解析节次数字

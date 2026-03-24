@@ -21,7 +21,7 @@ class CourseParser {
         val parsedCourses = mutableListOf<ParsedCourse>()
 
         // 常用周次正则：如 "1-16周", "1~16周", "第1-16周"
-        val weekRegex = Regex("(\\d+)[\\-~](\\d+)周?")
+        val weekRegex = Regex("(\\d+)\\s*[\\-~_—一]\\s*(\\d+)\\s*周?")
         // 单双周正则
         val singleDoubleRegex = Regex("(单|双)周")
         // 地点正则：包含楼、室、馆、教等字眼，或字母+数字组合（如 A101）
@@ -32,12 +32,22 @@ class CourseParser {
         for (cell in cells) {
             if (cell.blocks.isEmpty()) continue
 
-            // 将块内容按顺序合并为多行文本
-            val allLines = cell.blocks.map { it.text.trim() }.filter { it.isNotEmpty() }
+            val allLines = cell.blocks.map { block ->
+                block.text.trim()
+                    .replace("O", "0")
+                    .replace("o", "0")
+                    .replace("l", "1")
+                    .replace("I", "1")
+                    .replace("Z", "2")
+                    .replace("z", "2")
+                    .replace("S", "5")
+                    .replace("s", "5")
+                    .replace("B", "8")
+                    .replace("q", "9")
+            }.filter { it.isNotEmpty() }
             if (allLines.isEmpty()) continue
 
-            // 尝试按空行或明显的分隔特征，将单元格内的文本拆分为多门课程（处理冲突课程）
-            val courseChunks = splitIntoCourseChunks(allLines)
+            val courseChunks = splitIntoCourseChunks(allLines, weekRegex)
 
             for (lines in courseChunks) {
                 if (lines.isEmpty()) continue
@@ -59,7 +69,7 @@ class CourseParser {
                     continue
                 }
 
-                var name = ""
+                var name = lines[0]
                 var teacher = ""
                 var location = ""
                 var startWeek = 1
@@ -67,86 +77,68 @@ class CourseParser {
                 var weekType = 0 // 0=全周, 1=单周, 2=双周
                 val duration = 2 // 默认认为占据 2 小节，后续可根据单元格跨度计算
 
-                // 启发式规则 1: 单元格的第一行极大概率是课程名
-                name = lines[0]
 
-            // 遍历剩余行进行字段提取
-            for (i in 1 until lines.size) {
-                var line = lines[i]
-                
-                // 简单的字典纠错：处理 OCR 常见数字字母混淆
-                line = line.replace("O", "0")
-                    .replace("l", "1")
-                    .replace("I", "1")
-                    .replace("Z", "2")
-                    .replace("S", "5")
-                    .replace("B", "8")
-                    .replace("q", "9")
+                for (i in 1 until lines.size) {
+                    val line = lines[i]
 
-                // 尝试匹配周次信息
-                val weekMatch = weekRegex.find(line)
-                if (weekMatch != null) {
-                    startWeek = weekMatch.groupValues[1].toIntOrNull() ?: 1
-                    endWeek = weekMatch.groupValues[2].toIntOrNull() ?: 16
-                    
-                    // 判断单双周
-                    if (singleDoubleRegex.containsMatchIn(line)) {
-                        weekType = if (line.contains("单")) 1 else 2
+                    val weekMatch = weekRegex.find(line)
+                    if (weekMatch != null) {
+                        startWeek = weekMatch.groupValues[1].toIntOrNull() ?: 1
+                        endWeek = weekMatch.groupValues[2].toIntOrNull() ?: 16
+                        if (singleDoubleRegex.containsMatchIn(line)) {
+                            weekType = if (line.contains("单")) 1 else 2
+                        }
+                        continue
                     }
-                    continue // 匹配成功后跳过当前行
-                }
 
-                // 尝试匹配上课地点
-                if (locationRegex.matches(line) || (line.any { it.isLetter() } && line.any { it.isDigit() })) {
-                    location = line
-                    continue
-                }
+                    if (locationRegex.matches(line) || (line.any { it.isLetter() } && line.any { it.isDigit() })) {
+                        location = line
+                        continue
+                    }
 
-                // 尝试匹配教师姓名
-                if (teacherRegex.matches(line)) {
-                    teacher = line.replace("老师", "")
-                    continue
-                }
+                    if (teacherRegex.matches(line)) {
+                        teacher = line.replace("老师", "")
+                        continue
+                    }
                 
-                // 如果未能匹配上述规则，且地点或教师为空，进行兜底分配
-                if (location.isEmpty() && line.length > 4) {
-                    location = line
-                } else if (teacher.isEmpty() && line.length in 2..4) {
-                    teacher = line
+                    if (location.isEmpty() && line.length > 4) {
+                        location = line
+                    } else if (teacher.isEmpty() && line.length in 2..4) {
+                        teacher = line
+                    }
                 }
-            }
 
-            var confidence = 1.0f
-            if (location == "未知地点" || teacher == "未知教师" || name.length < 2) {
-                confidence -= 0.3f // 缺失字段扣分
-            }
-            if (endWeek > 25 || startWeek > endWeek) {
-                confidence -= 0.4f // 周次逻辑明显异常，严重扣分
-                // 自动纠偏逻辑
-                if (startWeek > endWeek) {
-                    val temp = startWeek
-                    startWeek = endWeek
-                    endWeek = temp
+                var confidence = 1.0f
+                if (location.isEmpty() || teacher.isEmpty() || name.length < 2) {
+                    confidence -= 0.3f
                 }
-                if (endWeek > 25) endWeek = 20 // 兜底到常见最大周次
-            }
-            confidence = confidence.coerceAtLeast(0.1f)
+                if (endWeek > 30 || startWeek > endWeek) {
+                    confidence -= 0.4f
+                    if (startWeek > endWeek) {
+                        val temp = startWeek
+                        startWeek = endWeek
+                        endWeek = temp
+                    }
+                    if (endWeek > 30) endWeek = 20
+                }
+                confidence = confidence.coerceAtLeast(0.1f)
 
-            parsedCourses.add(
-                ParsedCourse(
-                    name = name,
-                    // 允许部分字段为空，交由强 UI 兜底（ReviewStep）供用户手动校验补充
-                    teacher = teacher.ifEmpty { "未知教师" },
-                    location = location.ifEmpty { "未知地点" },
-                    dayOfWeek = cell.dayOfWeek,
-                    startSection = cell.startSection,
-                    duration = duration,
-                    startWeek = startWeek,
-                    endWeek = endWeek,
-                    weekType = weekType
-                ).apply { this.confidence = confidence }
-            )
-        }
+                if (name.matches(Regex("^\\d+$"))) continue
+
+                parsedCourses.add(
+                    ParsedCourse(
+                        name = name,
+                        teacher = teacher.ifEmpty { "未知教师" },
+                        location = location.ifEmpty { "未知地点" },
+                        dayOfWeek = cell.dayOfWeek,
+                        startSection = cell.startSection,
+                        duration = duration,
+                        startWeek = startWeek,
+                        endWeek = endWeek,
+                        weekType = weekType
+                    ).apply { this.confidence = confidence }
+                )
+            }
         }
 
         return parsedCourses
@@ -156,11 +148,9 @@ class CourseParser {
      * 将单个单元格内的多行文本，根据明显的分隔特征（如空行、或者重新出现了周次/地点模式），
      * 拆分为多门可能的冲突课程文本块。
      */
-    private fun splitIntoCourseChunks(lines: List<String>): List<List<String>> {
+    private fun splitIntoCourseChunks(lines: List<String>, weekRegex: Regex): List<List<String>> {
         val chunks = mutableListOf<MutableList<String>>()
         var currentChunk = mutableListOf<String>()
-
-        val weekRegex = Regex("(\\d+)[\\-~](\\d+)周?")
         
         for (i in lines.indices) {
             val line = lines[i]
