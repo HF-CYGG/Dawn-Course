@@ -41,6 +41,23 @@ class CourseParser {
 
             for (lines in courseChunks) {
                 if (lines.isEmpty()) continue
+                
+                // 过滤掉只有一个月或日期的误识别块 (例如 "03月", "25日")
+                if (lines.size == 1 && lines[0].matches(Regex("^\\d+月$|^\\d+日$"))) {
+                    continue
+                }
+                
+                // 过滤掉常见的非课程文本 (防兜底)
+                val firstLine = lines[0]
+                if (firstLine.contains("我的课表") || 
+                    firstLine.matches(Regex(".*第.*周.*")) || 
+                    firstLine.matches(Regex(".*学年.*学期.*")) ||
+                    firstLine.matches(Regex("^\\d{1,2}:\\d{2}$")) || // 时间如 13:18
+                    firstLine.matches(Regex("^\\d{1,3}%?$")) ||      // 电量或纯数字如 25, 100%
+                    firstLine.matches(Regex("^[a-zA-Z0-9]{1,3}$"))   // 极短的无意义字母数字如 5G, KB
+                ) {
+                    continue
+                }
 
                 var name = ""
                 var teacher = ""

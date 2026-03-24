@@ -126,7 +126,7 @@ fun OcrCropScreen(
                         dstSize = androidx.compose.ui.unit.IntSize(drawWidth.toInt(), drawHeight.toInt())
                     )
                     
-                    // 2. 绘制半透明遮罩
+                    // 2. 绘制半透明遮罩 (使用4个矩形避免BlendMode.Clear清除底层图片)
                     val actualCropRect = Rect(
                         left = offsetX + cropRect.left * drawWidth,
                         top = offsetY + cropRect.top * drawHeight,
@@ -134,13 +134,30 @@ fun OcrCropScreen(
                         bottom = offsetY + cropRect.bottom * drawHeight
                     )
                     
-                    // 使用源混合模式抠出高亮区域
-                    drawRect(Color.Black.copy(alpha = 0.6f))
+                    val maskColor = Color.Black.copy(alpha = 0.6f)
+                    // Top
                     drawRect(
-                        color = Color.Transparent,
-                        topLeft = actualCropRect.topLeft,
-                        size = actualCropRect.size,
-                        blendMode = BlendMode.Clear
+                        color = maskColor,
+                        topLeft = Offset.Zero,
+                        size = Size(size.width, actualCropRect.top)
+                    )
+                    // Bottom
+                    drawRect(
+                        color = maskColor,
+                        topLeft = Offset(0f, actualCropRect.bottom),
+                        size = Size(size.width, size.height - actualCropRect.bottom)
+                    )
+                    // Left
+                    drawRect(
+                        color = maskColor,
+                        topLeft = Offset(0f, actualCropRect.top),
+                        size = Size(actualCropRect.left, actualCropRect.height)
+                    )
+                    // Right
+                    drawRect(
+                        color = maskColor,
+                        topLeft = Offset(actualCropRect.right, actualCropRect.top),
+                        size = Size(size.width - actualCropRect.right, actualCropRect.height)
                     )
                     
                     // 3. 绘制裁剪框边缘和角标
