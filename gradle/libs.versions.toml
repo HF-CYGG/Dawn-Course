@@ -22,7 +22,7 @@ quickjs = "0.9.0" # QuickJS 脚本引擎 (Phase 2 使用)
 hilt-navigation-compose = "1.1.0" # Hilt 与 Navigation Compose 集成
 javax-inject = "1" # Java 注入标准注解
 coil = "2.7.0" # 图片加载框架
-security-crypto = "1.1.0-alpha06" # AndroidX Security Crypto
+security-crypto = "1.1.0" # AndroidX Security Crypto
 startup-runtime = "1.1.1" # App Startup
 
 # Security Fixes (Dependabot)
