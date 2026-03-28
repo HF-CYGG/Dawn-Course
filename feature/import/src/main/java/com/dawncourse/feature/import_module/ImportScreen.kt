@@ -1074,172 +1074,56 @@ private fun WebViewStep(
                 
                 Button(
                     onClick = {
-                        try {
-                            val currentWebView = webView
-                            if (currentWebView == null) {
-                                viewModel.updateResultText("未能提取到有效 HTML 内容")
-                                return@Button
-                            }
-
-                            // 如果检测到为强智教务系统，使用专用 Provider 直接请求课表页面 HTML
-                            val js: String = if (isQiangZhiHost(uiState.webUrl)) {
-                                """
-                                (function() {
-                                    try {
-                                        window.__dawnResult = null;
-                                        window.__dawnReady = false;
-                                        (function() {
-                                            try {
-                                                var xhr = new XMLHttpRequest();
-                                                xhr.open('GET', '/jsxsd/xskb/xskb_list.do?Ves632DSdyV=NEW_XSD_PYGL', false);
-                                                xhr.send();
-                                                if (xhr.status === 200) {
-                                                    window.__dawnResult = xhr.responseText;
-                                                } else {
-                                                    window.__dawnResult = "";
-                                                }
-                                            } catch (e) {
-                                                try {
-                                                    var iframes = document.getElementsByTagName('iframe');
-                                                    if (iframes.length > 0) {
-                                                        window.__dawnResult = iframes[0].contentWindow.document.body.innerHTML;
-                                                    } else {
-                                                        window.__dawnResult = document.body ? document.body.innerHTML : "";
-                                                    }
-                                                } catch (e2) {
-                                                    window.__dawnResult = document.body ? document.body.innerHTML : "";
-                                                }
-                                            }
-                                            window.__dawnReady = true;
-                                        })();
-                                    } catch (e) {
-                                        window.__dawnReady = true;
-                                    }
-                                })();
-                                """.trimIndent()
-                            } else {
-                                // 非强智教务系统，继续使用通用 Provider + 降级逻辑
-                                val assets = context.assets
-                                val outputConsole = assets.open("js/output_console.js").bufferedReader().use { it.readText() }
-                                val courseUtils = assets.open("js/course_utils.js").bufferedReader().use { it.readText() }
-                                val qidiProvider = assets.open("js/qidi_provider.js").bufferedReader().use { it.readText() }
-
-                                buildString {
-                                    append("(function(){\n")
-                                    append("try {\n")
-                                    append("window.__dawnResult = null;\n")
-                                    append("window.__dawnReady = false;\n")
-                                    append(outputConsole).append("\n;\n")
-                                    append(courseUtils).append("\n;\n")
-                                    append(qidiProvider).append("\n;\n")
-                                    append(
-                                        """
-                                        (async function() {
-                                            try {
-                                                if (typeof scheduleHtmlProvider === 'function') {
-                                                    console.log("Found scheduleHtmlProvider, running...");
-                                                    var result = await scheduleHtmlProvider();
-                                                    if (result !== "do not continue") {
-                                                        window.__dawnResult = result;
-                                                        window.__dawnReady = true;
-                                                        return;
-                                                    }
-                                                }
-                                            } catch(e) {
-                                                console.error("Provider execution failed:", e);
-                                            }
-                                            
-                                            function isScheduleHtml(doc) {
-                                                if (!doc) return false;
-                                                var html = doc.body ? doc.body.innerHTML : "";
-                                                if (!html) return false;
-                                                
-                                                // 规则 A: 包含星期关键词
-                                                var hasWeekday = /(星期|周)\s*[一二三四五六日天1-7]/.test(html);
-                                                // 规则 B: 包含节次/周次关键词
-                                                var hasSections = /节次/.test(html) || /第?\s*\d+\s*节/.test(html);
-                                                var hasWeeks = /周次|周数/.test(html) || /第?\s*\d+\s*周/.test(html);
-                                                
-                                                // 规则 C: 启发式特征搜索 (DOM API)
-                                                try {
-                                                    // C1: 存在跨行数 > 5 的单元格 (通常是左侧节次头)
-                                                    var heavyRowspan = doc.querySelector('td[rowspan="5"], td[rowspan="6"], td[rowspan="7"], th[rowspan="5"]');
-                                                    if (heavyRowspan) return true;
-
-                                                    // C2: 存在包含“星期一”和“星期二”的表格行
-                                                    var headers = doc.querySelectorAll('tr, thead');
-                                                    for (var i = 0; i < headers.length; i++) {
-                                                        var text = headers[i].innerText || headers[i].textContent;
-                                                        if (text.indexOf('星期一') !== -1 && text.indexOf('星期二') !== -1) return true;
-                                                    }
-                                                    
-                                                    // C3: 存在高度占比大的网格容器 (仅作为辅助判断)
-                                                    // var grid = doc.querySelector('.grid, .table, table');
-                                                    // if (grid && grid.offsetHeight > window.innerHeight * 0.6) return true;
-                                                } catch (e) {}
-
-                                                if (hasWeekday && (hasSections || hasWeeks)) return true;
-                                                if (hasWeeks && hasSections) return true;
-                                                return false;
-                                            }
-                                            function findScheduleHtml(doc) {
-                                                if (!doc) return null;
-                                                if (isScheduleHtml(doc)) {
-                                                    return doc.body ? doc.body.innerHTML : doc.documentElement.outerHTML;
-                                                }
-                                                try {
-                                                    var deskFrame = doc.querySelector && doc.querySelector('iframe#frmDesk');
-                                                    if (deskFrame) {
-                                                        var innerDoc = deskFrame.contentDocument || deskFrame.contentWindow.document;
-                                                        var innerResult = findScheduleHtml(innerDoc);
-                                                        if (innerResult) return innerResult;
-                                                    }
-                                                } catch(e) {}
-                                                var frames = doc.getElementsByTagName('frame');
-                                                for (var i = 0; i < frames.length; i++) {
-                                                    try {
-                                                        var frameDoc = frames[i].contentDocument || frames[i].contentWindow.document;
-                                                        var result = findScheduleHtml(frameDoc);
-                                                        if (result) return result;
-                                                    } catch(e) {}
-                                                }
-                                                var iframes = doc.getElementsByTagName('iframe');
-                                                for (var i = 0; i < iframes.length; i++) {
-                                                    try {
-                                                        var frameDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                                                        var result = findScheduleHtml(frameDoc);
-                                                        if (result) return result;
-                                                    } catch(e) {}
-                                                }
-                                                return null;
-                                            }
-                                            window.__dawnResult = findScheduleHtml(document) || document.documentElement.outerHTML;
-                                            window.__dawnReady = true;
-                                        })();
-                                        """.trimIndent()
-                                    )
-                                    append("\n} catch(e) { window.__dawnReady = true; }\n")
-                                    append("})();")
+                        coroutineScope.launch {
+                            try {
+                                val currentWebView = webView
+                                if (currentWebView == null) {
+                                    viewModel.updateResultText("未能提取到有效 HTML 内容")
+                                    return@launch
                                 }
-                            }
 
-                            currentWebView.evaluateJavascript(js, null)
-                            viewModel.updateResultText("正在提取...")
-                            pollJob?.cancel()
-                            pollJob = coroutineScope.launch {
-                                repeat(40) {
-                                    val raw = evaluateJs("window.__dawnReady ? window.__dawnResult : null")
-                                    val rawHtml = parseJavascriptResult(raw)
-                                    if (rawHtml.isNotEmpty()) {
-                                        viewModel.parseResultFromWebView(rawHtml)
-                                        return@launch
+                                // 如果检测到为强智教务系统，使用专用 Provider 直接请求课表页面 HTML
+                                val js: String = if (isQiangZhiHost(uiState.webUrl)) {
+                                    viewModel.getScriptContent("qz_provider.js", "js")
+                                } else {
+                                    // 非强智教务系统，继续使用通用 Provider + 降级逻辑
+                                    val outputConsole = viewModel.getScriptContent("output_console.js", "js")
+                                    val courseUtils = viewModel.getScriptContent("course_utils.js", "js")
+                                    val qidiProvider = viewModel.getScriptContent("qidi_provider.js", "js")
+                                    val genericProvider = viewModel.getScriptContent("generic_provider.js", "js")
+
+                                    buildString {
+                                        append("(function(){\n")
+                                        append("try {\n")
+                                        append("window.__dawnResult = null;\n")
+                                        append("window.__dawnReady = false;\n")
+                                        append(outputConsole).append("\n;\n")
+                                        append(courseUtils).append("\n;\n")
+                                        append(qidiProvider).append("\n;\n")
+                                        append(genericProvider)
+                                        append("\n} catch(e) { window.__dawnReady = true; }\n")
+                                        append("})();")
                                     }
-                                    delay(300)
                                 }
-                                viewModel.updateResultText("未能提取到有效 HTML 内容")
+
+                                currentWebView.evaluateJavascript(js, null)
+                                viewModel.updateResultText("正在提取...")
+                                pollJob?.cancel()
+                                pollJob = coroutineScope.launch {
+                                    repeat(40) {
+                                        val raw = evaluateJs("window.__dawnReady ? window.__dawnResult : null")
+                                        val rawHtml = parseJavascriptResult(raw)
+                                        if (rawHtml.isNotEmpty()) {
+                                            viewModel.parseResultFromWebView(rawHtml)
+                                            return@launch
+                                        }
+                                        delay(300)
+                                    }
+                                    viewModel.updateResultText("未能提取到有效 HTML 内容")
+                                }
+                            } catch (e: Exception) {
+                                viewModel.updateResultText("脚本加载失败: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            viewModel.updateResultText("脚本加载失败: ${e.message}")
                         }
                     },
                     modifier = Modifier.weight(1f)

@@ -590,22 +590,9 @@ fun QidiAutoSyncScreen(
                             .replace("{{TERM}}", termCode)
                         append(zfNavScript).append("\n;\n")
                     }
-                    append(
-                        """
-                        (async function(){
-                          try{
-                            if(typeof scheduleHtmlProvider==='function' && ${if (provider == SyncProviderType.ZF) "false" else "true"}){
-                              var result=await scheduleHtmlProvider();
-                              if(result!=="do not continue"){
-                                window.__dawnResult=result;window.__dawnReady=true;return;
-                              }
-                            }
-                            ${if (provider == SyncProviderType.ZF) "await openZfTimetableAndQuery();" else ""}
-                          }catch(e){}
-                          window.__dawnResult=document.documentElement.outerHTML;window.__dawnReady=true;
-                        })();
-                        """.trimIndent()
-                    )
+                    val autoSyncExtractor = viewModel.getScriptContent("auto_sync_extractor.js", "js")
+                        .replace("{{IS_ZF}}", (provider == SyncProviderType.ZF).toString())
+                    append(autoSyncExtractor)
                     append("\n}catch(e){window.__dawnResult=null;window.__dawnReady=true;}})();")
                 }
                 wv.evaluateJavascript(js, null)
@@ -887,28 +874,7 @@ fun QidiAutoSyncScreen(
                 }
                 
                 if (hasMenu) {
-                    val openMenuJs = """
-                        (function(){
-                          try{
-                            var navLink = (function(){
-                              try{
-                                var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                                if(r && r.singleNodeValue){ return r.singleNodeValue; }
-                              }catch(e){}
-                              return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
-                            })();
-                            if(navLink){ navLink.click(); return 'ok'; }
-                            var link = Array.from(document.querySelectorAll('a')).find(a=>{
-                              var href=(a.getAttribute('href')||'').toLowerCase();
-                              var txt=(a.textContent||'').trim();
-                              return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
-                                || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
-                            });
-                            if(link){ link.click(); return 'ok'; }
-                            return 'none';
-                          }catch(e){ return 'err'; }
-                        })();
-                    """.trimIndent()
+                    val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
                     wv.evaluateJavascript(openMenuJs, null)
                 }
 
@@ -1354,14 +1320,10 @@ fun QidiAutoSyncScreen(
                                     onClick = {
                                         val wv = webView ?: return@OutlinedButton
                                         scope.launch {
-                                            wv.evaluateJavascript(
-                                                "var i=document.querySelector('#yzmPic'); if(i){ i.click(); } void 0;",
-                                                null
-                                            )
-                                            val res = suspendEvaluateJs(
-                                                wv,
-                                                "(function(){var i=document.querySelector('#yzmPic'); if(!i) return ''; var s=i.getAttribute('src')||''; try{ return new URL(s, location.href).href }catch(e){ return s; }})()"
-                                            )
+                                            val clickJs = viewModel.getScriptContent("zf_refresh_captcha_click.js", "js")
+                                            wv.evaluateJavascript(clickJs, null)
+                                            val srcJs = viewModel.getScriptContent("zf_refresh_captcha_src.js", "js")
+                                            val res = suspendEvaluateJs(wv, srcJs)
                                             val src = parseJsReturn(res).replace("\\/", "/")
                                             if (src.isNotBlank()) {
                                                 captchaUrl = src
@@ -1379,11 +1341,12 @@ fun QidiAutoSyncScreen(
                                         }
                                         val wv = webView ?: return@Button
                                         val safe = escapeJs(code)
-                                        wv.evaluateJavascript(
-                                            "(function(){var input=document.querySelector('#yzm')||document.querySelector('input[name=\"yzm\"]')||document.querySelector('input[id*=\"yzm\"]'); if(input){input.value='$safe'; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true}));} var b=document.querySelector('#dl')||document.querySelector('button[type=\"submit\"]')||document.querySelector('input[type=\"submit\"]'); if(b){b.click(); return;} var f=(input&&input.form)||document.querySelector('form'); if(f){f.submit();}})();",
-                                            null
-                                        )
-                                        addLog("已提交验证码并触发登录", SyncLogType.ACTION)
+                                        scope.launch {
+                                            val baseJs = viewModel.getScriptContent("zf_submit_captcha.js", "js")
+                                            val js = baseJs.replace("{{CAPTCHA_CODE}}", safe)
+                                            wv.evaluateJavascript(js, null)
+                                            addLog("已提交验证码并触发登录", SyncLogType.ACTION)
+                                        }
                                     }
                                 ) { Text("继续登录") }
                             }
@@ -1638,97 +1601,10 @@ fun QidiAutoSyncScreen(
                     if (provider == SyncProviderType.ZF) {
                         scope.launch {
                             try {
+                                val pageStateScript = viewModel.getScriptContent("zf_page_state.js", "js")
                                 val res = suspendEvaluateJs(
                                     wv,
-                                    """
-                                    (function(){
-                                      try{
-                                        var tips=document.querySelector('#tips');
-                                        var tipTxt=tips? (tips.innerText||'') : '';
-                                        var hasWrong = tipTxt.indexOf('用户名或密码不正确')>=0 || tipTxt.indexOf('错误')>=0 || tipTxt.indexOf('不存在')>=0;
-                                        if(tips && tips.style.display !== 'none' && tipTxt.length > 0) {
-                                            hasWrong = true;
-                                        }
-                                        var bootbox = document.querySelector('.bootbox-body');
-                                        if(bootbox && bootbox.innerText.length > 0) {
-                                            hasWrong = true;
-                                            tipTxt = bootbox.innerText;
-                                        }
-                                        
-                                        var yzmDiv=document.querySelector('#yzmDiv');
-                                        var yzmVis=false;
-                                        if(yzmDiv){
-                                          var cs=getComputedStyle(yzmDiv);
-                                          yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
-                                        }
-                                        var yzmInput = document.querySelector('#yzm') || document.querySelector('input[name="yzm"]') || document.querySelector('input[id*="yzm"]');
-                                        var yzmImg = document.querySelector('#yzmPic') || document.querySelector('img[src*="yzm"]') || document.querySelector('img[src*="captcha"]') || document.querySelector('img[src*="validate"]');
-                                        if(yzmInput){ 
-                                           var cs=getComputedStyle(yzmInput);
-                                           if(cs.display!=='none' && cs.visibility!=='hidden') yzmVis = true; 
-                                        }
-                                        var yzmSrc = '';
-                                        if(yzmImg && yzmVis){
-                                          var s = yzmImg.getAttribute('src') || '';
-                                          try{ yzmSrc = new URL(s, location.href).href; }catch(e){ yzmSrc = s; }
-                                        }
-                                        var userEl = document.querySelector('#yhm')
-                                          || document.querySelector('input[name="yhm"]')
-                                          || document.querySelector('input[name="username"]')
-                                          || document.querySelector('input[name="user"]')
-                                          || document.querySelector('input[name*="account"]')
-                                          || document.querySelector('input[id*="user"]')
-                                          || document.querySelector('input[id*="account"]')
-                                          || document.querySelector('input[name="xh"]')
-                                          || document.querySelector('input[id*="xh"]');
-                                        var passEl = document.querySelector('#mm')
-                                          || document.querySelector('input[name="mm"]')
-                                          || document.querySelector('input[name*="pwd"]')
-                                          || document.querySelector('input[id*="pwd"]')
-                                          || document.querySelector('input[type="password"]');
-                                        var loginBtn = document.querySelector('#dl')
-                                          || document.querySelector('#login')
-                                          || document.querySelector('button[type="submit"]')
-                                          || document.querySelector('input[type="submit"]')
-                                          || document.querySelector('button[id*="login"]')
-                                          || document.querySelector('button[name*="login"]')
-                                          || document.querySelector('input[id*="login"]')
-                                          || document.querySelector('input[name*="login"]');
-                                        var isLogin = !!document.querySelector('#yhm') || !!document.querySelector('#dl') || (!!passEl && (!!userEl || !!loginBtn));
-                                        var isKebiao = !!document.querySelector('#ylkbTable')
-                                          || !!document.querySelector('#ajaxForm')
-                                          || !!document.querySelector('#kbtable')
-                                          || !!document.querySelector('#kblist')
-                                          || !!document.querySelector('#kblist_table')
-                                          || !!document.querySelector('#kbgrid_table_0');
-                                        var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
-                                        var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
-                                        var hasSelect = !!(y || t);
-                                        var navLink = (function(){
-                                          try{
-                                            var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                                            if(r && r.singleNodeValue){ return r.singleNodeValue; }
-                                          }catch(e){}
-                                          return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
-                                        })();
-                                        var menuLink = Array.from(document.querySelectorAll('a')).find(a=>{
-                                          var href=(a.getAttribute('href')||'').toLowerCase();
-                                          var txt=(a.textContent||'').trim();
-                                          return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
-                                            || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
-                                        });
-                                        var hasMenu = !!(navLink || menuLink);
-                                        var logoutLink = Array.from(document.querySelectorAll('a,button')).find(function(el){
-                                          var txt=(el.textContent||'').trim();
-                                          var href=(el.getAttribute && el.getAttribute('href')||'').toLowerCase();
-                                          return txt.indexOf('退出')>=0 || txt.indexOf('注销')>=0 || href.indexOf('logout')>=0 || href.indexOf('logoff')>=0 || href.indexOf('exit')>=0;
-                                        });
-                                        var loggedIn = !!logoutLink;
-                                        var href = location.href;
-                                        return JSON.stringify({wrong:!!hasWrong, errorMsg:tipTxt, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, hasSelect:hasSelect, hasMenu:hasMenu, loggedIn:loggedIn, href:href});
-                                      }catch(e){ return JSON.stringify({wrong:false,errorMsg:'',yzm:false,yzmSrc:'',isLogin:false,isKebiao:false,href:''}); }
-                                    })();
-                                    """.trimIndent()
+                                    pageStateScript
                                 )
                                 val txt = parseJsReturn(res)
                                 val wrong = txt.contains("\"wrong\":true")
@@ -1779,11 +1655,10 @@ fun QidiAutoSyncScreen(
                                 val autoFillKey = if (pageHref.isNotBlank()) pageHref else addressBar
                                 if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
                                     if (autoFillKey.isNotBlank() && autoFillKey != lastAutoFillUrl) {
-                                        val js = buildAutoFillScript(
-                                            username = creds.username ?: "",
-                                            password = creds.secret,
-                                            clickLogin = !needManualLogin
-                                        )
+                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
+                                            .replace("{{PASSWORD}}", creds.secret)
+                                            .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
                                         wv.evaluateJavascript(js, null)
                                         lastAutoFillUrl = autoFillKey
                                         if (showProgressDialog) {
@@ -1803,28 +1678,7 @@ fun QidiAutoSyncScreen(
                                 }
                                 if (!needManualLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
                                     if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
-                                        val openMenuJs = """
-                                            (function(){
-                                              try{
-                                                var navLink = (function(){
-                                                  try{
-                                                    var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                                                    if(r && r.singleNodeValue){ return r.singleNodeValue; }
-                                                  }catch(e){}
-                                                  return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
-                                                })();
-                                                if(navLink){ navLink.click(); return 'ok'; }
-                                                var link = Array.from(document.querySelectorAll('a')).find(a=>{
-                                                  var href=(a.getAttribute('href')||'').toLowerCase();
-                                                  var txt=(a.textContent||'').trim();
-                                                  return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
-                                                    || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
-                                                });
-                                                if(link){ link.click(); return 'ok'; }
-                                                return 'none';
-                                              }catch(e){ return 'err'; }
-                                            })();
-                                        """.trimIndent()
+                                        val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
                                         wv.evaluateJavascript(openMenuJs, null)
                                         lastZfMenuJumpUrl = pageHref
                                         addLog("尝试打开课表页面", SyncLogType.ACTION)
@@ -1866,11 +1720,10 @@ fun QidiAutoSyncScreen(
                                 val creds = credsForAutoFill
                                 if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
                                     if (addressBar.isNotBlank() && addressBar != lastAutoFillUrl) {
-                                        val js = buildAutoFillScript(
-                                            username = creds.username ?: "",
-                                            password = creds.secret,
-                                            clickLogin = !needManualLogin
-                                        )
+                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
+                                            .replace("{{PASSWORD}}", creds.secret)
+                                            .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
                                         wv.evaluateJavascript(js, null)
                                         lastAutoFillUrl = addressBar
                                         if (showProgressDialog) {
@@ -1878,19 +1731,8 @@ fun QidiAutoSyncScreen(
                                         }
                                     }
                                 }
-                                val res = suspendEvaluateJs(
-                                    wv,
-                                    """
-                                    (function(){
-                                      try{
-                                        var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
-                                        var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
-                                        var hasTable = !!document.querySelector('#kbtable') || !!document.querySelector('#kblist') || !!document.querySelector('#ylkbTable') || !!document.querySelector('#ajaxForm');
-                                        return JSON.stringify({hasSelect:!!(y||t), hasTable:!!hasTable});
-                                      }catch(e){ return JSON.stringify({hasSelect:false, hasTable:false}); }
-                                    })();
-                                    """.trimIndent()
-                                )
+                                val stateJs = viewModel.getScriptContent("zf_check_table_state.js", "js")
+                                val res = suspendEvaluateJs(wv, stateJs)
                                 val txt = parseJsReturn(res)
                                 val hasSelect = txt.contains("\"hasSelect\":true")
                                 val hasTable = txt.contains("\"hasTable\":true")
@@ -2232,62 +2074,6 @@ private fun parseJsReturn(value: String?): String {
     }
 }
 
-/**
- * 生成更健壮的自动填充脚本：
- * - 针对常见字段名：yhm/xh/username/account 等，密码：mm/pwd/password
- * - 触发 input/change/blur 事件
- * - 尝试在同域 iframe 中执行相同逻辑
- */
-private fun buildAutoFillScript(username: String, password: String, clickLogin: Boolean = true): String {
-    val userEsc = username.replace("'", "\\'")
-    val passEsc = password.replace("'", "\\'")
-    return """
-      (function(){
-        try {
-          var U = '$userEsc';
-          var P = '$passEsc';
-          var userEl = document.getElementById('yhm') || document.querySelector('input[name="yhm"]');
-          var passEl = document.getElementById('mm') || document.querySelector('input[name="mm"]');
-          var hidMm = document.getElementById('hidMm') || document.querySelector('input[id*="hidMm"]');
-          var loginBtn = document.getElementById('dl') || document.querySelector('#dl');
-          if (userEl) userEl.value = U;
-          if (passEl) passEl.value = P;
-          if (hidMm) hidMm.value = P;
-          function triggerEvents(el){
-            if (!el) return;
-            try { el.dispatchEvent(new Event('input', {bubbles:true})); } catch(e){}
-            try { el.dispatchEvent(new Event('change', {bubbles:true})); } catch(e){}
-            try { el.dispatchEvent(new Event('blur', {bubbles:true})); } catch(e){}
-          }
-          triggerEvents(userEl);
-          triggerEvents(passEl);
-          triggerEvents(hidMm);
-          var needCaptcha = false;
-          var yzmEl = document.getElementById('yzm') || document.querySelector('input[name="yzm"]');
-          var yzmDiv = document.getElementById('yzmDiv') || document.querySelector('#yzmDiv');
-          if (yzmEl) {
-            var style1 = window.getComputedStyle(yzmEl);
-            if (style1.display !== 'none' && style1.visibility !== 'hidden') needCaptcha = true;
-          }
-          if (yzmDiv) {
-            var style2 = window.getComputedStyle(yzmDiv);
-            if (style2.display !== 'none' && style2.visibility !== 'hidden') needCaptcha = true;
-          }
-          if (needCaptcha || !${clickLogin}) return "filled_no_click";
-          if (loginBtn) {
-            setTimeout(function(){ loginBtn.click(); }, 500);
-            return "clicked";
-          } else {
-            var form = document.querySelector('form');
-            if (form) { form.submit(); return "submitted"; }
-          }
-          return "no_button";
-        } catch(e) {
-          return "error: " + e.message;
-        }
-      })();
-    """.trimIndent()
-}
 
 /**
  * 起迪同步 ViewModel

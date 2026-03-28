@@ -201,6 +201,10 @@ class ImportViewModel @Inject constructor(
             ) 
         }
     }
+    
+    suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
+        return scriptSyncRepository.getScript(scriptName, category)
+    }
 
     /**
      * 更新作息时间节点设置 (上下午、晚上开始时间)

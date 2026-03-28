@@ -14,15 +14,14 @@ import javax.inject.Singleton
 
 @Singleton
 class ScriptSyncRepositoryImpl @Inject constructor(
-    @ApplicationContext private val context: Context,
-    private val okHttpClient: OkHttpClient
+    @ApplicationContext private val context: Context
 ) : ScriptSyncRepository {
 
     // 云端脚本的存储路径
     private val primaryUrl = "http://yyh163.xyz:10000/scripts/"
     private val fallbackUrl = "http://47.105.76.193/scripts/"
 
-    private val client = okHttpClient.newBuilder()
+    private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
         .build()

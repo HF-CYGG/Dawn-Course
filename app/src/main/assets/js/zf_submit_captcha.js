@@ -1,0 +1,2 @@
+// 正方验证码提交：填入验证码并触发登录
+(function(){var input=document.querySelector('#yzm')||document.querySelector('input[name="yzm"]')||document.querySelector('input[id*="yzm"]'); if(input){input.value='{{CAPTCHA_CODE}}'; input.dispatchEvent(new Event('input',{bubbles:true})); input.dispatchEvent(new Event('change',{bubbles:true}));} var b=document.querySelector('#dl')||document.querySelector('button[type="submit"]')||document.querySelector('input[type="submit"]'); if(b){b.click(); return;} var f=(input&&input.form)||document.querySelector('form'); if(f){f.submit();}})();
