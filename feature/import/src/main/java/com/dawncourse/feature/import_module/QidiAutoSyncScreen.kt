@@ -853,7 +853,7 @@ fun QidiAutoSyncScreen(
         val wv = webView ?: return
         pageStatePollingJob?.cancel()
         pageStatePollingJob = scope.launch {
-            repeat(12) {
+            repeat(30) {
                 if (syncStep != SyncStep.Login || needManualLogin) return@launch
                 val res = suspendEvaluateJs(
                     wv,
@@ -869,21 +869,124 @@ fun QidiAutoSyncScreen(
                           || !!document.querySelector('#kblist')
                           || !!document.querySelector('#kblist_table')
                           || !!document.querySelector('#kbgrid_table_0');
-                        return JSON.stringify({hasSelect:hasSelect, hasTable:hasTable});
-                      }catch(e){ return JSON.stringify({hasSelect:false, hasTable:false}); }
+                          
+                        var tips=document.querySelector('#tips');
+                        var tipTxt=tips? (tips.innerText||'') : '';
+                        var hasWrong = tipTxt.indexOf('用户名或密码不正确')>=0 || tipTxt.indexOf('错误')>=0 || tipTxt.indexOf('不存在')>=0;
+                        if(tips && tips.style.display !== 'none' && tipTxt.length > 0) {
+                            hasWrong = true;
+                        }
+                        var bootbox = document.querySelector('.bootbox-body');
+                        if(bootbox && bootbox.innerText.length > 0) {
+                            hasWrong = true;
+                            tipTxt = bootbox.innerText;
+                        }
+                        
+                        var yzmDiv=document.querySelector('#yzmDiv');
+                        var yzmVis=false;
+                        if(yzmDiv){
+                          var cs=getComputedStyle(yzmDiv);
+                          yzmVis = !(cs.display==='none' || cs.visibility==='hidden');
+                        }
+                        var yzmInput = document.querySelector('#yzm') || document.querySelector('input[name="yzm"]') || document.querySelector('input[id*="yzm"]');
+                        if(yzmInput){ 
+                           var cs=getComputedStyle(yzmInput);
+                           if(cs.display!=='none' && cs.visibility!=='hidden') yzmVis = true; 
+                        }
+                        var yzmImg = document.querySelector('#yzmPic') || document.querySelector('img[src*="yzm"]') || document.querySelector('img[src*="captcha"]') || document.querySelector('img[src*="validate"]');
+                        var yzmSrc = '';
+                        if(yzmImg && yzmVis){
+                          var s = yzmImg.getAttribute('src') || '';
+                          try{ yzmSrc = new URL(s, location.href).href; }catch(e){ yzmSrc = s; }
+                        }
+                        
+                        var navLink = (function(){
+                          try{
+                            var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                            if(r && r.singleNodeValue){ return r.singleNodeValue; }
+                          }catch(e){}
+                          return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
+                        })();
+                        var menuLink = Array.from(document.querySelectorAll('a')).find(a=>{
+                          var href=(a.getAttribute('href')||'').toLowerCase();
+                          var txt=(a.textContent||'').trim();
+                          return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
+                            || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
+                        });
+                        var hasMenu = !!(navLink || menuLink);
+
+                        return JSON.stringify({
+                            hasSelect:hasSelect, 
+                            hasTable:hasTable,
+                            wrong:hasWrong,
+                            errorMsg:tipTxt,
+                            yzm:yzmVis,
+                            yzmSrc:yzmSrc,
+                            hasMenu:hasMenu
+                        });
+                      }catch(e){ return JSON.stringify({hasSelect:false, hasTable:false, wrong:false, yzm:false, hasMenu:false}); }
                     })();
                     """.trimIndent()
                 )
                 val txt = parseJsReturn(res)
                 val hasSelect = txt.contains("\"hasSelect\":true")
                 val hasTable = txt.contains("\"hasTable\":true")
+                val wrong = txt.contains("\"wrong\":true")
+                val yzm = txt.contains("\"yzm\":true")
+                val hasMenu = txt.contains("\"hasMenu\":true")
+                
+                if (wrong || yzm) {
+                    needManualLogin = true
+                    val yzmSrcMatch = Regex("\"yzmSrc\":\"(.*?)\"").find(txt)
+                    val yzmSrc = yzmSrcMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
+                    if (yzm && yzmSrc.isNotBlank()) {
+                        captchaUrl = yzmSrc
+                    }
+                    val errorMsgMatch = Regex("\"errorMsg\":\"(.*?)\"").find(txt)
+                    val errorMsg = errorMsgMatch?.groups?.get(1)?.value.orEmpty()
+                    
+                    subTitle = "登录异常，请手动处理${if(errorMsg.isNotBlank()) " ($errorMsg)" else ""}"
+                    if (showProgressDialog) {
+                        currentStep = "需要验证码或手动登录"
+                        addLog("检测到动态错误或验证码", SyncLogType.WARNING)
+                    }
+                    return@launch
+                }
+
                 if (hasSelect || hasTable) {
                     syncStep = SyncStep.SelectTerm
                     subTitle = "已进入课表页面，请选择学年与学期"
                     fetchSelectableOptions()
                     return@launch
                 }
-                kotlinx.coroutines.delay(500)
+                
+                if (hasMenu) {
+                    val openMenuJs = """
+                        (function(){
+                          try{
+                            var navLink = (function(){
+                              try{
+                                var r = document.evaluate('/html/body/div[3]/div/nav/ul/li[3]/ul/li[1]/a', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                                if(r && r.singleNodeValue){ return r.singleNodeValue; }
+                              }catch(e){}
+                              return document.querySelector('body > div:nth-of-type(3) > div > nav > ul > li:nth-child(3) > ul > li:nth-child(1) > a');
+                            })();
+                            if(navLink){ navLink.click(); return 'ok'; }
+                            var link = Array.from(document.querySelectorAll('a')).find(a=>{
+                              var href=(a.getAttribute('href')||'').toLowerCase();
+                              var txt=(a.textContent||'').trim();
+                              return href.indexOf('xskbcx')>=0 || href.indexOf('kbcx')>=0 || href.indexOf('grkb')>=0
+                                || txt.indexOf('个人课表查询')>=0 || txt.indexOf('课表查询')>=0 || txt.indexOf('课表')>=0;
+                            });
+                            if(link){ link.click(); return 'ok'; }
+                            return 'none';
+                          }catch(e){ return 'err'; }
+                        })();
+                    """.trimIndent()
+                    wv.evaluateJavascript(openMenuJs, null)
+                }
+
+                kotlinx.coroutines.delay(1000)
             }
         }
     }
@@ -1719,7 +1822,8 @@ fun QidiAutoSyncScreen(
                                     if (autoFillKey.isNotBlank() && autoFillKey != lastAutoFillUrl) {
                                         val js = buildAutoFillScript(
                                             username = creds.username ?: "",
-                                            password = creds.secret
+                                            password = creds.secret,
+                                            clickLogin = !needManualLogin
                                         )
                                         wv.evaluateJavascript(js, null)
                                         lastAutoFillUrl = autoFillKey
@@ -1784,14 +1888,12 @@ fun QidiAutoSyncScreen(
                                     syncStep = SyncStep.SelectTerm
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
-                                }
-                                if (!isKebiao && hasSelect) {
+                                } else if (!isKebiao && hasSelect) {
                                     needManualLogin = false
                                     syncStep = SyncStep.SelectTerm
                                     subTitle = "已进入课表页面，请选择学年与学期"
                                     fetchSelectableOptions()
-                                }
-                                if (!needManualLogin && !isKebiao && !hasSelect) {
+                                } else if (!needManualLogin && !isKebiao && !hasSelect) {
                                     pollPageStateIfNeeded()
                                 }
                             } catch (e: Throwable) {
@@ -1807,7 +1909,8 @@ fun QidiAutoSyncScreen(
                                     if (addressBar.isNotBlank() && addressBar != lastAutoFillUrl) {
                                         val js = buildAutoFillScript(
                                             username = creds.username ?: "",
-                                            password = creds.secret
+                                            password = creds.secret,
+                                            clickLogin = !needManualLogin
                                         )
                                         wv.evaluateJavascript(js, null)
                                         lastAutoFillUrl = addressBar
@@ -2176,7 +2279,7 @@ private fun parseJsReturn(value: String?): String {
  * - 触发 input/change/blur 事件
  * - 尝试在同域 iframe 中执行相同逻辑
  */
-private fun buildAutoFillScript(username: String, password: String): String {
+private fun buildAutoFillScript(username: String, password: String, clickLogin: Boolean = true): String {
     val userEsc = username.replace("'", "\\'")
     val passEsc = password.replace("'", "\\'")
     return """
@@ -2211,9 +2314,9 @@ private fun buildAutoFillScript(username: String, password: String): String {
             var style2 = window.getComputedStyle(yzmDiv);
             if (style2.display !== 'none' && style2.visibility !== 'hidden') needCaptcha = true;
           }
-          if (needCaptcha) return "need_captcha";
+          if (needCaptcha || !${clickLogin}) return "filled_no_click";
           if (loginBtn) {
-            setTimeout(function(){ loginBtn.click(); }, 100);
+            setTimeout(function(){ loginBtn.click(); }, 500);
             return "clicked";
           } else {
             var form = document.querySelector('form');
