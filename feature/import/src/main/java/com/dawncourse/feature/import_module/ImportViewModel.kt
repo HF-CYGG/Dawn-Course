@@ -8,6 +8,7 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
@@ -117,7 +118,8 @@ class ImportViewModel @Inject constructor(
     private val qiangZhiApiEngine: QiangZhiApiEngine,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val scriptSyncRepository: ScriptSyncRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImportUiState())
@@ -314,19 +316,19 @@ class ImportViewModel @Inject constructor(
                     
                     // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试强智、正方、青果等脚本)
                     if (courses.isEmpty()) {
-                        val parsers = listOf("parsers/qiangzhi.js", "parsers/zhengfang.js", "parsers/kingosoft.js")
+                        val parsers = listOf("qiangzhi.js", "zhengfang.js", "kingosoft.js")
                         // 加载通用工具库
                         val commonUtils = try {
-                            application.assets.open("parsers/common_parser_utils.js").bufferedReader().use { it.readText() }
+                            scriptSyncRepository.getScript("common_parser_utils.js", "parsers")
                         } catch (e: Exception) {
                             "" // 理论上不应发生
                         }
 
-                        for (parserPath in parsers) {
+                        for (parserName in parsers) {
                             hasAnyParserAttempt = true
                             try {
                                 // 加载解析脚本
-                                val script = application.assets.open(parserPath).bufferedReader().use { it.readText() }
+                                val script = scriptSyncRepository.getScript(parserName, "parsers")
                                 // 拼接通用工具库和具体解析脚本
                                 val fullScript = if (commonUtils.isNotEmpty()) {
                                     "$commonUtils\n$script"

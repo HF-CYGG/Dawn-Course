@@ -204,6 +204,16 @@ abstract class RepositoryModule {
     ): WidgetUpdateRepository
 
     /**
+     * 绑定 [ScriptSyncRepository] 接口到 [ScriptSyncRepositoryImpl] 实现
+     * 负责云端脚本的拉取与缓存
+     */
+    @Binds
+    @Singleton
+    abstract fun bindScriptSyncRepository(
+        impl: com.dawncourse.core.data.repository.ScriptSyncRepositoryImpl
+    ): com.dawncourse.core.domain.repository.ScriptSyncRepository
+
+    /**
      * 绑定 [CalendarExportRepository] 接口到 [CalendarExportRepositoryImpl] 实现
      * 负责将日历文件导出到指定 URI
      */
