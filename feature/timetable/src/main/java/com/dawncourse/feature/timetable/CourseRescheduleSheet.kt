@@ -259,6 +259,8 @@ private fun TimeSelectionDialog(
                         selectedDay = uiState.newDay,
                         startNode = uiState.newStartNode,
                         duration = uiState.originalCourse?.duration ?: 2,
+                        // 让节次网格跟随设置中的最大节次，避免显示不一致
+                        maxDailySections = LocalAppSettings.current.maxDailySections,
                         conflictSlots = uiState.conflictInfo.conflictSlots,
                         onSelectionChange = { day, start, _ -> onTimeChange(day, start) },
                         originalDay = uiState.originalCourse?.dayOfWeek ?: -1,

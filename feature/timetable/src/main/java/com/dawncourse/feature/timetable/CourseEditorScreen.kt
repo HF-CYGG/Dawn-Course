@@ -58,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -382,6 +383,9 @@ private fun TimeSection(
     duration: Int,
     onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit
 ) {
+    val settings = LocalAppSettings.current
+    // 使用全局设置的节次数量，避免显示固定 12 节导致选择不一致
+    val maxDailySections = settings.maxDailySections.coerceAtLeast(1)
     EditorSection(title = "上课时间", icon = Icons.Default.Schedule) {
         Column {
             Row(
@@ -422,6 +426,7 @@ private fun TimeSection(
                 selectedDay = selectedDay,
                 startNode = startNode,
                 duration = duration,
+                maxDailySections = maxDailySections,
                 onSelectionChange = onSelectionChange
             )
         }
@@ -594,6 +599,7 @@ fun TimeGridSelector(
     selectedDay: Int,
     startNode: Int,
     duration: Int,
+    maxDailySections: Int,
     conflictSlots: Set<Pair<Int, Int>> = emptySet(),
     onSelectionChange: (day: Int, start: Int, duration: Int) -> Unit,
     originalDay: Int = -1,
@@ -602,14 +608,23 @@ fun TimeGridSelector(
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
+    val safeMaxDailySections = maxDailySections.coerceAtLeast(1)
     val rowHeightPx = with(density) { 32.dp.toPx() } // Increased touch target
     var dragAnchorDay by remember { mutableStateOf<Int?>(null) }
     var dragAnchorNode by remember { mutableStateOf<Int?>(null) }
     var dragAnchorOffsetY by remember { mutableStateOf(0f) }
+    val resolvedStartNode = startNode.coerceIn(1, safeMaxDailySections)
+    val resolvedDuration = duration.coerceIn(1, safeMaxDailySections - resolvedStartNode + 1)
+
+    LaunchedEffect(safeMaxDailySections, startNode, duration, selectedDay) {
+        if (resolvedStartNode != startNode || resolvedDuration != duration) {
+            onSelectionChange(selectedDay, resolvedStartNode, resolvedDuration)
+        }
+    }
 
     // Helper to perform haptic and update
     val updateSelection = { day: Int, start: Int, dur: Int ->
-        if (day != selectedDay || start != startNode || dur != duration) {
+        if (day != selectedDay || start != resolvedStartNode || dur != resolvedDuration) {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             onSelectionChange(day, start, dur)
         }
@@ -641,7 +656,7 @@ fun TimeGridSelector(
         Spacer(modifier = Modifier.height(8.dp))
 
         // Grid
-        for (node in 1..12) {
+        for (node in 1..safeMaxDailySections) {
             Row(
                 modifier = Modifier.height(32.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -654,12 +669,12 @@ fun TimeGridSelector(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
                 for (day in 1..7) {
-                    val isSelected = day == selectedDay && node >= startNode && node < startNode + duration
+                    val isSelected = day == selectedDay && node >= resolvedStartNode && node < resolvedStartNode + resolvedDuration
                     val isConflict = conflictSlots.contains(day to node)
-                    val isOriginalSlot = day == originalDay && node >= originalStartNode && node < originalStartNode + duration
+                    val isOriginalSlot = day == originalDay && node >= originalStartNode && node < originalStartNode + resolvedDuration
                     
-                    val isHead = day == selectedDay && node == startNode
-                    val isTail = day == selectedDay && node == startNode + duration - 1
+                    val isHead = day == selectedDay && node == resolvedStartNode
+                    val isTail = day == selectedDay && node == resolvedStartNode + resolvedDuration - 1
                     
                     // Shape logic for connected cells
                     val shape = when {
@@ -699,19 +714,19 @@ fun TimeGridSelector(
                                         updateSelection(day, node, 1)
                                         return@detectTapGestures
                                     }
-                                    if (duration == 1) {
-                                        if (node > startNode) {
-                                            updateSelection(day, startNode, node - startNode + 1)
+                                    if (resolvedDuration == 1) {
+                                        if (node > resolvedStartNode) {
+                                            updateSelection(day, resolvedStartNode, node - resolvedStartNode + 1)
                                         } else {
                                             updateSelection(day, node, 1)
                                         }
                                         return@detectTapGestures
                                     }
-                                    if (node == startNode) {
+                                    if (node == resolvedStartNode) {
                                         updateSelection(day, node, 1)
-                                    } else if (node > startNode + duration - 1) {
-                                        updateSelection(day, startNode, node - startNode + 1)
-                                    } else if (node < startNode) {
+                                    } else if (node > resolvedStartNode + resolvedDuration - 1) {
+                                        updateSelection(day, resolvedStartNode, node - resolvedStartNode + 1)
+                                    } else if (node < resolvedStartNode) {
                                         updateSelection(day, node, 1)
                                     } else {
                                         updateSelection(day, node, 1)
@@ -730,7 +745,7 @@ fun TimeGridSelector(
                                         val anchorDay = dragAnchorDay ?: day
                                         val anchorNode = dragAnchorNode ?: node
                                         val deltaRows = ((change.position.y - dragAnchorOffsetY) / rowHeightPx).toInt()
-                                        val currentNode = (anchorNode + deltaRows).coerceIn(1, 12)
+                                        val currentNode = (anchorNode + deltaRows).coerceIn(1, safeMaxDailySections)
                                         val start = min(anchorNode, currentNode)
                                         val end = max(anchorNode, currentNode)
                                         updateSelection(anchorDay, start, end - start + 1)
