@@ -663,7 +663,7 @@ fun TimeGridSelector(
                     
                     // Shape logic for connected cells
                     val shape = when {
-                        isHead && isTail -> RoundedCornerShape(8.dp)
+                        isHead && isTail -> CircleShape
                         isHead -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 2.dp, bottomEnd = 2.dp)
                         isTail -> RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp, topStart = 2.dp, topEnd = 2.dp)
                         isSelected -> RoundedCornerShape(2.dp) // Connected middle parts
@@ -695,16 +695,24 @@ fun TimeGridSelector(
                                         Toast.makeText(context, "不能调整为原时间", Toast.LENGTH_SHORT).show()
                                         return@detectTapGestures
                                     }
-                                    if (day == selectedDay) {
-                                        if (node == startNode && duration > 1) {
-                                            updateSelection(day, node, 1)
-                                        } else if (node >= startNode && node < startNode + duration) {
-                                            updateSelection(day, node, 1)
-                                        } else if (node > startNode + duration - 1) {
+                                    if (day != selectedDay) {
+                                        updateSelection(day, node, 1)
+                                        return@detectTapGestures
+                                    }
+                                    if (duration == 1) {
+                                        if (node > startNode) {
                                             updateSelection(day, startNode, node - startNode + 1)
-                                        } else if (node < startNode) {
+                                        } else {
                                             updateSelection(day, node, 1)
                                         }
+                                        return@detectTapGestures
+                                    }
+                                    if (node == startNode) {
+                                        updateSelection(day, node, 1)
+                                    } else if (node > startNode + duration - 1) {
+                                        updateSelection(day, startNode, node - startNode + 1)
+                                    } else if (node < startNode) {
+                                        updateSelection(day, node, 1)
                                     } else {
                                         updateSelection(day, node, 1)
                                     }
@@ -717,7 +725,6 @@ fun TimeGridSelector(
                                         dragAnchorDay = day
                                         dragAnchorNode = node
                                         dragAnchorOffsetY = offset.y
-                                        updateSelection(day, node, 1)
                                     },
                                     onDrag = { change, _ ->
                                         val anchorDay = dragAnchorDay ?: day
