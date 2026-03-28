@@ -354,6 +354,8 @@ fun QidiAutoSyncScreen(
     val autoUpdateSupported = provider == SyncProviderType.ZF
     var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
+    var loginErrorMessage by remember { mutableStateOf("") }
+
     fun addLog(message: String, type: SyncLogType = SyncLogType.INFO) {
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
     }
@@ -1388,7 +1390,21 @@ fun QidiAutoSyncScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             HorizontalDivider()
-                            Text("需要安全验证", style = MaterialTheme.typography.titleSmall)
+                            if (loginErrorMessage.isNotBlank()) {
+                                Text(
+                                    text = loginErrorMessage,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "请确认您绑定的账号密码是否正确。如果绑定错误，请返回设置重新绑定。",
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            } else {
+                                Text("需要安全验证", style = MaterialTheme.typography.titleSmall)
+                            }
                             if (captchaUrl.isNotBlank()) {
                                 CaptchaImage(
                                     url = captchaUrl,
@@ -1705,7 +1721,16 @@ fun QidiAutoSyncScreen(
                                       try{
                                         var tips=document.querySelector('#tips');
                                         var tipTxt=tips? (tips.innerText||'') : '';
-                                        var hasWrong = tipTxt.indexOf('用户名或密码不正确')>=0;
+                                        var hasWrong = tipTxt.indexOf('用户名或密码不正确')>=0 || tipTxt.indexOf('错误')>=0 || tipTxt.indexOf('不存在')>=0;
+                                        if(tips && tips.style.display !== 'none' && tipTxt.length > 0) {
+                                            hasWrong = true;
+                                        }
+                                        var bootbox = document.querySelector('.bootbox-body');
+                                        if(bootbox && bootbox.innerText.length > 0) {
+                                            hasWrong = true;
+                                            tipTxt = bootbox.innerText;
+                                        }
+                                        
                                         var yzmDiv=document.querySelector('#yzmDiv');
                                         var yzmVis=false;
                                         if(yzmDiv){
@@ -1714,9 +1739,12 @@ fun QidiAutoSyncScreen(
                                         }
                                         var yzmInput = document.querySelector('#yzm') || document.querySelector('input[name="yzm"]') || document.querySelector('input[id*="yzm"]');
                                         var yzmImg = document.querySelector('#yzmPic') || document.querySelector('img[src*="yzm"]') || document.querySelector('img[src*="captcha"]') || document.querySelector('img[src*="validate"]');
-                                        if(yzmInput){ yzmVis = true; }
+                                        if(yzmInput){ 
+                                           var cs=getComputedStyle(yzmInput);
+                                           if(cs.display!=='none' && cs.visibility!=='hidden') yzmVis = true; 
+                                        }
                                         var yzmSrc = '';
-                                        if(yzmImg){
+                                        if(yzmImg && yzmVis){
                                           var s = yzmImg.getAttribute('src') || '';
                                           try{ yzmSrc = new URL(s, location.href).href; }catch(e){ yzmSrc = s; }
                                         }
@@ -1773,8 +1801,8 @@ fun QidiAutoSyncScreen(
                                         });
                                         var loggedIn = !!logoutLink;
                                         var href = location.href;
-                                        return JSON.stringify({wrong:!!hasWrong, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, hasSelect:hasSelect, hasMenu:hasMenu, loggedIn:loggedIn, href:href});
-                                      }catch(e){ return JSON.stringify({wrong:false,yzm:false,yzmSrc:'',isLogin:false,isKebiao:false,href:''}); }
+                                        return JSON.stringify({wrong:!!hasWrong, errorMsg:tipTxt, yzm:!!yzmVis, yzmSrc:yzmSrc, isLogin:isLogin, isKebiao:isKebiao, hasSelect:hasSelect, hasMenu:hasMenu, loggedIn:loggedIn, href:href});
+                                      }catch(e){ return JSON.stringify({wrong:false,errorMsg:'',yzm:false,yzmSrc:'',isLogin:false,isKebiao:false,href:''}); }
                                     })();
                                     """.trimIndent()
                                 )
@@ -1788,7 +1816,14 @@ fun QidiAutoSyncScreen(
                                 val loggedIn = txt.contains("\"loggedIn\":true")
                                 val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
                                 val pageHref = hrefMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
+                                
+                                val errorMsgMatch = Regex("\"errorMsg\":\"(.*?)\"").find(txt)
+                                val errorMsg = errorMsgMatch?.groups?.get(1)?.value.orEmpty()
+                                
                                 needManualLogin = wrong || yzm
+                                if (wrong) {
+                                    loginErrorMessage = errorMsg.ifBlank { "账号或密码错误" }
+                                }
                                 val yzmSrcMatch = Regex("\"yzmSrc\":\"(.*?)\"").find(txt)
                                 val yzmSrc = yzmSrcMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
                                 captchaUrl = if (yzm && yzmSrc.isNotBlank()) yzmSrc else ""
@@ -1833,12 +1868,12 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 if (needManualLogin) {
-                                    subTitle = "检测到登录失败或需要验证码，请在页面中手动输入后点击“继续登录/提取”。"
+                                    subTitle = "登录异常：请手动处理${if(loginErrorMessage.isNotBlank()) " ($loginErrorMessage)" else ""}"
                                     if (showProgressDialog) {
                                         currentStep = "需要验证码或手动登录"
-                                        addLog("检测到验证码或登录失败", SyncLogType.WARNING)
+                                        addLog("检测到登录失败或验证码", SyncLogType.WARNING)
                                         if (yzm) addLog("验证码已可见", SyncLogType.ACTION)
-                                        if (wrong) addLog("检测到账号或密码错误提示", SyncLogType.WARNING)
+                                        if (wrong) addLog("错误提示：$loginErrorMessage", SyncLogType.WARNING)
                                         if (captchaUrl.isNotBlank()) addLog("验证码地址已获取", SyncLogType.ACTION)
                                     }
                                 }
