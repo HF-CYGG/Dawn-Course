@@ -14,6 +14,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -115,11 +116,18 @@ class MlKitOcrEngine : OcrEngine {
         val grayscale = toGrayscale(downscaled)
         val contrast = autoContrast(grayscale)
         val denoised = medianDenoise(contrast)
-        val angle = estimateSkewAngle(denoised)
-        return if (abs(angle) >= 0.3f) {
-            rotateBitmap(denoised, -angle)
+        val contrastScore = calculateContrastScore(denoised)
+        val enhanced = if (contrastScore < 40f) {
+            val binary = adaptiveThreshold(denoised)
+            morphClose(binary)
         } else {
-            denoised
+            unsharpMask(denoised)
+        }
+        val angle = estimateSkewAngle(enhanced)
+        return if (abs(angle) >= 0.3f) {
+            rotateBitmap(enhanced, -angle)
+        } else {
+            enhanced
         }
     }
 
@@ -222,6 +230,155 @@ class MlKitOcrEngine : OcrEngine {
         }
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         out.setPixels(dst, 0, width, 0, 0, width, height)
+        return out
+    }
+
+    private fun calculateContrastScore(bitmap: Bitmap): Float {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        var sum = 0f
+        for (p in pixels) {
+            sum += Color.red(p)
+        }
+        val mean = sum / pixels.size
+        var variance = 0f
+        for (p in pixels) {
+            val v = Color.red(p) - mean
+            variance += v * v
+        }
+        val std = kotlin.math.sqrt(variance / pixels.size)
+        return std
+    }
+
+    private fun unsharpMask(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val src = IntArray(width * height)
+        val blur = IntArray(width * height)
+        bitmap.getPixels(src, 0, width, 0, 0, width, height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var acc = 0
+                var count = 0
+                for (dy in -1..1) {
+                    val yy = (y + dy).coerceIn(0, height - 1)
+                    for (dx in -1..1) {
+                        val xx = (x + dx).coerceIn(0, width - 1)
+                        acc += Color.red(src[yy * width + xx])
+                        count++
+                    }
+                }
+                val avg = acc / count
+                blur[y * width + x] = avg
+            }
+        }
+        val outPixels = IntArray(width * height)
+        for (i in src.indices) {
+            val v = Color.red(src[i])
+            val b = blur[i]
+            val nv = (v + (v - b)).coerceIn(0, 255)
+            outPixels[i] = Color.argb(255, nv, nv, nv)
+        }
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        out.setPixels(outPixels, 0, width, 0, 0, width, height)
+        return out
+    }
+
+    private fun adaptiveThreshold(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        val integral = IntArray((width + 1) * (height + 1))
+        for (y in 1..height) {
+            var rowSum = 0
+            val rowOffset = y * (width + 1)
+            val srcOffset = (y - 1) * width
+            for (x in 1..width) {
+                rowSum += Color.red(pixels[srcOffset + x - 1])
+                integral[rowOffset + x] = integral[rowOffset - (width + 1) + x] + rowSum
+            }
+        }
+        val minSide = min(width, height)
+        val window = (minSide / 16).coerceIn(12, 32)
+        val half = window / 2
+        val outPixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val y1 = (y - half).coerceIn(0, height - 1)
+            val y2 = (y + half).coerceIn(0, height - 1)
+            val iy1 = y1
+            val iy2 = y2 + 1
+            for (x in 0 until width) {
+                val x1 = (x - half).coerceIn(0, width - 1)
+                val x2 = (x + half).coerceIn(0, width - 1)
+                val ix1 = x1
+                val ix2 = x2 + 1
+                val area = (ix2 - ix1) * (iy2 - iy1)
+                val sum = integral[iy2 * (width + 1) + ix2] -
+                    integral[iy1 * (width + 1) + ix2] -
+                    integral[iy2 * (width + 1) + ix1] +
+                    integral[iy1 * (width + 1) + ix1]
+                val mean = sum / area
+                val v = Color.red(pixels[y * width + x])
+                val threshold = mean - 10
+                val out = if (v < threshold) 0 else 255
+                outPixels[y * width + x] = Color.argb(255, out, out, out)
+            }
+        }
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        out.setPixels(outPixels, 0, width, 0, 0, width, height)
+        return out
+    }
+
+    private fun morphClose(bitmap: Bitmap): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val src = IntArray(width * height)
+        bitmap.getPixels(src, 0, width, 0, 0, width, height)
+        val dilated = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var hasBlack = false
+                for (dy in -1..1) {
+                    val yy = (y + dy).coerceIn(0, height - 1)
+                    for (dx in -1..1) {
+                        val xx = (x + dx).coerceIn(0, width - 1)
+                        val v = Color.red(src[yy * width + xx])
+                        if (v < 128) {
+                            hasBlack = true
+                            break
+                        }
+                    }
+                    if (hasBlack) break
+                }
+                val out = if (hasBlack) 0 else 255
+                dilated[y * width + x] = Color.argb(255, out, out, out)
+            }
+        }
+        val eroded = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var allBlack = true
+                for (dy in -1..1) {
+                    val yy = (y + dy).coerceIn(0, height - 1)
+                    for (dx in -1..1) {
+                        val xx = (x + dx).coerceIn(0, width - 1)
+                        val v = Color.red(dilated[yy * width + xx])
+                        if (v >= 128) {
+                            allBlack = false
+                            break
+                        }
+                    }
+                    if (!allBlack) break
+                }
+                val out = if (allBlack) 0 else 255
+                eroded[y * width + x] = Color.argb(255, out, out, out)
+            }
+        }
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        out.setPixels(eroded, 0, width, 0, 0, width, height)
         return out
     }
 
