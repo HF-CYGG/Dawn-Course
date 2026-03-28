@@ -91,8 +91,14 @@ class CredentialsRepositoryImpl @Inject constructor(
      * 写入凭据快照
      *
      * 仅在保存时写入，避免在内存中长时间保留明文。
+     * 注意：EncryptedFile.openFileOutput() 不支持覆盖写入，如果文件已存在会抛出 IOException。
+     * 因此在写入前必须先删除旧文件。
      */
     private fun writeSnapshot(snapshot: CredentialsSnapshot) {
+        val file = File(context.filesDir, fileName)
+        if (file.exists()) {
+            file.delete()
+        }
         val json = gson.toJson(snapshot)
         encryptedFile().openFileOutput().use { output ->
             output.write(json.toByteArray())
