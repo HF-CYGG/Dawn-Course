@@ -69,9 +69,7 @@ object WidgetSyncManager {
      * 立即触发一次更新
      */
     fun triggerImmediateUpdate(context: Context) {
-        val request = OneTimeWorkRequestBuilder<WidgetUpdateWorker>()
-            .build()
-        WorkManager.getInstance(context).enqueue(request)
+        updateWidgetNow(context)
     }
 
     fun scheduleNextCourseUpdate(context: Context, triggerAtMillis: Long) {

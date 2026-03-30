@@ -21,7 +21,14 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == "com.dawncourse.widget.FORCE_UPDATE") {
-            WidgetSyncManager.triggerImmediateUpdate(context)
+            val pendingResult = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    DawnWidget().updateAll(context)
+                } finally {
+                    pendingResult.finish()
+                }
+            }
         } else if (intent.action == Intent.ACTION_TIME_CHANGED ||
             intent.action == Intent.ACTION_DATE_CHANGED ||
             intent.action == Intent.ACTION_TIMEZONE_CHANGED) {

@@ -754,12 +754,21 @@ class DawnWidget : GlanceAppWidget() {
     // 兼容不同时间格式（例如 8:00 / 08:00），避免解析失败导致课程一直被视为未结束
     private fun parseSectionTime(value: String): LocalTime? {
         if (value.isBlank()) return null
+        val trimmed = value.trim()
+        val parts = trimmed.split(":")
+        if (parts.size == 2) {
+            val hour = parts[0].toIntOrNull()
+            val minute = parts[1].toIntOrNull()
+            if (hour == 24 && minute != null && minute in 0..59) {
+                return LocalTime.of(23, 59)
+            }
+        }
         val formatters = listOf(
             DateTimeFormatter.ofPattern("H:mm"),
             DateTimeFormatter.ofPattern("HH:mm")
         )
         for (formatter in formatters) {
-            runCatching { return LocalTime.parse(value.trim(), formatter) }
+            runCatching { return LocalTime.parse(trimmed, formatter) }
         }
         return null
     }
