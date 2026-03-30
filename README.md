@@ -123,6 +123,78 @@ DawnCourse/
 
 - [教务系统解析脚本开发指南](parser_contribution_guide.md)
 
+## LLM 兜底解析服务（可选）
+
+当动态脚本解析失败时，可部署 LLM 兜底解析服务提升导入成功率。该服务由 nginx 反代，端口默认 10000。
+
+### 运行方式
+
+```bash
+cd server
+docker-compose up -d --build
+```
+
+### 配置方式（环境变量）
+
+在 `server/docker-compose.yml` 中配置以下环境变量即可切换模型与策略（解析默认复用模型 1）：
+
+- 模型 1（低成本总结 + 解析）
+  - LLM_SUMMARY_PROVIDER / LLM_SUMMARY_API_KEY / LLM_SUMMARY_MODEL / LLM_SUMMARY_BASE_URL
+- 模型 2（高成本脚本修复）
+  - LLM_SCRIPT_PROVIDER / LLM_SCRIPT_API_KEY / LLM_SCRIPT_MODEL / LLM_SCRIPT_BASE_URL
+- 队列策略
+  - MIN_QUEUE_SIZE：触发脚本修复的最小提交数
+  - MERGE_WINDOW_MS：合并窗口（毫秒）
+  - REPROCESS_WINDOW_MS：脚本更新后 24 小时内的二次提交处理窗口
+- Redis（内置）
+  - REDIS_URL：默认 redis://redis:6379
+- 限流与签名
+  - RATE_LIMIT_PER_MIN / RATE_LIMIT_SCHOOL_PER_MIN
+  - SCRIPT_SIGN_KEY：脚本签名密钥（可选）
+
+### 配置示例
+
+**示例 1：DeepSeek（解析 + 总结） + GPT（脚本修复）**
+
+```yaml
+LLM_SUMMARY_PROVIDER: deepseek
+LLM_SUMMARY_API_KEY: "your-deepseek-key"
+LLM_SUMMARY_MODEL: deepseek-chat
+LLM_SCRIPT_PROVIDER: gpt
+LLM_SCRIPT_API_KEY: "your-openai-key"
+LLM_SCRIPT_MODEL: gpt-4o
+```
+
+**示例 2：通义千问（解析 + 总结） + GLM（脚本修复）**
+
+```yaml
+LLM_SUMMARY_PROVIDER: qwen
+LLM_SUMMARY_API_KEY: "your-qwen-key"
+LLM_SUMMARY_MODEL: qwen-plus
+LLM_SCRIPT_PROVIDER: glm
+LLM_SCRIPT_API_KEY: "your-glm-key"
+LLM_SCRIPT_MODEL: glm-4
+```
+
+**示例 3：Gemini（解析 + 总结 + 脚本修复）**
+
+```yaml
+LLM_SUMMARY_PROVIDER: gemini
+LLM_SUMMARY_API_KEY: "your-gemini-key"
+LLM_SUMMARY_MODEL: gemini-1.5-flash
+LLM_SCRIPT_PROVIDER: gemini
+LLM_SCRIPT_API_KEY: "your-gemini-key"
+LLM_SCRIPT_MODEL: gemini-1.5-pro
+```
+
+### 官方文档参考
+
+- DeepSeek API 文档：https://platform.deepseek.com/api-docs
+- 通义千问（DashScope）文档：https://help.aliyun.com/document_detail/2400391.html
+- 智谱 GLM 文档：https://open.bigmodel.cn/dev/api
+- Gemini 文档：https://ai.google.dev/gemini-api/docs
+- OpenAI 文档：https://platform.openai.com/docs
+
 ## 常见问题（FAQ）
 
 - **为什么强调本地优先？**  
