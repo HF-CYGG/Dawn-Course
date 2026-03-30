@@ -26,6 +26,7 @@ import com.dawncourse.feature.import_module.QidiAutoSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
 import com.dawncourse.feature.timetable.notification.PersistentNotificationService
 import android.net.Uri
+import android.widget.Toast
 import com.dawncourse.feature.update.UpdateDialog
 import com.dawncourse.feature.update.UpdateErrorDialog
 import com.dawncourse.feature.update.UpdateUiState
@@ -267,9 +268,13 @@ class MainActivity : ComponentActivity() {
                                         currentSemesterId = currentSemesterId,
                                         onBackClick = { navController.popBackStack() },
                                         onSaveClick = { newCourses ->
-                                            courseEditorViewModel.saveCourses(newCourses) {
-                                                navController.popBackStack()
-                                            }
+                                            courseEditorViewModel.saveCourses(
+                                                courses = newCourses,
+                                                onSaved = { navController.popBackStack() },
+                                                onConflict = { message ->
+                                                    Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+                                                }
+                                            )
                                         }
                                     )
                                 }
