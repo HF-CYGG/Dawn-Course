@@ -1,6 +1,7 @@
 package com.dawncourse.core.data.repository
 
 import android.content.Context
+import com.dawncourse.core.data.BuildConfig
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -8,11 +9,17 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 
 @Singleton
 class ScriptSyncRepositoryImpl @Inject constructor(
@@ -36,6 +43,13 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     private val memoryCache = mutableMapOf<String, MemoryCacheEntry>()
     private val cacheMutex = Mutex()
     private val memoryTtlMillis = TimeUnit.MINUTES.toMillis(5)
+    private val scriptVerifyPublicKey = BuildConfig.SCRIPT_VERIFY_PUBLIC_KEY.trim()
+
+    private data class ScriptMeta(
+        val sha256: String,
+        val signature: String,
+        val alg: String
+    )
 
     override suspend fun getScript(scriptName: String, category: String): String {
         return withContext(Dispatchers.IO) {
@@ -49,14 +63,17 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             }
 
             val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
-            if (!remoteScript.isNullOrBlank()) {
+            val remoteMeta = runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
                 saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
+                saveMetaToLocalCache(safeScriptName, safeCategory, remoteMeta)
                 updateMemoryCache(cacheKey, remoteScript)
                 return@withContext remoteScript
             }
 
             val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
-            if (!cachedScript.isNullOrBlank()) {
+            val cachedMeta = readMetaFromLocalCache(safeScriptName, safeCategory)
+            if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
                 updateMemoryCache(cacheKey, cachedScript)
                 return@withContext cachedScript
             }
@@ -72,14 +89,17 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             val cacheKey = buildCacheKey(safeCategory, safeScriptName)
 
             val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
-            if (!remoteScript.isNullOrBlank()) {
+            val remoteMeta = runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
                 saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
+                saveMetaToLocalCache(safeScriptName, safeCategory, remoteMeta)
                 updateMemoryCache(cacheKey, remoteScript)
                 return@withContext remoteScript
             }
 
             val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
-            if (!cachedScript.isNullOrBlank()) {
+            val cachedMeta = readMetaFromLocalCache(safeScriptName, safeCategory)
+            if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
                 updateMemoryCache(cacheKey, cachedScript)
                 return@withContext cachedScript
             }
@@ -92,6 +112,14 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         var result = tryFetch(primaryUrl + category + "/" + scriptName)
         if (result != null) return result
         result = tryFetch(fallbackUrl + category + "/" + scriptName)
+        return result
+    }
+
+    private fun fetchScriptMetaFromCloud(scriptName: String, category: String): String? {
+        val metaName = buildMetaFileName(scriptName)
+        var result = tryFetch(primaryUrl + category + "/" + metaName)
+        if (result != null) return result
+        result = tryFetch(fallbackUrl + category + "/" + metaName)
         return result
     }
 
@@ -122,6 +150,19 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
+    private fun saveMetaToLocalCache(scriptName: String, category: String, metaRaw: String?) {
+        if (metaRaw.isNullOrBlank()) return
+        try {
+            val dir = File(context.filesDir, "scripts/$category")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            val file = File(dir, buildMetaFileName(scriptName))
+            file.writeText(metaRaw)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun readScriptFromLocalCache(scriptName: String, category: String): String? {
         return try {
             val file = File(context.filesDir, "scripts/$category/$scriptName")
@@ -131,6 +172,19 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 null
             }
         } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun readMetaFromLocalCache(scriptName: String, category: String): String? {
+        return try {
+            val file = File(context.filesDir, "scripts/$category/${buildMetaFileName(scriptName)}")
+            if (file.exists()) {
+                file.readText()
+            } else {
+                null
+            }
+        } catch (_: Exception) {
             null
         }
     }
@@ -146,6 +200,11 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
     private fun buildCacheKey(category: String, scriptName: String): String {
         return "$category/$scriptName"
+    }
+
+    private fun buildMetaFileName(scriptName: String): String {
+        val base = scriptName.removeSuffix(".js")
+        return "$base.meta.json"
     }
 
     private suspend fun updateMemoryCache(cacheKey: String, content: String) {
@@ -165,5 +224,51 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..")) return null
         val isValid = trimmed.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' }
         return if (isValid) trimmed else null
+    }
+
+    private fun verifyScript(content: String, metaRaw: String?, allowUnsigned: Boolean): Boolean {
+        val meta = parseScriptMeta(metaRaw) ?: return allowUnsigned
+        val sha256 = hashSha256(content)
+        if (!sha256.equals(meta.sha256, ignoreCase = true)) return false
+        if (scriptVerifyPublicKey.isBlank()) return true
+        if (meta.signature.isBlank() || meta.alg != "rsa-sha256") return false
+        return verifyRsaSignature(content, meta.signature)
+    }
+
+    private fun parseScriptMeta(raw: String?): ScriptMeta? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            val json = JSONObject(raw)
+            ScriptMeta(
+                sha256 = json.optString("sha256"),
+                signature = json.optString("signature"),
+                alg = json.optString("alg")
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun hashSha256(content: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun verifyRsaSignature(content: String, signature: String): Boolean {
+        return try {
+            val cleanKey = scriptVerifyPublicKey
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replace("\\s".toRegex(), "")
+            val decoded = Base64.getDecoder().decode(cleanKey)
+            val spec = X509EncodedKeySpec(decoded)
+            val publicKey = KeyFactory.getInstance("RSA").generatePublic(spec)
+            val verifier = Signature.getInstance("SHA256withRSA")
+            verifier.initVerify(publicKey)
+            verifier.update(content.toByteArray())
+            verifier.verify(Base64.getDecoder().decode(signature))
+        } catch (_: Exception) {
+            false
+        }
     }
 }

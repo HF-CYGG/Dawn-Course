@@ -150,7 +150,26 @@ docker-compose up -d --build
   - REDIS_URL：默认 redis://redis:6379
 - 限流与签名
   - RATE_LIMIT_PER_MIN / RATE_LIMIT_SCHOOL_PER_MIN
-  - SCRIPT_SIGN_KEY：脚本签名密钥（可选）
+  - SCRIPT_SIGN_KEY：脚本签名密钥（可选，HMAC）
+  - SCRIPT_SIGN_PRIVATE_KEY：脚本签名私钥（可选，RSA）
+- 指标与统计
+  - SCHOOL_METRICS_FILE：学校维度统计输出 TXT 文件路径
+  - METRICS_FLUSH_MS：学校统计写盘间隔（毫秒）
+
+### Prometheus 指标
+
+- 接口：`/metrics`
+- 示例字段：
+  - `dawncourse_parse_success_total`
+  - `dawncourse_school_parse_success_total{schoolId="xxx"}`
+
+### 脚本签名与客户端验签
+
+- 服务端会在脚本写入时生成 `*.meta.json`，包含 `sha256`、`signature`、`alg` 与版本号。
+- 可通过 `/api/v1/script_meta?scriptName=xxx.js` 查询脚本签名元信息。
+- 客户端在拉取脚本时会同时拉取 `*.meta.json`，校验 `sha256` 与签名。
+- RSA 验签公钥需配置在 `core/data/build.gradle.kts`：
+  - `buildConfigField("String", "SCRIPT_VERIFY_PUBLIC_KEY", "\"你的 PEM 公钥\"")`
 
 ### 配置示例
 
