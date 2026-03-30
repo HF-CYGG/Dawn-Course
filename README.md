@@ -163,6 +163,12 @@ docker-compose up -d --build
   - `dawncourse_parse_success_total`
   - `dawncourse_school_parse_success_total{schoolId="xxx"}`
 
+### 监控面板
+
+- 地址：`/admin/`
+- 初始账号与密码：服务端启动时随机生成并打印到日志
+- 登录后可查看学校维度统计、解析成功率、失败记录与费用信息
+
 ### 脚本签名与客户端验签
 
 - 服务端会在脚本写入时生成 `*.meta.json`，包含 `sha256`、`signature`、`alg` 与版本号。

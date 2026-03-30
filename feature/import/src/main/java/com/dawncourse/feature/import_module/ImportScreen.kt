@@ -134,6 +134,74 @@ fun ImportScreen(
     var qiangZhiStudentId by remember { mutableStateOf("") }
     var qiangZhiPassword by remember { mutableStateOf("") }
 
+    // 云端解析上传确认弹窗（必须用户明确同意）
+    if (uiState.showLlmConsentDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelLlmConsent() },
+            title = { Text("确认上传到云端解析") },
+            text = {
+                val previewScroll = rememberScrollState()
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "将把当前页面脱敏后的完整内容上传至云端解析服务。" +
+                            "\n内容长度：${uiState.llmConsentLength} 字符" +
+                            (if (uiState.llmConsentSourceUrl.isNotBlank()) "\n来源：${uiState.llmConsentSourceUrl}" else "") +
+                            "\n请确认已知情并同意后再继续。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 220.dp)
+                            .verticalScroll(previewScroll)
+                            .background(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = if (uiState.llmConsentPreview.isNotBlank()) uiState.llmConsentPreview else "（无预览内容）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.updateLlmConsentChecked(!uiState.llmConsentChecked) }
+                    ) {
+                        Checkbox(
+                            checked = uiState.llmConsentChecked,
+                            onCheckedChange = { viewModel.updateLlmConsentChecked(it) }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "我已知情并同意上传脱敏后的完整内容用于解析",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.confirmLlmConsent() },
+                    enabled = uiState.llmConsentChecked
+                ) {
+                    Text("同意并上传")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelLlmConsent() }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
     // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->

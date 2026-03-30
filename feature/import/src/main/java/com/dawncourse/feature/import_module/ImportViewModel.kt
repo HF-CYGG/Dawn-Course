@@ -69,6 +69,11 @@ enum class ImportStep {
  * @property sectionTimes 生成的或用户修改的具体作息时间表
  * @property resultText 解析结果或错误提示文本
  * @property isLoading 是否正在进行耗时操作 (加载网页、执行解析)
+ * @property showLlmConsentDialog 是否展示云端解析上传确认弹窗
+ * @property llmConsentPreview 将上传内容的预览文本
+ * @property llmConsentLength 将上传内容的总长度
+ * @property llmConsentChecked 用户是否勾选“已知情并同意”
+ * @property llmConsentSourceUrl 本次上传对应的网页来源
  */
 data class ImportUiState(
     val step: ImportStep = ImportStep.Input,
@@ -97,7 +102,12 @@ data class ImportUiState(
     val sectionTimes: List<SectionTime> = emptyList(),
 
     val resultText: String = "",
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val showLlmConsentDialog: Boolean = false,
+    val llmConsentPreview: String = "",
+    val llmConsentLength: Int = 0,
+    val llmConsentChecked: Boolean = false,
+    val llmConsentSourceUrl: String = ""
 )
 
 sealed interface ImportEvent {
@@ -131,6 +141,9 @@ class ImportViewModel @Inject constructor(
 
     private val _events = MutableSharedFlow<ImportEvent>()
     val events = _events.asSharedFlow()
+
+    // 用户确认前暂存云端解析的完整内容，避免在 UI 状态中存放大文本
+    private var pendingLlmContent: String = ""
     
     init {
         // 初始化学期开始日期为本周一 (符合大多数导入场景)
@@ -158,7 +171,12 @@ class ImportViewModel @Inject constructor(
                 parsedCourses = emptyList(),
                 htmlContent = "",
                 resultText = "",
-                isLoading = false
+                isLoading = false,
+                showLlmConsentDialog = false,
+                llmConsentPreview = "",
+                llmConsentLength = 0,
+                llmConsentChecked = false,
+                llmConsentSourceUrl = ""
             )
         }
     }
@@ -395,25 +413,8 @@ class ImportViewModel @Inject constructor(
                     }
                 }
             } catch (_: ScriptEngine.ScriptExecutionException) {
-                val llmParsed = withContext(Dispatchers.IO) { tryLlmFallback(raw) }
-                if (llmParsed.isNotEmpty()) {
-                    val lastUrl = _uiState.value.webUrl
-                    if (lastUrl.isNotBlank()) {
-                        settingsRepository.setLastImportUrl(lastUrl)
-                    }
-                    val maxSection = llmParsed.maxOfOrNull { it.endSection } ?: 12
-                    val safeMaxSection = maxSection.coerceAtLeast(4)
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            parsedCourses = llmParsed,
-                            step = ImportStep.Review,
-                            detectedMaxSection = safeMaxSection,
-                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                            resultText = "已启用云端解析兜底，成功解析 ${llmParsed.size} 个课程段"
-                        )
-                    }
-                } else {
+                val hasConsent = requestLlmConsent(raw)
+                if (!hasConsent) {
                     // 给出明确但不泄露敏感信息的提示，并保持“可重试”：
                     // - 不显示底层异常 message（可能包含页面片段/请求信息）
                     // - 用户可直接重新导入，或切换为“文件导入”等方式
@@ -441,10 +442,13 @@ class ImportViewModel @Inject constructor(
      *
      * 仅在解析器运行失败时触发，避免影响主链路。
      */
-    private suspend fun tryLlmFallback(raw: String): List<ParsedCourse> {
-        val sanitized = sanitizeHtmlForLlm(raw)
-        if (sanitized.isBlank()) return emptyList()
-        val submitResult = submitLlmParseTaskUseCase(sanitized)
+    private suspend fun tryLlmFallback(content: String): List<ParsedCourse> {
+        if (content.isBlank()) return emptyList()
+        val submitResult = submitLlmParseTaskUseCase(
+            content = content,
+            consent = true,
+            consentAt = System.currentTimeMillis()
+        )
         val taskId = submitResult.taskId
         if (!submitResult.success || taskId.isNullOrBlank()) return emptyList()
         val maxAttempts = 10
@@ -470,12 +474,104 @@ class ImportViewModel @Inject constructor(
     }
 
     /**
+     * 请求用户确认云端解析上传
+     *
+     * 若内容为空则返回 false，表示无需弹窗。
+     */
+    private fun requestLlmConsent(raw: String): Boolean {
+        val sanitized = sanitizeHtmlForLlm(raw)
+        if (sanitized.isBlank()) return false
+        pendingLlmContent = sanitized
+        val preview = sanitized.take(1200)
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                showLlmConsentDialog = true,
+                llmConsentPreview = preview,
+                llmConsentLength = sanitized.length,
+                llmConsentChecked = false,
+                llmConsentSourceUrl = it.webUrl
+            )
+        }
+        return true
+    }
+
+    /**
+     * 更新用户是否勾选了“已知情并同意”
+     */
+    fun updateLlmConsentChecked(checked: Boolean) {
+        _uiState.update { it.copy(llmConsentChecked = checked) }
+    }
+
+    /**
+     * 用户确认云端解析上传后执行解析
+     */
+    fun confirmLlmConsent() {
+        val content = pendingLlmContent
+        if (content.isBlank()) {
+            _uiState.update { it.copy(showLlmConsentDialog = false, llmConsentChecked = false) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    showLlmConsentDialog = false,
+                    llmConsentChecked = false,
+                    isLoading = true,
+                    resultText = "已获得授权，正在进行云端解析..."
+                )
+            }
+            val parsed = withContext(Dispatchers.IO) { tryLlmFallback(content) }
+            pendingLlmContent = ""
+            if (parsed.isNotEmpty()) {
+                val lastUrl = _uiState.value.webUrl
+                if (lastUrl.isNotBlank()) {
+                    settingsRepository.setLastImportUrl(lastUrl)
+                }
+                val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
+                val safeMaxSection = maxSection.coerceAtLeast(4)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        parsedCourses = parsed,
+                        step = ImportStep.Review,
+                        detectedMaxSection = safeMaxSection,
+                        sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
+                        resultText = "已启用云端解析兜底，成功解析 ${parsed.size} 个课程段"
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        resultText = "云端解析失败：请确认页面数据完整或稍后重试。"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 用户取消云端解析上传
+     */
+    fun cancelLlmConsent() {
+        pendingLlmContent = ""
+        _uiState.update {
+            it.copy(
+                showLlmConsentDialog = false,
+                llmConsentChecked = false,
+                resultText = "已取消云端解析上传，可继续尝试其他导入方式。"
+            )
+        }
+    }
+
+    /**
      * 对 HTML/文本进行隐私脱敏
      *
      * 规则：
      * 1. 替换学号、姓名、手机号、身份证、邮箱等字段
      * 2. 优先抽取纯文本以减少隐私暴露范围
-     * 3. 限制最大长度，避免超大文本上传
+     * 3. 不截断内容，确保用户同意后可完整上传
      */
     private fun sanitizeHtmlForLlm(raw: String): String {
         val baseText = if (raw.contains("<")) {
@@ -489,9 +585,6 @@ class ImportViewModel @Inject constructor(
         text = text.replace(Regex("\\b\\d{17}[0-9Xx]\\b"), "******************")
         text = text.replace(Regex("\\b1[3-9]\\d{9}\\b"), "***********")
         text = text.replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "***@***")
-        if (text.length > 200000) {
-            text = text.take(200000)
-        }
         return text
     }
 
