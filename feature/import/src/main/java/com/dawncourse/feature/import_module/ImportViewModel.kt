@@ -9,6 +9,8 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
+import com.dawncourse.core.domain.usecase.FetchLlmParseStatusUseCase
+import com.dawncourse.core.domain.usecase.SubmitLlmParseTaskUseCase
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
@@ -119,7 +121,9 @@ class ImportViewModel @Inject constructor(
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
     private val settingsRepository: SettingsRepository,
-    private val scriptSyncRepository: ScriptSyncRepository
+    private val scriptSyncRepository: ScriptSyncRepository,
+    private val submitLlmParseTaskUseCase: SubmitLlmParseTaskUseCase,
+    private val fetchLlmParseStatusUseCase: FetchLlmParseStatusUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImportUiState())
@@ -391,14 +395,34 @@ class ImportViewModel @Inject constructor(
                     }
                 }
             } catch (_: ScriptEngine.ScriptExecutionException) {
-                // 给出明确但不泄露敏感信息的提示，并保持“可重试”：
-                // - 不显示底层异常 message（可能包含页面片段/请求信息）
-                // - 用户可直接重新导入，或切换为“文件导入”等方式
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，可尝试文件导入或更换导入方式。"
-                    )
+                val llmParsed = withContext(Dispatchers.IO) { tryLlmFallback(raw) }
+                if (llmParsed.isNotEmpty()) {
+                    val lastUrl = _uiState.value.webUrl
+                    if (lastUrl.isNotBlank()) {
+                        settingsRepository.setLastImportUrl(lastUrl)
+                    }
+                    val maxSection = llmParsed.maxOfOrNull { it.endSection } ?: 12
+                    val safeMaxSection = maxSection.coerceAtLeast(4)
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsedCourses = llmParsed,
+                            step = ImportStep.Review,
+                            detectedMaxSection = safeMaxSection,
+                            sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
+                            resultText = "已启用云端解析兜底，成功解析 ${llmParsed.size} 个课程段"
+                        )
+                    }
+                } else {
+                    // 给出明确但不泄露敏感信息的提示，并保持“可重试”：
+                    // - 不显示底层异常 message（可能包含页面片段/请求信息）
+                    // - 用户可直接重新导入，或切换为“文件导入”等方式
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，可尝试文件导入或更换导入方式。"
+                        )
+                    }
                 }
             } catch (_: Throwable) {
                 // 兜底：避免把异常细节直接展示给用户
@@ -410,6 +434,65 @@ class ImportViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * LLM 异步兜底解析入口
+     *
+     * 仅在解析器运行失败时触发，避免影响主链路。
+     */
+    private suspend fun tryLlmFallback(raw: String): List<ParsedCourse> {
+        val sanitized = sanitizeHtmlForLlm(raw)
+        if (sanitized.isBlank()) return emptyList()
+        val submitResult = submitLlmParseTaskUseCase(sanitized)
+        val taskId = submitResult.taskId
+        if (!submitResult.success || taskId.isNullOrBlank()) return emptyList()
+        val maxAttempts = 10
+        repeat(maxAttempts) { attempt ->
+            val statusResult = fetchLlmParseStatusUseCase(taskId)
+            if (!statusResult.success) return emptyList()
+            when (statusResult.status) {
+                com.dawncourse.core.domain.model.LlmParseStatus.SUCCESS -> {
+                    val jsonResult = statusResult.resultText.orEmpty()
+                    return parseParsedCoursesFromRaw(jsonResult)
+                }
+                com.dawncourse.core.domain.model.LlmParseStatus.FAILED -> {
+                    return emptyList()
+                }
+                com.dawncourse.core.domain.model.LlmParseStatus.PROCESSING -> {
+                    if (attempt < maxAttempts - 1) {
+                        kotlinx.coroutines.delay(3000)
+                    }
+                }
+            }
+        }
+        return emptyList()
+    }
+
+    /**
+     * 对 HTML/文本进行隐私脱敏
+     *
+     * 规则：
+     * 1. 替换学号、姓名、手机号、身份证、邮箱等字段
+     * 2. 优先抽取纯文本以减少隐私暴露范围
+     * 3. 限制最大长度，避免超大文本上传
+     */
+    private fun sanitizeHtmlForLlm(raw: String): String {
+        val baseText = if (raw.contains("<")) {
+            Jsoup.parse(raw).text()
+        } else {
+            raw
+        }
+        var text = baseText
+        text = text.replace(Regex("(?i)(学号|学籍号|账号|用户名|用户号)\\s*[:：]?\\s*\\w{4,}"), "\$1:***")
+        text = text.replace(Regex("(?i)(姓名)\\s*[:：]?\\s*[\\u4e00-\\u9fa5A-Za-z·\\s]{2,}"), "\$1:***")
+        text = text.replace(Regex("\\b\\d{17}[0-9Xx]\\b"), "******************")
+        text = text.replace(Regex("\\b1[3-9]\\d{9}\\b"), "***********")
+        text = text.replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "***@***")
+        if (text.length > 200000) {
+            text = text.take(200000)
+        }
+        return text
     }
 
     /**

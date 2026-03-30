@@ -7,6 +7,7 @@ import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.LocalBackupRepositoryImpl
+import com.dawncourse.core.data.repository.LlmParseRepositoryImpl
 import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
 import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
@@ -17,6 +18,7 @@ import com.dawncourse.core.data.repository.CalendarExportRepositoryImpl
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.LocalBackupRepository
+import com.dawncourse.core.domain.repository.LlmParseRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
@@ -212,6 +214,16 @@ abstract class RepositoryModule {
     abstract fun bindScriptSyncRepository(
         impl: com.dawncourse.core.data.repository.ScriptSyncRepositoryImpl
     ): com.dawncourse.core.domain.repository.ScriptSyncRepository
+
+    /**
+     * 绑定 [LlmParseRepository] 接口到 [LlmParseRepositoryImpl] 实现
+     * 负责 LLM 异步解析任务的提交与状态查询
+     */
+    @Binds
+    @Singleton
+    abstract fun bindLlmParseRepository(
+        impl: LlmParseRepositoryImpl
+    ): LlmParseRepository
 
     /**
      * 绑定 [CalendarExportRepository] 接口到 [CalendarExportRepositoryImpl] 实现
