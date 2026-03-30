@@ -11,6 +11,8 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class ScriptSyncRepositoryImpl @Inject constructor(
@@ -26,36 +28,69 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         .readTimeout(5, TimeUnit.SECONDS)
         .build()
 
+    private data class MemoryCacheEntry(
+        val content: String,
+        val fetchedAt: Long
+    )
+
+    private val memoryCache = mutableMapOf<String, MemoryCacheEntry>()
+    private val cacheMutex = Mutex()
+    private val memoryTtlMillis = TimeUnit.MINUTES.toMillis(5)
+
     override suspend fun getScript(scriptName: String, category: String): String {
         return withContext(Dispatchers.IO) {
-            // 1. 优先尝试从云端拉取最新脚本
-            val remoteScript = runCatching { fetchScriptFromCloud(scriptName, category) }.getOrNull()
+            val safeCategory = normalizePathSegment(category) ?: return@withContext ""
+            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext ""
+            val cacheKey = buildCacheKey(safeCategory, safeScriptName)
+
+            val cached = cacheMutex.withLock { memoryCache[cacheKey] }
+            if (cached != null && isMemoryCacheValid(cached.fetchedAt)) {
+                return@withContext cached.content
+            }
+
+            val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
             if (!remoteScript.isNullOrBlank()) {
-                saveScriptToLocalCache(scriptName, category, remoteScript)
+                saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
+                updateMemoryCache(cacheKey, remoteScript)
                 return@withContext remoteScript
             }
 
-            // 2. 云端拉取失败，尝试读取本地缓存
-            val cachedScript = readScriptFromLocalCache(scriptName, category)
+            val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
             if (!cachedScript.isNullOrBlank()) {
+                updateMemoryCache(cacheKey, cachedScript)
                 return@withContext cachedScript
             }
 
-            // 3. 本地缓存也没有，读取 app 内置的 assets
-            readScriptFromAssets(scriptName, category)
+            readScriptFromAssets(safeScriptName, safeCategory)
         }
     }
 
     override suspend fun fetchAndCacheScript(scriptName: String, category: String): String {
-        return getScript(scriptName, category)
+        return withContext(Dispatchers.IO) {
+            val safeCategory = normalizePathSegment(category) ?: return@withContext ""
+            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext ""
+            val cacheKey = buildCacheKey(safeCategory, safeScriptName)
+
+            val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            if (!remoteScript.isNullOrBlank()) {
+                saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
+                updateMemoryCache(cacheKey, remoteScript)
+                return@withContext remoteScript
+            }
+
+            val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
+            if (!cachedScript.isNullOrBlank()) {
+                updateMemoryCache(cacheKey, cachedScript)
+                return@withContext cachedScript
+            }
+
+            readScriptFromAssets(safeScriptName, safeCategory)
+        }
     }
 
     private fun fetchScriptFromCloud(scriptName: String, category: String): String? {
-        // 先尝试主服务器
         var result = tryFetch(primaryUrl + category + "/" + scriptName)
         if (result != null) return result
-
-        // 失败则尝试备用服务器
         result = tryFetch(fallbackUrl + category + "/" + scriptName)
         return result
     }
@@ -107,5 +142,28 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             ""
         }
+    }
+
+    private fun buildCacheKey(category: String, scriptName: String): String {
+        return "$category/$scriptName"
+    }
+
+    private suspend fun updateMemoryCache(cacheKey: String, content: String) {
+        cacheMutex.withLock {
+            memoryCache[cacheKey] = MemoryCacheEntry(content, System.currentTimeMillis())
+        }
+    }
+
+    private fun isMemoryCacheValid(fetchedAt: Long): Boolean {
+        val now = System.currentTimeMillis()
+        return now - fetchedAt <= memoryTtlMillis
+    }
+
+    private fun normalizePathSegment(value: String): String? {
+        if (value.isBlank()) return null
+        val trimmed = value.trim()
+        if (trimmed.contains("/") || trimmed.contains("\\") || trimmed.contains("..")) return null
+        val isValid = trimmed.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '.' }
+        return if (isValid) trimmed else null
     }
 }
