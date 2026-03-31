@@ -27,7 +27,7 @@ import com.dawncourse.feature.import_module.model.ParsedCourse
 @Composable
 fun OcrDebugScreen(
     originalBitmap: Bitmap,
-    processedBitmap: Bitmap,
+    processedBitmap: Bitmap?,
     textBlocks: List<TextBlock>,
     gridCells: List<GridCell>,
     parsedCourses: List<ParsedCourse>,
@@ -73,14 +73,27 @@ fun OcrDebugScreen(
                 OcrDebugSection(
                     title = "处理后图像",
                     content = {
-                        Image(
-                            bitmap = processedBitmap.asImageBitmap(),
-                            contentDescription = "处理后图像",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(300.dp)
-                                .padding(16.dp)
-                        )
+                        if (processedBitmap != null) {
+                            Image(
+                                bitmap = processedBitmap.asImageBitmap(),
+                                contentDescription = "处理后图像",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(300.dp)
+                                    .padding(16.dp)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(300.dp)
+                                    .padding(16.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("处理后图像不可用")
+                            }
+                        }
                     }
                 )
             }
