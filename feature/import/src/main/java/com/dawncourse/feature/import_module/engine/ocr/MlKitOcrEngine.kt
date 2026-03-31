@@ -30,6 +30,8 @@ class MlKitOcrEngine : OcrEngine {
         TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
     }
 
+    private var processedBitmap: Bitmap? = null
+
     override suspend fun initialize() {
         // ML Kit 内部在首次调用时会自动初始化模型
         // 此处可以留空，或进行简单的预热
@@ -48,8 +50,13 @@ class MlKitOcrEngine : OcrEngine {
                 bitmap
             }
             val preprocessed = preprocessBitmap(safeBitmap)
+            processedBitmap = preprocessed
             extractTextFromChunk(preprocessed)
         }
+    }
+
+    fun getProcessedBitmap(): Bitmap? {
+        return processedBitmap
     }
 
     /**
@@ -239,8 +246,13 @@ class MlKitOcrEngine : OcrEngine {
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         var sum = 0f
+        var minValue = 255f
+        var maxValue = 0f
         for (p in pixels) {
-            sum += Color.red(p)
+            val v = Color.red(p).toFloat()
+            sum += v
+            minValue = min(minValue, v)
+            maxValue = max(maxValue, v)
         }
         val mean = sum / pixels.size
         var variance = 0f
@@ -249,7 +261,9 @@ class MlKitOcrEngine : OcrEngine {
             variance += v * v
         }
         val std = kotlin.math.sqrt(variance / pixels.size)
-        return std
+        // 综合考虑标准差和动态范围
+        val dynamicRange = maxValue - minValue
+        return std * 0.7f + dynamicRange * 0.3f
     }
 
     private fun unsharpMask(bitmap: Bitmap): Bitmap {
@@ -302,7 +316,7 @@ class MlKitOcrEngine : OcrEngine {
             }
         }
         val minSide = min(width, height)
-        val window = (minSide / 16).coerceIn(12, 32)
+        val window = (minSide / 16).coerceIn(16, 40)
         val half = window / 2
         val outPixels = IntArray(width * height)
         for (y in 0 until height) {
@@ -322,7 +336,8 @@ class MlKitOcrEngine : OcrEngine {
                     integral[iy1 * (width + 1) + ix1]
                 val mean = sum / area
                 val v = Color.red(pixels[y * width + x])
-                val threshold = mean - 10
+                // 动态调整阈值，根据局部对比度
+                val threshold = mean - 15
                 val out = if (v < threshold) 0 else 255
                 outPixels[y * width + x] = Color.argb(255, out, out, out)
             }
@@ -337,10 +352,13 @@ class MlKitOcrEngine : OcrEngine {
         val height = bitmap.height
         val src = IntArray(width * height)
         bitmap.getPixels(src, 0, width, 0, 0, width, height)
+        
+        // 膨胀操作
         val dilated = IntArray(width * height)
         for (y in 0 until height) {
             for (x in 0 until width) {
                 var hasBlack = false
+                // 3x3 结构元素
                 for (dy in -1..1) {
                     val yy = (y + dy).coerceIn(0, height - 1)
                     for (dx in -1..1) {
@@ -357,10 +375,13 @@ class MlKitOcrEngine : OcrEngine {
                 dilated[y * width + x] = Color.argb(255, out, out, out)
             }
         }
+        
+        // 腐蚀操作
         val eroded = IntArray(width * height)
         for (y in 0 until height) {
             for (x in 0 until width) {
                 var allBlack = true
+                // 3x3 结构元素
                 for (dy in -1..1) {
                     val yy = (y + dy).coerceIn(0, height - 1)
                     for (dx in -1..1) {
@@ -377,8 +398,31 @@ class MlKitOcrEngine : OcrEngine {
                 eroded[y * width + x] = Color.argb(255, out, out, out)
             }
         }
+        
+        // 再次膨胀以增强文字连接
+        val final = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                var hasBlack = false
+                for (dy in -1..0) {
+                    val yy = (y + dy).coerceIn(0, height - 1)
+                    for (dx in -1..1) {
+                        val xx = (x + dx).coerceIn(0, width - 1)
+                        val v = Color.red(eroded[yy * width + xx])
+                        if (v < 128) {
+                            hasBlack = true
+                            break
+                        }
+                    }
+                    if (hasBlack) break
+                }
+                val out = if (hasBlack) 0 else 255
+                final[y * width + x] = Color.argb(255, out, out, out)
+            }
+        }
+        
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        out.setPixels(eroded, 0, width, 0, 0, width, height)
+        out.setPixels(final, 0, width, 0, 0, width, height)
         return out
     }
 

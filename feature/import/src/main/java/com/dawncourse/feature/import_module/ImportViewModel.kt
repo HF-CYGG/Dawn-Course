@@ -102,7 +102,11 @@ data class ImportUiState(
 
     // OCR 专有状态
     val ocrSourceBitmap: Bitmap? = null,
+    val ocrProcessedBitmap: Bitmap? = null,
+    val ocrTextBlocks: List<com.dawncourse.feature.import_module.engine.ocr.TextBlock> = emptyList(),
+    val ocrGridCells: List<com.dawncourse.feature.import_module.engine.ocr.GridCell> = emptyList(),
     val ocrLoadingProgress: Int = 0, // 用于下载进度 (0-100)
+    val showOcrDebug: Boolean = false,
 
     val resultText: String = "",
     val isLoading: Boolean = false
@@ -170,6 +174,24 @@ class ImportViewModel @Inject constructor(
 
     fun updateOcrSourceBitmap(bitmap: Bitmap) {
         _uiState.update { it.copy(ocrSourceBitmap = bitmap, step = ImportStep.OcrCrop) }
+    }
+
+    fun updateOcrDebugState(
+        processedBitmap: Bitmap? = null,
+        textBlocks: List<com.dawncourse.feature.import_module.engine.ocr.TextBlock> = emptyList(),
+        gridCells: List<com.dawncourse.feature.import_module.engine.ocr.GridCell> = emptyList()
+    ) {
+        _uiState.update {
+            it.copy(
+                ocrProcessedBitmap = processedBitmap,
+                ocrTextBlocks = textBlocks,
+                ocrGridCells = gridCells
+            )
+        }
+    }
+
+    fun toggleOcrDebug() {
+        _uiState.update { it.copy(showOcrDebug = !it.showOcrDebug) }
     }
 
     fun updateWebUrl(url: String) {
@@ -630,7 +652,16 @@ class ImportViewModel @Inject constructor(
                         // 4. 语义解析
                         _uiState.update { it.copy(resultText = "正在解析课程语义...") }
                         val courseParser = CourseParser()
-                        courseParser.parse(gridCells)
+                        val courses = courseParser.parse(gridCells)
+                        
+                        // 更新 OCR 调试状态
+                        updateOcrDebugState(
+                            processedBitmap = ocrEngine.getProcessedBitmap(),
+                            textBlocks = textBlocks,
+                            gridCells = gridCells
+                        )
+                        
+                        courses
                     } finally {
                         ocrEngine.release()
                     }

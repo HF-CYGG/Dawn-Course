@@ -196,7 +196,7 @@ class GridAnalyzer {
      */
     private fun mergeColumnCenters(rawCenters: List<Int>, contentWidth: Int): List<Int> {
         if (rawCenters.isEmpty()) return emptyList()
-        val mergeThreshold = (contentWidth * 0.06f).roundToInt().coerceAtLeast(12)
+        val mergeThreshold = (contentWidth * 0.08f).roundToInt().coerceAtLeast(15)
         val groups = mutableListOf<MutableList<Int>>()
         for (center in rawCenters) {
             if (groups.isEmpty()) {
@@ -228,6 +228,11 @@ class GridAnalyzer {
             val mergedValue = ((merged[minIndex] + merged[minIndex + 1]) / 2f).roundToInt()
             merged[minIndex] = mergedValue
             merged.removeAt(minIndex + 1)
+        }
+        
+        // 确保至少有 5 列
+        if (merged.size < 5) {
+            return emptyList()
         }
 
         return merged
@@ -324,13 +329,18 @@ class GridAnalyzer {
         var bestIndex = -1
         var bestScore = 0f
         val width = box.width.coerceAtLeast(1)
+        val centerX = box.centerX
         for (i in bounds.indices) {
             val bound = bounds[i]
             val overlapX = max(0, min(box.right, bound.end) - max(box.left, bound.start))
             val overlapRatioX = overlapX.toFloat() / width
-            if (overlapRatioX < 0.3f) continue
-            if (overlapRatioX > bestScore || (overlapRatioX == bestScore && bestIndex >= 0 && i < bestIndex)) {
-                bestScore = overlapRatioX
+            // 结合重叠比例和中心点距离计算综合分数
+            val centerDistance = abs(centerX - (bound.start + bound.end) / 2)
+            val distanceScore = 1.0f - min(centerDistance.toFloat() / (bound.end - bound.start), 1.0f)
+            val totalScore = overlapRatioX * 0.7f + distanceScore * 0.3f
+            if (totalScore < 0.4f) continue
+            if (totalScore > bestScore || (totalScore == bestScore && bestIndex >= 0 && i < bestIndex)) {
+                bestScore = totalScore
                 bestIndex = i
             }
         }
@@ -342,13 +352,18 @@ class GridAnalyzer {
         var bestIndex = -1
         var bestScore = 0f
         val height = box.height.coerceAtLeast(1)
+        val centerY = box.centerY
         for (i in bounds.indices) {
             val bound = bounds[i]
             val overlapY = max(0, min(box.bottom, bound.end) - max(box.top, bound.start))
             val overlapRatioY = overlapY.toFloat() / height
-            if (overlapRatioY < 0.3f) continue
-            if (overlapRatioY > bestScore || (overlapRatioY == bestScore && bestIndex >= 0 && i < bestIndex)) {
-                bestScore = overlapRatioY
+            // 结合重叠比例和中心点距离计算综合分数
+            val centerDistance = abs(centerY - (bound.start + bound.end) / 2)
+            val distanceScore = 1.0f - min(centerDistance.toFloat() / (bound.end - bound.start), 1.0f)
+            val totalScore = overlapRatioY * 0.7f + distanceScore * 0.3f
+            if (totalScore < 0.4f) continue
+            if (totalScore > bestScore || (totalScore == bestScore && bestIndex >= 0 && i < bestIndex)) {
+                bestScore = totalScore
                 bestIndex = i
             }
         }
@@ -365,7 +380,11 @@ class GridAnalyzer {
         if (text.isBlank()) return false
         return dayHeaderRegex.matches(text) ||
             dateHeaderRegex.matches(text) ||
-            ((text.contains("周") || text.contains("星期")) && dayRegex.containsMatchIn(text))
+            ((text.contains("周") || text.contains("星期")) && dayRegex.containsMatchIn(text)) ||
+            // 支持更多表头格式
+            text.matches(Regex("^[一二三四五六日天][一二三四五六日天]?$")) ||
+            text.matches(Regex("^周[一二三四五六日天]$")) ||
+            text.matches(Regex("^星期[一二三四五六日天]$"))
     }
 
     private data class HeaderRow(val blocks: List<TextBlock>, val bottom: Int)
@@ -380,7 +399,7 @@ class GridAnalyzer {
         val filtered = candidates.filter { it.boundingBox.centerY <= topLimit }
         if (filtered.isEmpty()) return null
         val heightAverage = filtered.map { it.boundingBox.height }.average().toFloat().coerceAtLeast(12f)
-        val threshold = (heightAverage * 1.2f).coerceAtLeast(12f)
+        val threshold = (heightAverage * 1.5f).coerceAtLeast(15f)
         val sorted = filtered.sortedBy { it.boundingBox.centerY }
         val groups = mutableListOf<MutableList<TextBlock>>()
         var current = mutableListOf<TextBlock>()
@@ -397,7 +416,9 @@ class GridAnalyzer {
         if (current.isNotEmpty()) {
             groups.add(current)
         }
-        val best = groups.maxByOrNull { it.size } ?: return null
+        // 选择最合适的表头行：优先选择包含5个以上元素的行，其次选择位置最靠上的行
+        val best = groups.filter { it.size >= 3 }.maxByOrNull { it.size } ?: groups.maxByOrNull { it.size }
+        ?: return null
         val bottom = best.maxOf { it.boundingBox.bottom }
         return HeaderRow(best, bottom)
     }

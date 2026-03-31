@@ -20,14 +20,14 @@ class CourseParser {
     fun parse(cells: List<GridCell>): List<ParsedCourse> {
         val parsedCourses = mutableListOf<ParsedCourse>()
 
-        // 常用周次正则：如 "1-16周", "1~16周", "第1-16周"
-        val weekRegex = Regex("(\\d+)\\s*[\\-~_—一]\\s*(\\d+)\\s*周?")
+        // 常用周次正则：如 "1-16周", "1~16周", "第1-16周", "1-16"
+        val weekRegex = Regex("(?:第)?\s*(\d+)\s*[\-~_—一]\s*(\d+)\s*周?")
         // 单双周正则
         val singleDoubleRegex = Regex("(单|双)周")
-        // 地点正则：包含楼、室、馆、教等字眼，或字母+数字组合（如 A101）
-        val locationRegex = Regex(".*(楼|室|馆|教|校区).*|[A-Z]+\\d+")
-        // 教师正则：通常为 2-4 个中文字符，或包含“老师”字样
-        val teacherRegex = Regex("^[\u4e00-\u9fa5]{2,4}$|.*老师.*")
+        // 地点正则：包含楼、室、馆、教等字眼，或字母+数字组合（如 A101），或数字+字母组合
+        val locationRegex = Regex(".*(楼|室|馆|教|校区|教室|讲堂|报告厅).*|[A-Z]+\d+|\d+[A-Z]+|[A-Z]\d+[A-Z]*")
+        // 教师正则：通常为 2-4 个中文字符，或包含“老师”、“教授”、“讲师”等字样
+        val teacherRegex = Regex("^[\u4e00-\u9fa5]{2,4}$|.*(老师|教授|讲师|教师).*")
 
         for (cell in cells) {
             if (cell.blocks.isEmpty()) continue
@@ -44,6 +44,12 @@ class CourseParser {
                     .replace("s", "5")
                     .replace("B", "8")
                     .replace("q", "9")
+                    .replace("\u3000", " ") // 全角空格转半角
+                    .replace("　", " ") // 另一种全角空格
+                    .replace("-", "-") // 统一连字符
+                    .replace("—", "-") // 长连字符转短连字符
+                    .replace("一", "-") // 中文破折号转连字符
+                    .replace("~", "-") // 波浪线转连字符
             }.filter { it.isNotEmpty() }
             if (allLines.isEmpty()) continue
 
@@ -162,13 +168,20 @@ class CourseParser {
             val hasWeekAlready = currentChunk.any { weekRegex.containsMatchIn(it) }
             val looksLikeNewCourseName = line.length in 2..15 && line.all { it.isLetter() } && !line.contains("老师")
             
+            // 另一种情况：如果当前块已经有了课程名、地点和周次，新行又开始了新的信息，也认为是新课
+            val hasCompleteCourseInfo = currentChunk.size >= 3 && 
+                currentChunk.any { it.length in 2..15 && it.all { c -> c.isLetter() } } && // 有课程名
+                currentChunk.any { weekRegex.containsMatchIn(it) } && // 有周次
+                currentChunk.any { it.contains(Regex(".*(楼|室|馆|教|校区).*|[A-Z]+\d+")) } // 有地点
+            
             if (isSeparator) {
                 if (currentChunk.isNotEmpty()) {
                     chunks.add(currentChunk)
                     currentChunk = mutableListOf()
                 }
                 continue
-            } else if (hasWeekAlready && looksLikeNewCourseName && currentChunk.size >= 3) {
+            } else if ((hasWeekAlready && looksLikeNewCourseName && currentChunk.size >= 3) ||
+                     (hasCompleteCourseInfo && looksLikeNewCourseName)) {
                 // 认为是一个新课的开始
                 chunks.add(currentChunk)
                 currentChunk = mutableListOf()
