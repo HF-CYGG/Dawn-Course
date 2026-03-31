@@ -142,6 +142,14 @@ docker-compose up -d --build
   - LLM_SUMMARY_PROVIDER / LLM_SUMMARY_API_KEY / LLM_SUMMARY_MODEL / LLM_SUMMARY_BASE_URL
 - 模型 2（高成本脚本修复）
   - LLM_SCRIPT_PROVIDER / LLM_SCRIPT_API_KEY / LLM_SCRIPT_MODEL / LLM_SCRIPT_BASE_URL
+- 模型深度适配与扩展
+  - LLM_MODEL_ALIAS_JSON：模型名称别名映射表（JSON格式，例如 `{"glm5 5.1":"glm-5-1"}`）
+  - LLM_SUMMARY_API_STYLE / LLM_SCRIPT_API_STYLE：强制指定 API 风格（chat 或 responses）
+  - LLM_SUMMARY_REQUEST_EXTRA_JSON / LLM_SCRIPT_REQUEST_EXTRA_JSON：额外请求体参数扩展（如 response_format）
+- 用量与费用统计
+  - LLM_USAGE_ENABLED：是否开启用量统计（默认 true）
+  - LLM_SUMMARY_USAGE_URL / LLM_SCRIPT_USAGE_URL：自定义 Token 用量查询接口
+  - LLM_SUMMARY_COST_URL / LLM_SCRIPT_COST_URL：自定义费用查询接口
 - 队列策略
   - MIN_QUEUE_SIZE：触发脚本修复的最小提交数
   - MERGE_WINDOW_MS：合并窗口（毫秒）
@@ -158,6 +166,28 @@ docker-compose up -d --build
 - 持久化与升级兼容
   - SCRIPT_OUTPUT_DIR：脚本与元数据输出目录（建议挂载为持久化卷）
   - LEGACY_SCRIPT_OUTPUT_DIRS：老版本脚本目录列表（逗号分隔），用于升级时回退读取与自动迁移
+
+### 支持的模型名称（示例）
+
+以下为当前服务端已适配的模型名称形态（仅列出常见示例）。各平台实际可用模型以官方文档为准；如果你习惯使用非标准写法，可用 `LLM_MODEL_ALIAS_JSON` 做别名映射。
+
+- OpenAI（provider: gpt / openai）
+  - GPT-5 系列（自动使用 Responses API）：`gpt-5`、`gpt-5.1`、`gpt-5.2`、`gpt-5.3`、`gpt-5.4`
+  - Codex 系列（自动使用 Responses API）：`gpt-5.2-codex`、`gpt-5.3-codex`
+  - 小模型（支持 mini/nano）：`gpt-5-mini`、`gpt-5-nano`、`gpt-4o-mini`
+  - 其他：`gpt-4o`
+- Gemini（provider: gemini）
+  - Flash/Pro：`gemini-1.5-flash`、`gemini-1.5-pro`、`gemini-2.0-flash`、`gemini-2.5-flash`、`gemini-2.5-pro`
+- 智谱 GLM（provider: glm）
+  - GLM-5/GLM-4 示例：`glm-5`、`glm-5-1`、`glm-4`
+- DeepSeek（provider: deepseek）
+  - 示例：`deepseek-chat`
+- 通义千问 Qwen（provider: qwen）
+  - DashScope 兼容模式常见示例：`qwen-turbo`、`qwen-plus`、`qwen-max`、`qwen-long`
+
+说明：
+- 服务端会对常见的“紧凑写法”做标准化，例如 `gpt5.2codex` 会被标准化为 `gpt-5.2-codex`，`gpt5mini` 会被标准化为 `gpt-5-mini`。
+- Gemini 请求会将 system prompt 以 `systemInstruction` 传入（与 user 内容分离），以匹配官方推荐结构。
 
 ### 容器持久化与升级兼容
 
@@ -219,6 +249,19 @@ LLM_SUMMARY_MODEL: gemini-1.5-flash
 LLM_SCRIPT_PROVIDER: gemini
 LLM_SCRIPT_API_KEY: "your-gemini-key"
 LLM_SCRIPT_MODEL: gemini-1.5-pro
+```
+
+**示例 4：模型别名与扩展参数配置**
+
+```yaml
+# 自动推断 provider，通过别名映射非标准模型名
+LLM_SUMMARY_MODEL: "gpt5.2codex"
+LLM_MODEL_ALIAS_JSON: '{"gpt5.2codex": "gpt-5.2-codex", "glm5 5.1": "glm-5-1"}'
+# 强制指定 API 风格并注入专属参数
+LLM_SUMMARY_API_STYLE: responses
+LLM_SUMMARY_REQUEST_EXTRA_JSON: '{"response_format": {"type": "json_object"}}'
+# 自定义用量统计接口（覆盖默认）
+LLM_SUMMARY_USAGE_URL: "https://api.example.com/v1/usage?start_date={start_date}&end_date={end_date}"
 ```
 
 ### 官方文档参考
