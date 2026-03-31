@@ -167,6 +167,15 @@ fun ImportScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    OutlinedTextField(
+                        value = uiState.llmConsentSchoolName,
+                        onValueChange = { viewModel.updateLlmConsentSchoolName(it) },
+                        label = { Text("学校名称（可选）") },
+                        placeholder = { Text("例如：华中科技大学") },
+                        supportingText = { Text("请尽量填写完整学校名称，便于归类处理") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier

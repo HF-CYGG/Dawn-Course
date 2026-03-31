@@ -74,6 +74,7 @@ enum class ImportStep {
  * @property llmConsentLength 将上传内容的总长度
  * @property llmConsentChecked 用户是否勾选“已知情并同意”
  * @property llmConsentSourceUrl 本次上传对应的网页来源
+ * @property llmConsentSchoolName 用户填写的学校名称（用于归类队列）
  */
 data class ImportUiState(
     val step: ImportStep = ImportStep.Input,
@@ -107,7 +108,8 @@ data class ImportUiState(
     val llmConsentPreview: String = "",
     val llmConsentLength: Int = 0,
     val llmConsentChecked: Boolean = false,
-    val llmConsentSourceUrl: String = ""
+    val llmConsentSourceUrl: String = "",
+    val llmConsentSchoolName: String = ""
 )
 
 sealed interface ImportEvent {
@@ -176,7 +178,8 @@ class ImportViewModel @Inject constructor(
                 llmConsentPreview = "",
                 llmConsentLength = 0,
                 llmConsentChecked = false,
-                llmConsentSourceUrl = ""
+                llmConsentSourceUrl = "",
+                llmConsentSchoolName = ""
             )
         }
     }
@@ -442,10 +445,11 @@ class ImportViewModel @Inject constructor(
      *
      * 仅在解析器运行失败时触发，避免影响主链路。
      */
-    private suspend fun tryLlmFallback(content: String): List<ParsedCourse> {
+    private suspend fun tryLlmFallback(content: String, schoolName: String): List<ParsedCourse> {
         if (content.isBlank()) return emptyList()
         val submitResult = submitLlmParseTaskUseCase(
             content = content,
+            schoolName = schoolName,
             consent = true,
             consentAt = System.currentTimeMillis()
         )
@@ -503,6 +507,10 @@ class ImportViewModel @Inject constructor(
         _uiState.update { it.copy(llmConsentChecked = checked) }
     }
 
+    fun updateLlmConsentSchoolName(value: String) {
+        _uiState.update { it.copy(llmConsentSchoolName = value) }
+    }
+
     /**
      * 用户确认云端解析上传后执行解析
      */
@@ -512,6 +520,7 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(showLlmConsentDialog = false, llmConsentChecked = false) }
             return
         }
+        val schoolName = _uiState.value.llmConsentSchoolName.trim()
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -521,7 +530,7 @@ class ImportViewModel @Inject constructor(
                     resultText = "已获得授权，正在进行云端解析..."
                 )
             }
-            val parsed = withContext(Dispatchers.IO) { tryLlmFallback(content) }
+            val parsed = withContext(Dispatchers.IO) { tryLlmFallback(content, schoolName) }
             pendingLlmContent = ""
             if (parsed.isNotEmpty()) {
                 val lastUrl = _uiState.value.webUrl
