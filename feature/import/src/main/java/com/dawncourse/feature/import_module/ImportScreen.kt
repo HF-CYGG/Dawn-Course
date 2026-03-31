@@ -142,6 +142,7 @@ fun ImportScreen(
             text = {
                 val previewScroll = rememberScrollState()
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // 首段说明：告知上传内容、长度与来源，避免用户误解
                     Text(
                         text = "将把当前页面脱敏后的完整内容上传至云端解析服务。" +
                             "\n内容长度：${uiState.llmConsentLength} 字符" +
@@ -161,12 +162,14 @@ fun ImportScreen(
                             )
                             .padding(12.dp)
                     ) {
+                        // 预览区：展示脱敏后的文本片段，便于用户核对
                         Text(
                             text = if (uiState.llmConsentPreview.isNotBlank()) uiState.llmConsentPreview else "（无预览内容）",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    // 学校名称：用于服务端归类队列，建议填写完整
                     OutlinedTextField(
                         value = uiState.llmConsentSchoolName,
                         onValueChange = { viewModel.updateLlmConsentSchoolName(it) },
@@ -182,6 +185,7 @@ fun ImportScreen(
                             .fillMaxWidth()
                             .clickable { viewModel.updateLlmConsentChecked(!uiState.llmConsentChecked) }
                     ) {
+                        // 勾选项：必须手动勾选才能允许上传
                         Checkbox(
                             checked = uiState.llmConsentChecked,
                             onCheckedChange = { viewModel.updateLlmConsentChecked(it) }
