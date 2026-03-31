@@ -155,6 +155,15 @@ docker-compose up -d --build
 - 指标与统计
   - SCHOOL_METRICS_FILE：学校维度统计输出 TXT 文件路径
   - METRICS_FLUSH_MS：学校统计写盘间隔（毫秒）
+- 持久化与升级兼容
+  - SCRIPT_OUTPUT_DIR：脚本与元数据输出目录（建议挂载为持久化卷）
+  - LEGACY_SCRIPT_OUTPUT_DIRS：老版本脚本目录列表（逗号分隔），用于升级时回退读取与自动迁移
+
+### 容器持久化与升级兼容
+
+- 建议将 `SCRIPT_OUTPUT_DIR` 挂载为持久化卷，保证容器重启或升级后脚本与 meta 不丢失
+- 若旧版本脚本目录不在默认路径，请设置 `LEGACY_SCRIPT_OUTPUT_DIRS`，升级后首次访问会自动迁移到新目录
+- 脚本 meta 缺失时服务端会基于脚本内容自动补写，避免客户端验签因升级丢失数据而失败
 
 ### Prometheus 指标
 
