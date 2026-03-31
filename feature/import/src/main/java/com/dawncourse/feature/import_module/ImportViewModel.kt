@@ -635,21 +635,38 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, resultText = "正在初始化 OCR 引擎...") }
             try {
                 val parsedCourses = withContext(Dispatchers.IO) {
-                    // 1. 初始化引擎（此处使用真实的 ML Kit 引擎）
-                    val ocrEngine = MlKitOcrEngine()
-                    ocrEngine.initialize()
+                    // 1. 检查图片质量
+                    if (bitmap.width < 500 || bitmap.height < 500) {
+                        throw Exception("图片分辨率过低，请使用更高清晰度的图片")
+                    }
                     
+                    if (bitmap.width > 10000 || bitmap.height > 10000) {
+                        throw Exception("图片尺寸过大，请使用适中大小的图片")
+                    }
+                    
+                    // 2. 初始化引擎（此处使用真实的 ML Kit 引擎）
+                    val ocrEngine = MlKitOcrEngine()
                     try {
-                        // 2. 提取文本块
+                        ocrEngine.initialize()
+                        
+                        // 3. 提取文本块
                         _uiState.update { it.copy(resultText = "正在识别文本信息...") }
                         val textBlocks = ocrEngine.extractText(bitmap)
                         
-                        // 3. 布局分析（网格化）
+                        if (textBlocks.isEmpty()) {
+                            throw Exception("未识别到任何文本，请确保图片清晰且包含课表内容")
+                        }
+                        
+                        // 4. 布局分析（网格化）
                         _uiState.update { it.copy(resultText = "正在恢复课表排版结构...") }
                         val gridAnalyzer = GridAnalyzer()
                         val gridCells = gridAnalyzer.analyze(textBlocks)
                         
-                        // 4. 语义解析
+                        if (gridCells.isEmpty()) {
+                            throw Exception("无法识别课表结构，请确保只裁剪课表主体区域")
+                        }
+                        
+                        // 5. 语义解析
                         _uiState.update { it.copy(resultText = "正在解析课程语义...") }
                         val courseParser = CourseParser()
                         val courses = courseParser.parse(gridCells)
@@ -668,17 +685,24 @@ class ImportViewModel @Inject constructor(
                 }
 
                 if (parsedCourses.isEmpty()) {
-                    // 失败时给出明确的引导提示（由于是 Dummy 引擎，目前必然会走这个分支）
                     _uiState.update { 
                         it.copy(
                             isLoading = false, 
-                            resultText = "未识别到有效课程，请尝试重新裁剪图片，仅保留课表主体区域。"
+                            resultText = "未识别到有效课程，请尝试以下操作：\n1. 确保只裁剪课表主体区域\n2. 确保图片清晰可见\n3. 确保课表格式规范\n4. 尝试调整裁剪区域后重试"
                         ) 
                     }
                 } else {
                     val maxSection = parsedCourses.maxOfOrNull { it.endSection } ?: 12
                     val maxWeek = parsedCourses.maxOfOrNull { it.endWeek } ?: 20
                     val safeMaxSection = maxSection.coerceAtLeast(4)
+                    val lowConfidenceCount = parsedCourses.count { it.confidence < 0.8f }
+                    
+                    val resultText = if (lowConfidenceCount > 0) {
+                        "OCR 识别成功: ${parsedCourses.size} 个课程段，其中 ${lowConfidenceCount} 个课程可能存在识别错误，请仔细核对并修改标黄异常项。"
+                    } else {
+                        "OCR 识别成功: ${parsedCourses.size} 个课程段，请仔细核对课程信息。"
+                    }
+                    
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -687,12 +711,19 @@ class ImportViewModel @Inject constructor(
                             detectedMaxSection = safeMaxSection,
                             weekCount = maxWeek,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                            resultText = "OCR 识别成功: ${parsedCourses.size} 个课程段，请仔细核对并修改标黄异常项。"
+                            resultText = resultText
                         )
                     }
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, resultText = "OCR 识别失败: ${e.message}") }
+                val errorMessage = when (e.message) {
+                    "图片分辨率过低，请使用更高清晰度的图片" -> e.message
+                    "图片尺寸过大，请使用适中大小的图片" -> e.message
+                    "未识别到任何文本，请确保图片清晰且包含课表内容" -> e.message
+                    "无法识别课表结构，请确保只裁剪课表主体区域" -> e.message
+                    else -> "OCR 识别失败: ${e.message ?: "未知错误"}\n请检查图片质量和裁剪区域后重试"
+                }
+                _uiState.update { it.copy(isLoading = false, resultText = errorMessage) }
             }
         }
     }

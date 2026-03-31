@@ -74,8 +74,9 @@ class GridAnalyzer {
         val dayRegex = Regex("一|二|三|四|五|六|日|天")
         val dayHeaderRegex = Regex("^(周|星期)?[一二三四五六日天]$")
         val dateHeaderRegex = Regex("^\\d{1,2}(日|号)?$")
+        val englishDayRegex = Regex("^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Wed|Thu|Fri|Sat|Sun)$")
         val headerCandidates = mergedBlocks.filter { block ->
-            isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex)
+            isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex, englishDayRegex)
         }
         val headerRow = findHeaderRow(headerCandidates, imageTop, contentHeight)
         val headerBlocks = headerRow?.blocks?.sortedBy { it.boundingBox.centerX } ?: emptyList()
@@ -158,7 +159,7 @@ class GridAnalyzer {
         }
         val headerTopLimit = imageTop + (contentHeight * 0.35f).toInt()
         contentBlocks = contentBlocks.filter { block ->
-            val isHeaderLike = isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex)
+            val isHeaderLike = isHeaderText(block.text, dayRegex, dayHeaderRegex, dateHeaderRegex, englishDayRegex)
             !(isHeaderLike && block.boundingBox.centerY <= headerTopLimit)
         }
         
@@ -374,17 +375,19 @@ class GridAnalyzer {
         raw: String,
         dayRegex: Regex,
         dayHeaderRegex: Regex,
-        dateHeaderRegex: Regex
+        dateHeaderRegex: Regex,
+        englishDayRegex: Regex
     ): Boolean {
         val text = raw.trim()
         if (text.isBlank()) return false
         return dayHeaderRegex.matches(text) ||
             dateHeaderRegex.matches(text) ||
+            englishDayRegex.matches(text) ||
             ((text.contains("周") || text.contains("星期")) && dayRegex.containsMatchIn(text)) ||
             // 支持更多表头格式
             text.matches(Regex("^[一二三四五六日天][一二三四五六日天]?$")) ||
-            text.matches(Regex("^周[一二三四五六日天]$")) ||
-            text.matches(Regex("^星期[一二三四五六日天]$"))
+            text.matches(Regex("^周[一二三四五六日天]")) ||
+            text.matches(Regex("^星期[一二三四五六日天]"))
     }
 
     private data class HeaderRow(val blocks: List<TextBlock>, val bottom: Int)

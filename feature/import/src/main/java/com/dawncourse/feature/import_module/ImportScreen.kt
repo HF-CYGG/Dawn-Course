@@ -98,6 +98,7 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
+import com.dawncourse.feature.import_module.OcrDebugScreen
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -134,6 +135,7 @@ fun ImportScreen(
     var qiangZhiBaseUrl by remember { mutableStateOf("") }
     var qiangZhiStudentId by remember { mutableStateOf("") }
     var qiangZhiPassword by remember { mutableStateOf("") }
+    var showOcrDebugScreen by remember { mutableStateOf(false) }
 
     // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
@@ -170,6 +172,20 @@ fun ImportScreen(
                 )
             }
         )
+    }
+
+    // OCR 调试屏幕
+    if (showOcrDebugScreen) {
+        uiState.ocrSourceBitmap?.let {
+            OcrDebugScreen(
+                originalBitmap = it,
+                processedBitmap = uiState.ocrProcessedBitmap,
+                textBlocks = uiState.ocrTextBlocks,
+                gridCells = uiState.ocrGridCells,
+                parsedCourses = uiState.parsedCourses,
+                onBack = { showOcrDebugScreen = false }
+            )
+        }
     }
 
     Scaffold(
@@ -249,6 +265,7 @@ fun ImportScreen(
                 )
                 ImportStep.OcrReview -> OcrReviewGrid(
                     viewModel = viewModel,
+                    onNavigateToDebug = { showOcrDebugScreen = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -593,27 +610,70 @@ private fun SelectionStep(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(16.dp)
                 ) {
-                    Icon(
-                        if (uiState.resultText.contains("失败")) Icons.Default.Warning else Icons.Default.Info,
-                        contentDescription = null,
-                        tint = if (uiState.resultText.contains("失败")) 
-                            MaterialTheme.colorScheme.onErrorContainer 
-                        else 
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = uiState.resultText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (uiState.resultText.contains("失败")) 
-                            MaterialTheme.colorScheme.onErrorContainer 
-                        else 
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (uiState.resultText.contains("失败")) Icons.Default.Warning else Icons.Default.Info,
+                            contentDescription = null,
+                            tint = if (uiState.resultText.contains("失败")) 
+                                MaterialTheme.colorScheme.onErrorContainer 
+                            else 
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = uiState.resultText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (uiState.resultText.contains("失败")) 
+                                MaterialTheme.colorScheme.onErrorContainer 
+                            else 
+                                MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    // 为 OCR 失败添加重试按钮
+                    if (uiState.resultText.contains("OCR 识别失败") || uiState.resultText.contains("未识别到有效课程")) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = {
+                                    // 重新打开裁剪界面
+                                    uiState.ocrSourceBitmap?.let {
+                                        viewModel.updateOcrSourceBitmap(it)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (uiState.resultText.contains("失败")) 
+                                        MaterialTheme.colorScheme.onErrorContainer 
+                                    else 
+                                        MaterialTheme.colorScheme.onPrimaryContainer,
+                                    contentColor = if (uiState.resultText.contains("失败")) 
+                                        MaterialTheme.colorScheme.errorContainer 
+                                    else 
+                                        MaterialTheme.colorScheme.primaryContainer
+                                )
+                            ) {
+                                Text("重新裁剪")
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    // 重新选择图片
+                                    ocrLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                }
+                            ) {
+                                Text("选择新图片")
+                            }
+                        }
+                    }
                 }
             }
         }

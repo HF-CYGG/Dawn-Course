@@ -92,18 +92,23 @@ function normalizeText(html) {
  * - "1-8,10-16周"
  * - "1-16周(单)"
  * - "1,3,5周"
+ * - "第1-16周"
+ * - "1-16周每周"
  * 来源: zhengfang.js (支持单双周)
  */
 function parseWeeks(str) {
     var weeks = [];
     if (!str) return weeks;
 
+    // OCR 错误自动纠错
+    str = correctOcrErrors(str);
+
     var type = 0; // 0:全, 1:单, 2:双
     if (str.indexOf("单") > -1) type = 1;
     if (str.indexOf("双") > -1) type = 2;
 
     str = str.replace(/周数[:：]/g, '');
-    str = str.replace(/共\d+周|共\d+次|共\d+节/g, '');
+    str = str.replace(/共\d+周|共\d+次|共\d+节|第|每周/g, '');
     str = str.replace(/[至~～—－]/g, '-');
     str = str.replace(/周|单|双|\(|\)|（|）/g, '');
     
@@ -115,7 +120,7 @@ function parseWeeks(str) {
             var range = part.split('-');
             var start = parseInt(range[0]);
             var end = parseInt(range[1]);
-            if (!isNaN(start) && !isNaN(end)) {
+            if (!isNaN(start) && !isNaN(end) && start <= end) {
                 for (var w = start; w <= end; w++) {
                     if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) {
                         weeks.push(w);
@@ -135,32 +140,95 @@ function parseWeeks(str) {
 }
 
 /**
+ * OCR 错误自动纠错
+ */
+function correctOcrErrors(text) {
+    if (!text) return text;
+    
+    // 常见数字 OCR 错误
+    var corrections = {
+        '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
+        '５': '5', '６': '6', '７': '7', '８': '8', '９': '9',
+        'ｌ': '1', 'Ｌ': '1', 'ｏ': '0', 'Ｏ': '0', 'ｓ': '5',
+        'Ｓ': '5', 'ｇ': '9', 'Ｇ': '9', 'ｑ': '9', 'Ｑ': '9',
+        'ｂ': '6', 'Ｂ': '8', 'Ｉ': '1', 'ｉ': '1', 'ｚ': '2',
+        'Ｚ': '2', 'ｕ': '4', 'Ｕ': '4', 'ｖ': '7', 'Ｖ': '7'
+    };
+    
+    // 常见文字 OCR 错误
+    var textCorrections = {
+        '单周': '单', '双周': '双', '每周': '', '周数': '',
+        '星期': '', '节次': '', '教室': '', '老师': '',
+        '教授': '', '讲师': '', '助教': ''
+    };
+    
+    var result = text;
+    
+    // 应用数字纠错
+    for (var key in corrections) {
+        var regex = new RegExp(key, 'g');
+        result = result.replace(regex, corrections[key]);
+    }
+    
+    // 应用文字纠错
+    for (var textKey in textCorrections) {
+        var textRegex = new RegExp(textKey, 'g');
+        result = result.replace(textRegex, textCorrections[textKey]);
+    }
+    
+    // 清理多余空格
+    result = result.replace(/\s+/g, ' ').trim();
+    
+    return result;
+}
+
+/**
  * 解析节次字符串
- * 支持格式: "1-2节", "1-2", "1,2"
+ * 支持格式: "1-2节", "1-2", "1,2", "第1-2节", "1、2节"
  * 来源: zhengfang.js
  */
 function parseSections(sectionsString) {
     var sections = [];
-    var str = sectionsString.replace(/第/g, "").replace(/节次[:：]/g, "").replace(/节/g, "").replace(/[\(（\)）]/g, "");
-    str = str.replace(/[至~～—－]/g, "-");
-    var parts = str.split("-");
-    var start = parseInt(parts[0]);
-    var end = parseInt(parts[1] || parts[0]);
+    if (!sectionsString) return sections;
     
-    if (!isNaN(start)) {
-        for (var s = start; s <= end; s++) {
-            sections.push(s);
+    // OCR 错误自动纠错
+    var str = correctOcrErrors(sectionsString);
+    
+    str = str.replace(/第/g, "").replace(/节次[:：]/g, "").replace(/节/g, "").replace(/[\(（\)）]/g, "");
+    str = str.replace(/[至~～—－]/g, "-");
+    
+    // 处理范围格式
+    if (str.indexOf("-") > -1) {
+        var parts = str.split("-");
+        var start = parseInt(parts[0]);
+        var end = parseInt(parts[1] || parts[0]);
+        
+        if (!isNaN(start) && !isNaN(end) && start <= end) {
+            for (var s = start; s <= end; s++) {
+                sections.push(s);
+            }
         }
     }
-    // 简单的逗号分隔支持 (fallback)
-    if (sections.length === 0 && sectionsString.indexOf(",") > -1) {
-        var commaParts = sectionsString.split(",");
+    // 处理逗号/顿号分隔格式
+    if (sections.length === 0 || str.indexOf(",") > -1 || str.indexOf("、") > -1) {
+        var commaParts = str.split(/[,，;、]/);
         for (var i = 0; i < commaParts.length; i++) {
-            var val = parseInt(commaParts[i]);
+            var val = parseInt(commaParts[i].trim());
             if (!isNaN(val)) sections.push(val);
         }
     }
-    return sections;
+    // 去重并排序
+    var uniqueSections = [];
+    var seen = {};
+    for (var j = 0; j < sections.length; j++) {
+        var section = sections[j];
+        if (!seen[section]) {
+            seen[section] = true;
+            uniqueSections.push(section);
+        }
+    }
+    uniqueSections.sort(function(a, b) { return a - b; });
+    return uniqueSections;
 }
 
 // ---------------- 通用提取逻辑 ----------------
@@ -189,16 +257,39 @@ function extractTextByTitle(blockHtml, titleText) {
 }
 
 /**
- * 提取课程名称 (通常在 class="title" 的 div 或 u 标签中)
+ * 提取课程名称 (支持多种模式)
  */
 function extractName(blockHtml) {
+    // 1. 标准 title class
     var titleMatch = /<([a-zA-Z]+)[^>]*class=["']?title[^>]*>([\s\S]*?)<\/\1>/i.exec(blockHtml);
     if (titleMatch) {
         return stripTags(titleMatch[2]).trim();
     }
+    // 2. u 标签 title class
     var altMatch = /<u[^>]*class=["']?title[^>]*>([\s\S]*?)<\/u>/i.exec(blockHtml);
     if (altMatch) {
         return stripTags(altMatch[1]).trim();
+    }
+    // 3. 粗体标签 (strong/b)
+    var boldMatch = /<(strong|b)[^>]*>([\s\S]*?)<\/\1>/i.exec(blockHtml);
+    if (boldMatch) {
+        var text = stripTags(boldMatch[2]).trim();
+        if (text && text.length > 1) return text;
+    }
+    // 4. h 标签
+    var hMatch = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(blockHtml);
+    if (hMatch) {
+        var text = stripTags(hMatch[1]).trim();
+        if (text && text.length > 1) return text;
+    }
+    // 5. 直接文本提取 (去除标签后的第一行)
+    var plainText = stripTags(blockHtml).trim();
+    var lines = plainText.split(/[\r\n]+/);
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line && line.length > 1 && !line.includes("周") && !line.includes("节") && !line.includes("老师") && !line.includes("教室")) {
+            return line;
+        }
     }
     return "";
 }

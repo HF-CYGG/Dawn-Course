@@ -126,9 +126,12 @@ class MlKitOcrEngine : OcrEngine {
         val contrastScore = calculateContrastScore(denoised)
         val enhanced = if (contrastScore < 40f) {
             val binary = adaptiveThreshold(denoised)
-            morphClose(binary)
+            val closed = morphClose(binary)
+            // 对低对比度图像也应用轻度锐化
+            unsharpMask(closed, 0.5f)
         } else {
-            unsharpMask(denoised)
+            // 对高对比度图像应用更强的锐化
+            unsharpMask(denoised, 1.0f)
         }
         val angle = estimateSkewAngle(enhanced)
         return if (abs(angle) >= 0.3f) {
@@ -266,7 +269,7 @@ class MlKitOcrEngine : OcrEngine {
         return std * 0.7f + dynamicRange * 0.3f
     }
 
-    private fun unsharpMask(bitmap: Bitmap): Bitmap {
+    private fun unsharpMask(bitmap: Bitmap, strength: Float = 1.0f): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
         val src = IntArray(width * height)
@@ -292,8 +295,9 @@ class MlKitOcrEngine : OcrEngine {
         for (i in src.indices) {
             val v = Color.red(src[i])
             val b = blur[i]
-            val nv = (v + (v - b)).coerceIn(0, 255)
-            outPixels[i] = Color.argb(255, nv, nv, nv)
+            val detail = (v - b) * strength
+            val nv = (v + detail).coerceIn(0, 255)
+            outPixels[i] = Color.argb(255, nv.toInt(), nv.toInt(), nv.toInt())
         }
         val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         out.setPixels(outPixels, 0, width, 0, 0, width, height)
@@ -335,9 +339,23 @@ class MlKitOcrEngine : OcrEngine {
                     integral[iy2 * (width + 1) + ix1] +
                     integral[iy1 * (width + 1) + ix1]
                 val mean = sum / area
+                // 计算局部标准差作为对比度度量
+                var variance = 0.0
+                for (yy in y1..y2) {
+                    for (xx in x1..x2) {
+                        val valDiff = Color.red(pixels[yy * width + xx]) - mean
+                        variance += valDiff * valDiff
+                    }
+                }
+                val stdDev = kotlin.math.sqrt(variance / area)
+                // 根据局部对比度动态调整阈值
+                val thresholdOffset = when {
+                    stdDev < 10 -> 5  // 低对比度，较小偏移
+                    stdDev < 30 -> 12 // 中等对比度
+                    else -> 20        // 高对比度，较大偏移
+                }
                 val v = Color.red(pixels[y * width + x])
-                // 动态调整阈值，根据局部对比度
-                val threshold = mean - 15
+                val threshold = mean - thresholdOffset
                 val out = if (v < threshold) 0 else 255
                 outPixels[y * width + x] = Color.argb(255, out, out, out)
             }
@@ -443,41 +461,112 @@ class MlKitOcrEngine : OcrEngine {
         val height = scaled.height
         val pixels = IntArray(width * height)
         scaled.getPixels(pixels, 0, width, 0, 0, width, height)
+        
+        // 优化二值化处理，使用Otsu阈值
         val binary = ByteArray(width * height)
+        val threshold = calculateOtsuThreshold(pixels)
         for (i in pixels.indices) {
             val v = Color.red(pixels[i])
-            binary[i] = if (v < 128) 0 else 1
+            binary[i] = if (v < threshold) 0 else 1
         }
+        
+        // 优化角度搜索范围和步长
         var bestAngle = 0f
         var bestScore = -1f
+        
+        // 粗搜索：步长0.5度，范围-3到3度
         var angle = -3f
         while (angle <= 3f) {
-            val rad = Math.toRadians(angle.toDouble())
-            val tan = kotlin.math.tan(rad)
-            val bins = IntArray(height)
-            for (y in 0 until height) {
-                val rowIndex = y * width
-                for (x in 0 until width) {
-                    if (binary[rowIndex + x].toInt() == 0) {
-                        val y2 = (y + x * tan).roundToInt()
-                        if (y2 in 0 until height) {
-                            bins[y2]++
-                        }
-                    }
-                }
-            }
-            var score = 0f
-            for (i in 1 until height) {
-                val diff = bins[i] - bins[i - 1]
-                score += diff * diff
-            }
+            val score = calculateSkewScore(binary, width, height, angle)
             if (score > bestScore) {
                 bestScore = score
                 bestAngle = angle
             }
             angle += 0.5f
         }
+        
+        // 精搜索：在最佳角度附近，步长0.1度，范围±0.5度
+        val fineStart = bestAngle - 0.5f
+        val fineEnd = bestAngle + 0.5f
+        var fineAngle = fineStart
+        while (fineAngle <= fineEnd) {
+            val score = calculateSkewScore(binary, width, height, fineAngle)
+            if (score > bestScore) {
+                bestScore = score
+                bestAngle = fineAngle
+            }
+            fineAngle += 0.1f
+        }
+        
         return bestAngle
+    }
+    
+    private fun calculateOtsuThreshold(pixels: IntArray): Int {
+        val histogram = IntArray(256)
+        for (p in pixels) {
+            val v = Color.red(p)
+            histogram[v]++
+        }
+        
+        val total = pixels.size
+        var sum = 0
+        for (i in 0..255) {
+            sum += i * histogram[i]
+        }
+        
+        var sumB = 0
+        var wB = 0
+        var wF = 0
+        var maxVariance = 0.0
+        var threshold = 0
+        
+        for (i in 0..255) {
+            wB += histogram[i]
+            if (wB == 0) continue
+            
+            wF = total - wB
+            if (wF == 0) break
+            
+            sumB += i * histogram[i]
+            val mB = sumB.toDouble() / wB
+            val mF = (sum - sumB).toDouble() / wF
+            
+            val variance = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF)
+            if (variance > maxVariance) {
+                maxVariance = variance
+                threshold = i
+            }
+        }
+        
+        return threshold
+    }
+    
+    private fun calculateSkewScore(binary: ByteArray, width: Int, height: Int, angle: Float): Float {
+        val rad = Math.toRadians(angle.toDouble())
+        val tan = kotlin.math.tan(rad)
+        val bins = IntArray(height)
+        
+        // 只处理非空白区域，提高效率
+        for (y in 0 until height) {
+            val rowIndex = y * width
+            for (x in 0 until width) {
+                if (binary[rowIndex + x].toInt() == 0) {
+                    val y2 = (y + x * tan).roundToInt()
+                    if (y2 in 0 until height) {
+                        bins[y2]++
+                    }
+                }
+            }
+        }
+        
+        // 计算行之间的差异，差异越大说明文字越对齐
+        var score = 0f
+        for (i in 1 until height) {
+            val diff = bins[i] - bins[i - 1]
+            score += diff * diff
+        }
+        
+        return score
     }
 
     private fun rotateBitmap(bitmap: Bitmap, angle: Float): Bitmap {

@@ -21,6 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dawncourse.feature.import_module.model.ParsedCourse
+import com.dawncourse.feature.import_module.engine.ocr.TextBlock
+import com.dawncourse.feature.import_module.engine.ocr.GridCell
+import com.dawncourse.feature.import_module.BuildConfig
 
 /**
  * OCR 专用的可视化校验网格
@@ -31,6 +34,7 @@ import com.dawncourse.feature.import_module.model.ParsedCourse
 @Composable
 fun OcrReviewGrid(
     viewModel: ImportViewModel,
+    onNavigateToDebug: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -144,8 +148,20 @@ fun OcrReviewGrid(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { showTimeSettings = true }) {
-                    Text("设置学期与作息")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TextButton(onClick = { showTimeSettings = true }) {
+                        Text("设置学期与作息")
+                    }
+                    // 调试按钮，仅在 debug 模式下可见
+                    @Suppress("ConstantConditionIf")
+                    if (BuildConfig.DEBUG) {
+                        TextButton(onClick = onNavigateToDebug) {
+                            Text("调试模式")
+                        }
+                    }
                 }
                 Button(
                     onClick = { viewModel.confirmImport() }

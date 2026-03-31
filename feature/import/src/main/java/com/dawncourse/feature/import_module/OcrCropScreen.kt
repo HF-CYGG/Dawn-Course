@@ -46,15 +46,26 @@ fun OcrCropScreen(
             .background(Color.Black)
     ) {
         // 顶部提示
-        Text(
-            text = "请拖拽边框，仅保留课表主体区域",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 32.dp)
-        )
+        ) {
+            Text(
+                text = "请拖拽边框，仅保留课表主体区域",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = "提示：\n1. 确保只包含课表表格部分\n2. 移除顶部标题、底部导航等无关内容\n3. 保证课表文字清晰可见\n4. 尽量保持课表水平",
+                color = Color.White.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp
+            )
+        }
 
         // 图片与裁剪交互区
         Box(
