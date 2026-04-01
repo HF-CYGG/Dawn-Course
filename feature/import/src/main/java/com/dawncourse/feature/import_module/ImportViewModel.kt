@@ -31,7 +31,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.jsoup.Jsoup
 import java.net.URI
 import java.net.URLEncoder
 import java.time.DayOfWeek
@@ -309,86 +308,63 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
                 val parsed = withContext(Dispatchers.IO) {
-                    // 解析流程的设计目标：
-                    // - 尽可能“自适应”不同教务系统/不同解析器输出格式
-                    // - 任意单个解析器失败不影响后续尝试（可恢复、可重试）
-                    // - 不打印堆栈，避免把页面内容/账号信息等潜在敏感数据暴露到日志中
-                    //
-                    // 这里用两个标志位区分两类“最终失败”：
-                    // 1) 所有解析器都正常执行但结果为空：更像是“页面不对/未登录/未加载完成”
-                    // 2) 解析器执行过程中发生异常：更像是“解析器不兼容/脚本运行失败”
                     var hasParserCrash = false
                     var hasAnyParserAttempt = false
-
-                    // 当前 WebView URL，用于判断是否为强智教务系统
                     val currentUrl = _uiState.value.webUrl
-
-                    // 0.1 优先尝试：若为强智教务系统，使用 Kotlin + Jsoup 解析 HTML
                     if (qiangZhiApiEngine.isQiangZhiHost(currentUrl)) {
                         val qiangZhiCourses = qiangZhiApiEngine.parseHtmlWithJsoup(raw)
                         if (qiangZhiCourses.isNotEmpty()) {
                             return@withContext qiangZhiCourses
                         }
                     }
-
-                    // 0.2 特殊处理：检测是否为强智直连 JSON 数据
                     if (raw.contains("qiangzhi_direct")) {
                         return@withContext qiangZhiApiEngine.parseJson(raw)
                     }
-
-                    // 1. 尝试作为 JSON 解析
                     var courses = parseParsedCoursesFromRaw(raw)
                     if (courses.isEmpty()) {
                         val xiaoai = parseXiaoaiProviderResult(raw)
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
-                    
-                    // 2. 如果不是 JSON，尝试作为 HTML 解析 (依次尝试强智、正方、青果等脚本)
                     if (courses.isEmpty()) {
                         val parsers = listOf("qiangzhi.js", "zhengfang.js", "kingosoft.js")
-                        // 加载通用工具库
-                        val commonUtils = try {
-                            scriptSyncRepository.getScript("common_parser_utils.js", "parsers")
-                        } catch (e: Exception) {
-                            "" // 理论上不应发生
-                        }
-
-                        for (parserName in parsers) {
-                            hasAnyParserAttempt = true
-                            try {
-                                // 加载解析脚本
-                                val script = scriptSyncRepository.getScript(parserName, "parsers")
-                                // 拼接通用工具库和具体解析脚本
-                                val fullScript = if (commonUtils.isNotEmpty()) {
-                                    "$commonUtils\n$script"
+                        val runParserRound: suspend (Boolean) -> List<ParsedCourse> = runParserRound@{ forceRefresh ->
+                            val commonUtils = try {
+                                if (forceRefresh) {
+                                    scriptSyncRepository.fetchAndCacheScript("common_parser_utils.js", "parsers")
                                 } else {
-                                    script
+                                    scriptSyncRepository.getScript("common_parser_utils.js", "parsers")
                                 }
-                                val jsonResult = scriptEngine.parseHtml(fullScript, raw)
-                                val xiaoai = parseXiaoaiProviderResult(jsonResult)
-                                val result = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
-                                
-                                if (result.isNotEmpty()) {
-                                    courses = result
-                                    break // 解析成功，停止尝试其他脚本
-                                }
-                            } catch (_: ScriptEngine.ScriptExecutionException) {
-                                // JS 解析器运行失败属于“可预期异常”：
-                                // - 可能是脚本与当前页面不匹配
-                                // - 可能是教务系统页面结构变更
-                                // - 可能是脚本语法/运行时错误
-                                //
-                                // 对用户而言，这些错误可通过“重试/换导入方式/换解析器”恢复，因此不打印堆栈。
-                                hasParserCrash = true
-                            } catch (_: Throwable) {
-                                // 兜底：任何解析器异常都不应中断后续解析器的尝试
-                                hasParserCrash = true
+                            } catch (_: Exception) {
+                                ""
                             }
+                            for (parserName in parsers) {
+                                hasAnyParserAttempt = true
+                                try {
+                                    val script = if (forceRefresh) {
+                                        scriptSyncRepository.fetchAndCacheScript(parserName, "parsers")
+                                    } else {
+                                        scriptSyncRepository.getScript(parserName, "parsers")
+                                    }
+                                    val fullScript = if (commonUtils.isNotEmpty()) "$commonUtils\n$script" else script
+                                    val jsonResult = scriptEngine.parseHtml(fullScript, raw)
+                                    val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
+                                    if (parsedDirect.isNotEmpty()) return@runParserRound parsedDirect
+                                    val xiaoai = parseXiaoaiProviderResult(jsonResult)
+                                    val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
+                                    if (parsedFromXiaoai.isNotEmpty()) return@runParserRound parsedFromXiaoai
+                                } catch (_: ScriptEngine.ScriptExecutionException) {
+                                    hasParserCrash = true
+                                } catch (_: Throwable) {
+                                    hasParserCrash = true
+                                }
+                            }
+                            emptyList()
+                        }
+                        courses = runParserRound(false)
+                        if (courses.isEmpty() && hasAnyParserAttempt) {
+                            courses = runParserRound(true)
                         }
                     }
-                    
-                    // 通过“空结果 + 是否发生过解析器异常/是否尝试过解析器”返回更准确的失败语义，
-                    // 由上层决定如何向用户提示。
                     if (courses.isEmpty() && hasAnyParserAttempt && hasParserCrash) {
                         throw ScriptEngine.ScriptExecutionException("解析器运行失败")
                     }
@@ -456,13 +432,22 @@ class ImportViewModel @Inject constructor(
         val taskId = submitResult.taskId
         if (!submitResult.success || taskId.isNullOrBlank()) return emptyList()
         val maxAttempts = 10
+        var continuousRequestFailures = 0
         repeat(maxAttempts) { attempt ->
             val statusResult = fetchLlmParseStatusUseCase(taskId)
-            if (!statusResult.success) return emptyList()
+            if (!statusResult.success) {
+                continuousRequestFailures += 1
+                if (continuousRequestFailures >= 3) return emptyList()
+                if (attempt < maxAttempts - 1) {
+                    kotlinx.coroutines.delay(2000)
+                }
+                return@repeat
+            }
+            continuousRequestFailures = 0
             when (statusResult.status) {
                 com.dawncourse.core.domain.model.LlmParseStatus.SUCCESS -> {
                     val jsonResult = statusResult.resultText.orEmpty()
-                    return parseParsedCoursesFromRaw(jsonResult)
+                    return parseLlmFallbackResult(jsonResult)
                 }
                 com.dawncourse.core.domain.model.LlmParseStatus.FAILED -> {
                     return emptyList()
@@ -474,6 +459,14 @@ class ImportViewModel @Inject constructor(
                 }
             }
         }
+        return emptyList()
+    }
+
+    private fun parseLlmFallbackResult(raw: String): List<ParsedCourse> {
+        val parsedDirect = parseParsedCoursesFromRaw(raw)
+        if (parsedDirect.isNotEmpty()) return parsedDirect
+        val parsedXiaoai = convertXiaoaiCoursesToParsedCourses(parseXiaoaiProviderResult(raw).courses)
+        if (parsedXiaoai.isNotEmpty()) return parsedXiaoai
         return emptyList()
     }
 
@@ -626,12 +619,11 @@ class ImportViewModel @Inject constructor(
      * 3. 不截断内容，确保用户同意后可完整上传
      */
     private fun sanitizeHtmlForLlm(raw: String): String {
-        val baseText = if (raw.contains("<")) {
-            Jsoup.parse(raw).text()
-        } else {
-            raw
-        }
-        var text = baseText
+        var text = raw
+        text = text.replace(Regex("(?is)<script\\b[^>]*>(.*?)</script>"), "<script>***</script>")
+        text = text.replace(Regex("(?is)<style\\b[^>]*>(.*?)</style>"), "<style>***</style>")
+        text = text.replace(Regex("(?i)(name|id)\\s*=\\s*['\"](?:mm|yhm|hidMm|password|passwd|pwd)['\"][^>]*value\\s*=\\s*['\"][^'\"]{1,}['\"]"), "$1=\"***\"")
+        text = text.replace(Regex("(?i)(token|csrf|session(id)?)\\s*[:=]\\s*['\"]?[A-Za-z0-9_\\-\\.]{6,}['\"]?"), "$1=***")
         text = text.replace(Regex("(?i)(学号|学籍号|账号|用户名|用户号)\\s*[:：]?\\s*\\w{4,}"), "\$1:***")
         text = text.replace(Regex("(?i)(姓名)\\s*[:：]?\\s*[\\u4e00-\\u9fa5A-Za-z·\\s]{2,}"), "\$1:***")
         text = text.replace(Regex("\\b\\d{17}[0-9Xx]\\b"), "******************")

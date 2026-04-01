@@ -227,12 +227,41 @@ fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> {
             parseParsedCourseArray(array)
         } else {
             val obj = org.json.JSONObject(trimmed)
-            val courseArray = obj.optJSONArray("courses") ?: org.json.JSONArray()
-            parseParsedCourseArray(courseArray)
+            parseParsedCoursesFromJsonObject(obj)
         }
     } catch (e: Exception) {
         emptyList()
     }
+}
+
+private fun parseParsedCoursesFromJsonObject(
+    obj: org.json.JSONObject,
+    depth: Int = 0
+): List<ParsedCourse> {
+    if (depth > 4) return emptyList()
+    val directArray = obj.optJSONArray("courses")
+        ?: obj.optJSONArray("parsedCourses")
+        ?: obj.optJSONArray("result")
+        ?: obj.optJSONArray("data")
+    if (directArray != null) {
+        val parsed = parseParsedCourseArray(directArray)
+        if (parsed.isNotEmpty()) return parsed
+    }
+    val directString = obj.optString("result").takeIf { it.isNotBlank() }
+        ?: obj.optString("data").takeIf { it.isNotBlank() }
+        ?: obj.optString("payload").takeIf { it.isNotBlank() }
+    if (!directString.isNullOrBlank()) {
+        val fromString = parseParsedCoursesFromRaw(directString)
+        if (fromString.isNotEmpty()) return fromString
+    }
+    val nested = obj.optJSONObject("data")
+        ?: obj.optJSONObject("result")
+        ?: obj.optJSONObject("payload")
+    if (nested != null) {
+        val parsedNested = parseParsedCoursesFromJsonObject(nested, depth + 1)
+        if (parsedNested.isNotEmpty()) return parsedNested
+    }
+    return emptyList()
 }
 
 private fun parseParsedCourseArray(array: org.json.JSONArray): List<ParsedCourse> {
