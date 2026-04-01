@@ -1,30 +1,24 @@
 pluginManagement {
     repositories {
-        if (System.getenv("CI") == "true") {
-            google()
-            mavenCentral()
-            gradlePluginPortal()
-        } else {
-            maven { url = uri("https://maven.aliyun.com/repository/public") }
-            maven { url = uri("https://maven.aliyun.com/repository/google") }
-            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-            google()
-            mavenCentral()
-            gradlePluginPortal()
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/gradle-plugin")
         }
     }
 }
 
 buildscript {
     repositories {
-        if (System.getenv("CI") == "true") {
-            google()
-            mavenCentral()
-        } else {
-            maven { url = uri("https://maven.aliyun.com/repository/public") }
-            maven { url = uri("https://maven.aliyun.com/repository/google") }
-            mavenCentral()
-            google()
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
         }
     }
     configurations.classpath {
@@ -92,14 +86,11 @@ buildscript {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        if (System.getenv("CI") == "true") {
-            google()
-            mavenCentral()
-        } else {
-            maven { url = uri("https://maven.aliyun.com/repository/public") }
-            maven { url = uri("https://maven.aliyun.com/repository/google") }
-            google()
-            mavenCentral()
+        maven {
+            url = uri("https://maven.aliyun.com/repository/google")
+        }
+        maven {
+            url = uri("https://maven.aliyun.com/repository/central")
         }
     }
 }
