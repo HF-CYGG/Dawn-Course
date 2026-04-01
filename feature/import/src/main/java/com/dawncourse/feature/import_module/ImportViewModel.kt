@@ -483,10 +483,12 @@ class ImportViewModel @Inject constructor(
      * 若内容为空则返回 false，表示无需弹窗。
      */
     private fun requestLlmConsent(raw: String): Boolean {
+        val sourceUrl = _uiState.value.webUrl
         val sanitized = sanitizeHtmlForLlm(raw)
         if (sanitized.isBlank()) return false
         pendingLlmContent = sanitized
         val preview = sanitized.take(1200)
+        val guessedSchoolName = guessSchoolNameForLlm(raw, sanitized)
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -494,10 +496,51 @@ class ImportViewModel @Inject constructor(
                 llmConsentPreview = preview,
                 llmConsentLength = sanitized.length,
                 llmConsentChecked = false,
-                llmConsentSourceUrl = it.webUrl
+                llmConsentSourceUrl = sourceUrl,
+                llmConsentSchoolName = it.llmConsentSchoolName.ifBlank { guessedSchoolName }
             )
         }
         return true
+    }
+
+    /**
+     * 尝试从抓取到的网页内容中自动推断学校名称，用于在“云端解析同意弹窗”中做预填。
+     *
+     * 设计目标：
+     * 1. 用户未填写学校名时尽量自动补全，提升服务端队列归类与统计的准确性
+     * 2. 不做联网识别，仅从已抓取到的本地 HTML/文本中提取
+     * 3. 失败时返回空字符串，保持 UI 可控
+     */
+    private fun guessSchoolNameForLlm(raw: String, sanitized: String): String {
+        val title = if (raw.contains("<title", ignoreCase = true)) {
+            Regex("(?is)<title[^>]*>(.*?)</title>")
+                .find(raw)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.replace(Regex("\\s+"), "")
+                .orEmpty()
+        } else {
+            ""
+        }
+        val fromTitle = extractSchoolNameFromText(title)
+        if (fromTitle.isNotBlank()) return fromTitle
+        return extractSchoolNameFromText(sanitized.take(2000))
+    }
+
+    /**
+     * 从文本中提取“学校名称”候选。
+     *
+     * 说明：
+     * - 仅匹配常见中文学校后缀（大学/学院/职业技术学院等），避免误把普通词当成学校名
+     * - 不做过度归一化（不裁剪后缀），避免不同学校被合并
+     */
+    private fun extractSchoolNameFromText(text: String): String {
+        if (text.isBlank()) return ""
+        val compact = text.replace(Regex("\\s+"), "")
+        val pattern = Regex(
+            "([\\u4e00-\\u9fa5]{2,40}(?:高等专科学校|职业技术学院|职业学院|技术学院|科技学院|师范大学|师范学院|医学院|中医药大学|外国语大学|外语学院|信息工程学院|信息工程大学|交通大学|工业大学|科技大学|财经大学|农业大学|理工大学|大学|学院))"
+        )
+        return pattern.find(compact)?.groupValues?.getOrNull(1).orEmpty()
     }
 
     /**
