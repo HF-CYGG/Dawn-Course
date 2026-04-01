@@ -83,6 +83,7 @@ object WidgetSyncManager {
      * 连续系统事件只保留最新一次 Widget 刷新请求。
      */
     internal val IMMEDIATE_RESTORE_WORK_POLICY: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE
+    private const val UNIQUE_NEXT_UPDATE_WORK_NAME = "DawnWidgetNextCourseUpdateWork"
     private const val NEXT_UPDATE_REQUEST_CODE = 10001
     private const val ACTION_FORCE_UPDATE = "com.dawncourse.widget.FORCE_UPDATE"
 
@@ -107,7 +108,9 @@ object WidgetSyncManager {
 
     fun cancelUpdate(context: Context) {
         runCatching {
-            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+            val workManager = WorkManager.getInstance(context)
+            workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
+            workManager.cancelUniqueWork(UNIQUE_NEXT_UPDATE_WORK_NAME)
         }.onFailure { Log.w(TAG, "cancelUpdate failed", it) }
     }
 
@@ -177,8 +180,22 @@ object WidgetSyncManager {
         val nowMillis = System.currentTimeMillis()
         if (triggerAtMillis <= nowMillis) {
             runCatching { alarmManager.cancel(pendingIntent) }
+            runCatching {
+                WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NEXT_UPDATE_WORK_NAME)
+            }.onFailure { Log.w(TAG, "cancel stale next-course work failed", it) }
             return
         }
+        val fallbackDelay = (triggerAtMillis - nowMillis).coerceAtLeast(1L)
+        runCatching {
+            val fallbackWork = OneTimeWorkRequestBuilder<WidgetUpdateWorker>()
+                .setInitialDelay(fallbackDelay, TimeUnit.MILLISECONDS)
+                .build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                UNIQUE_NEXT_UPDATE_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                fallbackWork
+            )
+        }.onFailure { Log.w(TAG, "schedule next-course fallback work failed", it) }
         try {
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
@@ -200,6 +217,9 @@ object WidgetSyncManager {
 
     /** 清除下一课程结束时的精确闹钟，供测试变体在重置隔离状态时收敛调度。 */
     fun cancelNextCourseUpdate(context: Context) {
+        runCatching {
+            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NEXT_UPDATE_WORK_NAME)
+        }.onFailure { Log.w(TAG, "cancel next-course fallback work failed", it) }
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             NEXT_UPDATE_REQUEST_CODE,
