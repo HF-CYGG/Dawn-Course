@@ -421,11 +421,16 @@ class ImportViewModel @Inject constructor(
      *
      * 仅在解析器运行失败时触发，避免影响主链路。
      */
-    private suspend fun tryLlmFallback(content: String, schoolName: String): List<ParsedCourse> {
+    private suspend fun tryLlmFallback(
+        content: String,
+        schoolName: String,
+        schoolSystemType: String
+    ): List<ParsedCourse> {
         if (content.isBlank()) return emptyList()
         val submitResult = submitLlmParseTaskUseCase(
             content = content,
             schoolName = schoolName,
+            schoolSystemType = schoolSystemType,
             consent = true,
             consentAt = System.currentTimeMillis()
         )
@@ -468,6 +473,17 @@ class ImportViewModel @Inject constructor(
         val parsedXiaoai = convertXiaoaiCoursesToParsedCourses(parseXiaoaiProviderResult(raw).courses)
         if (parsedXiaoai.isNotEmpty()) return parsedXiaoai
         return emptyList()
+    }
+
+    private fun detectSchoolSystemTypeForLlm(content: String, sourceUrl: String): String {
+        val text = "${sourceUrl}\n$content".lowercase()
+        return when {
+            text.contains("jwglxt") || text.contains("zhengfang") || text.contains("正方") -> "zhengfang"
+            text.contains("qiangzhi") || text.contains("强智") -> "qiangzhi"
+            text.contains("kingosoft") || text.contains("青果") -> "kingosoft"
+            text.contains("chaoxing") || text.contains("学习通") || text.contains("超星") -> "chaoxing"
+            else -> ""
+        }
     }
 
     /**
@@ -557,6 +573,8 @@ class ImportViewModel @Inject constructor(
             return
         }
         val schoolName = _uiState.value.llmConsentSchoolName.trim()
+        val sourceUrl = _uiState.value.llmConsentSourceUrl
+        val schoolSystemType = detectSchoolSystemTypeForLlm(content, sourceUrl)
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -566,7 +584,9 @@ class ImportViewModel @Inject constructor(
                     resultText = "已获得授权，正在进行云端解析..."
                 )
             }
-            val parsed = withContext(Dispatchers.IO) { tryLlmFallback(content, schoolName) }
+            val parsed = withContext(Dispatchers.IO) {
+                tryLlmFallback(content, schoolName, schoolSystemType)
+            }
             pendingLlmContent = ""
             if (parsed.isNotEmpty()) {
                 val lastUrl = _uiState.value.webUrl
