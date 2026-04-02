@@ -25,7 +25,8 @@ interface LlmParseRepository {
         consentAt: Long,
         schoolId: String? = null,
         schoolName: String? = null,
-        schoolSystemType: String? = null
+        schoolSystemType: String? = null,
+        sourceUrl: String? = null
     ): LlmParseTaskResult
 
     /**

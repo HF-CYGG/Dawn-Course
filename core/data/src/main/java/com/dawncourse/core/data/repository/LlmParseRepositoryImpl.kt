@@ -40,7 +40,8 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
         consentAt: Long,
         schoolId: String?,
         schoolName: String?,
-        schoolSystemType: String?
+        schoolSystemType: String?,
+        sourceUrl: String?
     ): LlmParseTaskResult = withContext(Dispatchers.IO) {
         // 服务端要求必须携带用户明确同意的标记，避免自动上传
         val payload = JSONObject()
@@ -50,6 +51,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .put("schoolId", schoolId ?: "")
             .put("schoolName", schoolName ?: "")
             .put("schoolSystemType", schoolSystemType ?: "")
+            .put("sourceUrl", sourceUrl ?: "")
             .toString()
         val requestBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val primaryResult = runCatching { executeSubmit(primaryUrl, requestBody) }

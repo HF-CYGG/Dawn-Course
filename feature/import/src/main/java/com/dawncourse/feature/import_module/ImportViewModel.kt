@@ -348,13 +348,32 @@ class ImportViewModel @Inject constructor(
                                     val fullScript = if (commonUtils.isNotEmpty()) "$commonUtils\n$script" else script
                                     val jsonResult = scriptEngine.parseHtml(fullScript, raw)
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
-                                    if (parsedDirect.isNotEmpty()) return@runParserRound parsedDirect
+                                    if (parsedDirect.isNotEmpty()) {
+                                        reportParserParseFeedback(parserName, true, null, currentUrl)
+                                        return@runParserRound parsedDirect
+                                    }
                                     val xiaoai = parseXiaoaiProviderResult(jsonResult)
                                     val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
-                                    if (parsedFromXiaoai.isNotEmpty()) return@runParserRound parsedFromXiaoai
-                                } catch (_: ScriptEngine.ScriptExecutionException) {
+                                    if (parsedFromXiaoai.isNotEmpty()) {
+                                        reportParserParseFeedback(parserName, true, null, currentUrl)
+                                        return@runParserRound parsedFromXiaoai
+                                    }
+                                    reportParserParseFeedback(parserName, false, "empty_result", currentUrl)
+                                } catch (e: ScriptEngine.ScriptExecutionException) {
+                                    reportParserParseFeedback(
+                                        parserName,
+                                        false,
+                                        e.message ?: "script_execution_exception",
+                                        currentUrl
+                                    )
                                     hasParserCrash = true
-                                } catch (_: Throwable) {
+                                } catch (e: Throwable) {
+                                    reportParserParseFeedback(
+                                        parserName,
+                                        false,
+                                        e.message ?: e::class.java.simpleName,
+                                        currentUrl
+                                    )
                                     hasParserCrash = true
                                 }
                             }
@@ -424,13 +443,15 @@ class ImportViewModel @Inject constructor(
     private suspend fun tryLlmFallback(
         content: String,
         schoolName: String,
-        schoolSystemType: String
+        schoolSystemType: String,
+        sourceUrl: String
     ): List<ParsedCourse> {
         if (content.isBlank()) return emptyList()
         val submitResult = submitLlmParseTaskUseCase(
             content = content,
             schoolName = schoolName,
             schoolSystemType = schoolSystemType,
+            sourceUrl = sourceUrl,
             consent = true,
             consentAt = System.currentTimeMillis()
         )
@@ -473,6 +494,25 @@ class ImportViewModel @Inject constructor(
         val parsedXiaoai = convertXiaoaiCoursesToParsedCourses(parseXiaoaiProviderResult(raw).courses)
         if (parsedXiaoai.isNotEmpty()) return parsedXiaoai
         return emptyList()
+    }
+
+    private fun reportParserParseFeedback(
+        parserName: String,
+        success: Boolean,
+        errorMessage: String?,
+        sourceUrl: String
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                scriptSyncRepository.reportScriptParseFeedback(
+                    scriptName = parserName,
+                    category = "parsers",
+                    success = success,
+                    errorMessage = errorMessage?.take(500),
+                    sourceUrl = sourceUrl
+                )
+            }
+        }
     }
 
     private fun detectSchoolSystemTypeForLlm(content: String, sourceUrl: String): String {
@@ -576,9 +616,14 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(resultText = "请先勾选同意后再上传") }
             return
         }
-        val schoolName = _uiState.value.llmConsentSchoolName.trim()
+        val schoolNameInput = _uiState.value.llmConsentSchoolName.trim()
         val sourceUrl = _uiState.value.llmConsentSourceUrl
         val schoolSystemType = detectSchoolSystemTypeForLlm(content, sourceUrl)
+        val schoolName = if (schoolNameInput.isNotBlank()) {
+            schoolNameInput
+        } else {
+            extractSchoolNameFromText(content)
+        }
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -589,7 +634,7 @@ class ImportViewModel @Inject constructor(
                 )
             }
             val parsed = withContext(Dispatchers.IO) {
-                tryLlmFallback(content, schoolName, schoolSystemType)
+                tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl)
             }
             pendingLlmContent = ""
             if (parsed.isNotEmpty()) {
@@ -646,14 +691,38 @@ class ImportViewModel @Inject constructor(
         var text = raw
         text = text.replace(Regex("(?is)<script\\b[^>]*>(.*?)</script>"), "<script>***</script>")
         text = text.replace(Regex("(?is)<style\\b[^>]*>(.*?)</style>"), "<style>***</style>")
-        text = text.replace(Regex("(?i)(name|id)\\s*=\\s*['\"](?:mm|yhm|hidMm|password|passwd|pwd)['\"][^>]*value\\s*=\\s*['\"][^'\"]{1,}['\"]"), "$1=\"***\"")
+        text = text.replace(Regex("(?i)(password|passwd|pwd|mm|hidMm|token|csrf|session(id)?)\\s*=\\s*['\"][^'\"]{1,}['\"]"), "$1=\"***\"")
         text = text.replace(Regex("(?i)(token|csrf|session(id)?)\\s*[:=]\\s*['\"]?[A-Za-z0-9_\\-\\.]{6,}['\"]?"), "$1=***")
         text = text.replace(Regex("(?i)(学号|学籍号|账号|用户名|用户号)\\s*[:：]?\\s*\\w{4,}"), "\$1:***")
         text = text.replace(Regex("(?i)(姓名)\\s*[:：]?\\s*[\\u4e00-\\u9fa5A-Za-z·\\s]{2,}"), "\$1:***")
         text = text.replace(Regex("\\b\\d{17}[0-9Xx]\\b"), "******************")
         text = text.replace(Regex("\\b1[3-9]\\d{9}\\b"), "***********")
         text = text.replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "***@***")
-        return text
+        val structuralSummary = buildTimetableStructureSummary(raw)
+        return if (structuralSummary.isBlank()) text else "$text\n\n$structuralSummary"
+    }
+
+    private fun buildTimetableStructureSummary(raw: String): String {
+        val tableMatches = Regex("(?is)<table\\b[^>]*>(.*?)</table>").findAll(raw).toList()
+        if (tableMatches.isEmpty()) return ""
+        val lines = mutableListOf<String>()
+        lines.add("[TIMETABLE_STRUCTURE]")
+        tableMatches.take(4).forEachIndexed { index, match ->
+            val tableHtml = match.groupValues.getOrNull(1).orEmpty()
+            val rowCount = Regex("(?is)<tr\\b").findAll(tableHtml).count()
+            val headerCells = Regex("(?is)<th\\b[^>]*>(.*?)</th>")
+                .findAll(tableHtml)
+                .mapNotNull { it.groupValues.getOrNull(1) }
+                .map { it.replace(Regex("(?is)<[^>]+>"), "").replace(Regex("\\s+"), " ").trim() }
+                .filter { it.isNotBlank() }
+                .take(12)
+                .toList()
+            lines.add("table_${index + 1}: rows=$rowCount")
+            if (headerCells.isNotEmpty()) {
+                lines.add("table_${index + 1}_headers=${headerCells.joinToString("|")}")
+            }
+        }
+        return lines.joinToString("\n")
     }
 
     /**

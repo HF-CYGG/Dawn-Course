@@ -20,4 +20,14 @@ interface ScriptSyncRepository {
      * @return 更新后的脚本内容，若失败则返回本地缓存或 assets 默认内容
      */
     suspend fun fetchAndCacheScript(scriptName: String, category: String = "js"): String
+
+    suspend fun getScriptVersion(scriptName: String, category: String = "js"): Int?
+
+    suspend fun reportScriptParseFeedback(
+        scriptName: String,
+        category: String = "parsers",
+        success: Boolean,
+        errorMessage: String? = null,
+        sourceUrl: String? = null
+    ): Boolean
 }

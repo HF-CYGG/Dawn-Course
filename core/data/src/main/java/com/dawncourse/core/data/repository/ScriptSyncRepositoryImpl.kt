@@ -6,8 +6,10 @@ import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.security.KeyFactory
 import java.security.MessageDigest
@@ -48,7 +50,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     private data class ScriptMeta(
         val sha256: String,
         val signature: String,
-        val alg: String
+        val alg: String,
+        val version: Int?
     )
 
     override suspend fun getScript(scriptName: String, category: String): String {
@@ -108,6 +111,42 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun getScriptVersion(scriptName: String, category: String): Int? {
+        return withContext(Dispatchers.IO) {
+            val safeCategory = normalizePathSegment(category) ?: return@withContext null
+            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext null
+            val metaRaw = readMetaFromLocalCache(safeScriptName, safeCategory)
+                ?: runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            parseScriptMeta(metaRaw)?.version
+        }
+    }
+
+    override suspend fun reportScriptParseFeedback(
+        scriptName: String,
+        category: String,
+        success: Boolean,
+        errorMessage: String?,
+        sourceUrl: String?
+    ): Boolean {
+        return withContext(Dispatchers.IO) {
+            val safeCategory = normalizePathSegment(category) ?: return@withContext false
+            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext false
+            val scriptVersion = getScriptVersion(safeScriptName, safeCategory) ?: 0
+            val payload = JSONObject()
+                .put("scriptName", safeScriptName)
+                .put("category", safeCategory)
+                .put("scriptVersion", scriptVersion)
+                .put("success", success)
+                .put("errorMessage", errorMessage ?: "")
+                .put("sourceUrl", sourceUrl ?: "")
+                .toString()
+            val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+            runCatching { postFeedback(primaryUrl, body) }.getOrElse {
+                runCatching { postFeedback(fallbackUrl, body) }.getOrDefault(false)
+            }
+        }
+    }
+
     private fun fetchScriptFromCloud(scriptName: String, category: String): String? {
         var result = tryFetch(primaryUrl + category + "/" + scriptName)
         if (result != null) return result
@@ -134,6 +173,17 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    private fun postFeedback(baseScriptsUrl: String, body: okhttp3.RequestBody): Boolean {
+        val baseHostUrl = baseScriptsUrl.removeSuffix("scripts/")
+        val request = Request.Builder()
+            .url("${baseHostUrl}api/v1/script_feedback")
+            .post(body)
+            .build()
+        client.newCall(request).execute().use { response ->
+            return response.isSuccessful
         }
     }
 
@@ -242,7 +292,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             ScriptMeta(
                 sha256 = json.optString("sha256"),
                 signature = json.optString("signature"),
-                alg = json.optString("alg")
+                alg = json.optString("alg"),
+                version = json.optInt("version").takeIf { it > 0 }
             )
         } catch (_: Exception) {
             null
