@@ -572,6 +572,10 @@ class ImportViewModel @Inject constructor(
             _uiState.update { it.copy(showLlmConsentDialog = false, llmConsentChecked = false) }
             return
         }
+        if (!_uiState.value.llmConsentChecked) {
+            _uiState.update { it.copy(resultText = "请先勾选同意后再上传") }
+            return
+        }
         val schoolName = _uiState.value.llmConsentSchoolName.trim()
         val sourceUrl = _uiState.value.llmConsentSourceUrl
         val schoolSystemType = detectSchoolSystemTypeForLlm(content, sourceUrl)
