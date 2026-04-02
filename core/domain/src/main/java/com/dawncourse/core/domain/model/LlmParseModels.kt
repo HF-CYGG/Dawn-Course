@@ -17,6 +17,7 @@ data class LlmParseTaskResult(
  * LLM 异步解析任务状态
  */
 enum class LlmParseStatus {
+    PENDING,
     PROCESSING,
     SUCCESS,
     FAILED

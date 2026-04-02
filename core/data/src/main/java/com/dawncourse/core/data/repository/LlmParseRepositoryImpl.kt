@@ -85,9 +85,11 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
+                val bodyText = response.body?.string().orEmpty()
+                val bodyJson = runCatching { JSONObject(bodyText) }.getOrNull()
                 return LlmParseTaskResult(
                     success = false,
-                    message = "任务提交失败：HTTP ${response.code}"
+                    message = bodyJson?.optString("msg")?.ifBlank { null } ?: "任务提交失败：HTTP ${response.code}"
                 )
             }
             val responseText = response.body?.string().orEmpty()
@@ -114,7 +116,12 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
                     message = "任务提交失败：缺少 taskId"
                 )
             }
-            return LlmParseTaskResult(success = true, taskId = taskId)
+            val message = json.optString("msg").takeIf { it.isNotBlank() }
+            return LlmParseTaskResult(
+                success = true,
+                taskId = taskId,
+                message = message
+            )
         }
     }
 
@@ -151,6 +158,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             val data = json.optJSONObject("data")
             val statusRaw = (data?.optString("status") ?: json.optString("status")).lowercase()
             val status = when (statusRaw) {
+                "pending" -> LlmParseStatus.PENDING
                 "success" -> LlmParseStatus.SUCCESS
                 "failed" -> LlmParseStatus.FAILED
                 else -> LlmParseStatus.PROCESSING
@@ -160,7 +168,8 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
                 ?: data?.optString("data")?.takeIf { it.isNotBlank() }
                 ?: json.optString("result").takeIf { it.isNotBlank() }
                 ?: json.optString("data").takeIf { it.isNotBlank() }
-            val message = json.optString("msg").takeIf { it.isNotBlank() }
+            val message = data?.optString("pendingReason")?.takeIf { it.isNotBlank() }
+                ?: json.optString("msg").takeIf { it.isNotBlank() }
             return LlmParseStatusResult(
                 success = true,
                 status = status,

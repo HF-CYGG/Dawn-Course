@@ -457,7 +457,7 @@ class ImportViewModel @Inject constructor(
         )
         val taskId = submitResult.taskId
         if (!submitResult.success || taskId.isNullOrBlank()) return emptyList()
-        val maxAttempts = 10
+        val maxAttempts = if (submitResult.message == "accepted_pending_model_key") 24 else 12
         var continuousRequestFailures = 0
         repeat(maxAttempts) { attempt ->
             val statusResult = fetchLlmParseStatusUseCase(taskId)
@@ -471,6 +471,11 @@ class ImportViewModel @Inject constructor(
             }
             continuousRequestFailures = 0
             when (statusResult.status) {
+                com.dawncourse.core.domain.model.LlmParseStatus.PENDING -> {
+                    if (attempt < maxAttempts - 1) {
+                        kotlinx.coroutines.delay(5000)
+                    }
+                }
                 com.dawncourse.core.domain.model.LlmParseStatus.SUCCESS -> {
                     val jsonResult = statusResult.resultText.orEmpty()
                     return parseLlmFallbackResult(jsonResult)
@@ -480,7 +485,7 @@ class ImportViewModel @Inject constructor(
                 }
                 com.dawncourse.core.domain.model.LlmParseStatus.PROCESSING -> {
                     if (attempt < maxAttempts - 1) {
-                        kotlinx.coroutines.delay(3000)
+                        kotlinx.coroutines.delay(2500)
                     }
                 }
             }
