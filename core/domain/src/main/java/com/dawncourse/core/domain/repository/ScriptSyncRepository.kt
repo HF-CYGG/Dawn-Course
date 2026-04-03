@@ -24,7 +24,11 @@ interface ScriptSyncRepository {
      * @param category 脚本分类，如 "parsers" 或 "js"
      * @return 脚本的完整字符串内容
      */
-    suspend fun getScript(scriptName: String, category: String = "js"): String
+    suspend fun getScript(
+        scriptName: String,
+        category: String = "js",
+        pullTaskId: String = ""
+    ): String
 
     /**
      * 获取脚本并返回来源信息
@@ -32,7 +36,11 @@ interface ScriptSyncRepository {
      * 该接口用于上层感知“是否成功拉取云端脚本”，
      * 以便在降级到本地缓存/内置脚本时进行用户提示。
      */
-    suspend fun getScriptWithInfo(scriptName: String, category: String = "js"): ScriptFetchResult
+    suspend fun getScriptWithInfo(
+        scriptName: String,
+        category: String = "js",
+        pullTaskId: String = ""
+    ): ScriptFetchResult
     
     /**
      * 强制从云端更新脚本
@@ -40,7 +48,11 @@ interface ScriptSyncRepository {
      * @param category 脚本分类
      * @return 更新后的脚本内容，若失败则返回本地缓存或 assets 默认内容
      */
-    suspend fun fetchAndCacheScript(scriptName: String, category: String = "js"): String
+    suspend fun fetchAndCacheScript(
+        scriptName: String,
+        category: String = "js",
+        pullTaskId: String = ""
+    ): String
 
     suspend fun getScriptVersion(scriptName: String, category: String = "js"): Int?
 

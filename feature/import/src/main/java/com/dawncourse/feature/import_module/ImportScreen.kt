@@ -1157,6 +1157,8 @@ private fun WebViewStep(
                     onClick = {
                         coroutineScope.launch {
                             try {
+                                // 每次点击“一键提取”视为一次独立任务，用于脚本拉取去重统计
+                                viewModel.beginScriptPullTask()
                                 val currentWebView = webView
                                 if (currentWebView == null) {
                                     viewModel.updateResultText("未能提取到有效 HTML 内容")

@@ -147,6 +147,8 @@ class ImportViewModel @Inject constructor(
     private var pendingLlmContent: String = ""
     // 本地脚本降级提示节流时间，避免一次提取触发多次相同提示
     private var lastLocalScriptHintAt: Long = 0L
+    // 当前脚本拉取任务 ID（用于“按任务去重统计”）
+    private var currentScriptPullTaskId: String = ""
     
     init {
         // 初始化学期开始日期为本周一 (符合大多数导入场景)
@@ -228,8 +230,22 @@ class ImportViewModel @Inject constructor(
         }
     }
     
+    /**
+     * 开始一次脚本拉取任务
+     *
+     * 每次用户点击“一键提取”都会生成新的任务 ID，
+     * 该 ID 会随脚本拉取上报到服务端，用于按任务去重统计。
+     */
+    fun beginScriptPullTask() {
+        currentScriptPullTaskId = "pull_${System.currentTimeMillis()}_${(0..9999).random()}"
+    }
+
     suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
-        val fetchResult = scriptSyncRepository.getScriptWithInfo(scriptName, category)
+        val fetchResult = scriptSyncRepository.getScriptWithInfo(
+            scriptName = scriptName,
+            category = category,
+            pullTaskId = currentScriptPullTaskId
+        )
         if (!fetchResult.fromCloud && fetchResult.content.isNotBlank()) {
             val now = System.currentTimeMillis()
             if (now - lastLocalScriptHintAt > 5000) {
@@ -344,9 +360,17 @@ class ImportViewModel @Inject constructor(
                         val runParserRound: suspend (Boolean) -> List<ParsedCourse> = runParserRound@{ forceRefresh ->
                             val commonUtils = try {
                                 if (forceRefresh) {
-                                    scriptSyncRepository.fetchAndCacheScript("common_parser_utils.js", "parsers")
+                                    scriptSyncRepository.fetchAndCacheScript(
+                                        scriptName = "common_parser_utils.js",
+                                        category = "parsers",
+                                        pullTaskId = currentScriptPullTaskId
+                                    )
                                 } else {
-                                    scriptSyncRepository.getScript("common_parser_utils.js", "parsers")
+                                    scriptSyncRepository.getScript(
+                                        scriptName = "common_parser_utils.js",
+                                        category = "parsers",
+                                        pullTaskId = currentScriptPullTaskId
+                                    )
                                 }
                             } catch (_: Exception) {
                                 ""
@@ -355,9 +379,17 @@ class ImportViewModel @Inject constructor(
                                 hasAnyParserAttempt = true
                                 try {
                                     val script = if (forceRefresh) {
-                                        scriptSyncRepository.fetchAndCacheScript(parserName, "parsers")
+                                        scriptSyncRepository.fetchAndCacheScript(
+                                            scriptName = parserName,
+                                            category = "parsers",
+                                            pullTaskId = currentScriptPullTaskId
+                                        )
                                     } else {
-                                        scriptSyncRepository.getScript(parserName, "parsers")
+                                        scriptSyncRepository.getScript(
+                                            scriptName = parserName,
+                                            category = "parsers",
+                                            pullTaskId = currentScriptPullTaskId
+                                        )
                                     }
                                     val fullScript = if (commonUtils.isNotEmpty()) "$commonUtils\n$script" else script
                                     val jsonResult = scriptEngine.parseHtml(fullScript, raw)
@@ -445,6 +477,9 @@ class ImportViewModel @Inject constructor(
                         resultText = "解析失败：数据格式不支持或解析过程发生异常。\n请重试；若仍失败，请确认已登录且位于课表页面。"
                     )
                 }
+            } finally {
+                // 结束本次拉取任务，避免后续无关操作串到同一任务统计中
+                currentScriptPullTaskId = ""
             }
         }
     }

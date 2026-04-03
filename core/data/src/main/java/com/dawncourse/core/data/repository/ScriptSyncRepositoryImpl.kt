@@ -57,11 +57,15 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val version: Int?
     )
 
-    override suspend fun getScript(scriptName: String, category: String): String {
-        return getScriptWithInfo(scriptName, category).content
+    override suspend fun getScript(scriptName: String, category: String, pullTaskId: String): String {
+        return getScriptWithInfo(scriptName, category, pullTaskId).content
     }
 
-    override suspend fun getScriptWithInfo(scriptName: String, category: String): ScriptFetchResult {
+    override suspend fun getScriptWithInfo(
+        scriptName: String,
+        category: String,
+        pullTaskId: String
+    ): ScriptFetchResult {
         return withContext(Dispatchers.IO) {
             val safeCategory = normalizePathSegment(category)
                 ?: return@withContext ScriptFetchResult("", false, "invalid_category")
@@ -79,7 +83,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 reportScriptPullStat(
                     scriptName = safeScriptName,
                     category = safeCategory,
-                    source = remoteSource
+                    source = remoteSource,
+                    pullTaskId = pullTaskId
                 )
                 return@withContext ScriptFetchResult(
                     content = remoteScript,
@@ -95,7 +100,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 reportScriptPullStat(
                     scriptName = safeScriptName,
                     category = safeCategory,
-                    source = "local_cache"
+                    source = "local_cache",
+                    pullTaskId = pullTaskId
                 )
                 return@withContext ScriptFetchResult(
                     content = cachedScript,
@@ -108,7 +114,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             reportScriptPullStat(
                 scriptName = safeScriptName,
                 category = safeCategory,
-                source = "assets"
+                source = "assets",
+                pullTaskId = pullTaskId
             )
             ScriptFetchResult(
                 content = assetsScript,
@@ -118,9 +125,9 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun fetchAndCacheScript(scriptName: String, category: String): String {
+    override suspend fun fetchAndCacheScript(scriptName: String, category: String, pullTaskId: String): String {
         return withContext(Dispatchers.IO) {
-            getScriptWithInfo(scriptName, category).content
+            getScriptWithInfo(scriptName, category, pullTaskId).content
         }
     }
 
@@ -218,12 +225,13 @@ class ScriptSyncRepositoryImpl @Inject constructor(
      * - 降级本地缓存
      * - 降级 assets
      */
-    private fun reportScriptPullStat(scriptName: String, category: String, source: String) {
+    private fun reportScriptPullStat(scriptName: String, category: String, source: String, pullTaskId: String) {
         runCatching {
             val payload = JSONObject()
                 .put("scriptName", scriptName)
                 .put("category", category)
                 .put("source", source)
+                .put("pullTaskId", pullTaskId)
                 .put("fromCloud", source == "cloud_primary" || source == "cloud_fallback")
                 .put("timestamp", System.currentTimeMillis())
                 .toString()
