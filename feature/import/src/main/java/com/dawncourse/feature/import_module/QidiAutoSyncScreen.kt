@@ -500,6 +500,8 @@ fun QidiAutoSyncScreen(
 
     fun startSyncFlow() {
         scope.launch {
+            // 自动更新流程开始：创建脚本拉取任务，确保云端拉取计入统计
+            viewModel.beginScriptPullTask()
             showProgressDialog = true
             currentStep = "读取绑定凭据"
             addLog("开始读取绑定凭据", SyncLogType.INFO)
@@ -548,6 +550,8 @@ fun QidiAutoSyncScreen(
 
     fun startExtractFlow() {
         scope.launch {
+            // 若用户直接进入提取步骤，兜底创建任务，避免漏记统计
+            viewModel.ensureScriptPullTask()
             showProgressDialog = true
             currentStep = "注入脚本并提取课程"
             addLog("开始提取课程", SyncLogType.ACTION)
@@ -707,6 +711,9 @@ fun QidiAutoSyncScreen(
                 currentStep = "提取失败"
                 addLog("提取失败", SyncLogType.ERROR)
                 reportError("提取失败")
+            } finally {
+                // 一次提取流程结束后清理任务 ID，避免后续无关动作串统计
+                viewModel.endScriptPullTask()
             }
         }
     }
@@ -2089,12 +2096,44 @@ class QidiSyncViewModel @Inject constructor(
     private val semesterRepository: SemesterRepository,
     private val scriptSyncRepository: ScriptSyncRepository
 ) : androidx.lifecycle.ViewModel() {
+    // 自动更新（实验）当前脚本拉取任务 ID，用于服务端按任务去重统计
+    private var currentScriptPullTaskId: String = ""
+
+    /**
+     * 开始一次自动更新脚本拉取任务
+     *
+     * 每次用户点击“开始连接”或“开始提取”时调用，
+     * 便于服务端统计“按任务去重”的拉取次数。
+     */
+    fun beginScriptPullTask() {
+        currentScriptPullTaskId = "qzsync_${System.currentTimeMillis()}_${(0..9999).random()}"
+    }
+
+    /**
+     * 确保当前存在任务 ID，避免遗漏统计
+     */
+    fun ensureScriptPullTask() {
+        if (currentScriptPullTaskId.isBlank()) {
+            beginScriptPullTask()
+        }
+    }
+
+    /**
+     * 结束当前脚本拉取任务
+     */
+    fun endScriptPullTask() {
+        currentScriptPullTaskId = ""
+    }
 
     /**
      * 获取指定脚本内容（优先从云端获取最新）
      */
     suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
-        return scriptSyncRepository.getScript(scriptName, category)
+        return scriptSyncRepository.getScript(
+            scriptName = scriptName,
+            category = category,
+            pullTaskId = currentScriptPullTaskId
+        )
     }
 
     /**
