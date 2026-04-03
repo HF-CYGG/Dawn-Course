@@ -145,6 +145,8 @@ class ImportViewModel @Inject constructor(
 
     // 用户确认前暂存云端解析的完整内容，避免在 UI 状态中存放大文本
     private var pendingLlmContent: String = ""
+    // 本地脚本降级提示节流时间，避免一次提取触发多次相同提示
+    private var lastLocalScriptHintAt: Long = 0L
     
     init {
         // 初始化学期开始日期为本周一 (符合大多数导入场景)
@@ -227,7 +229,19 @@ class ImportViewModel @Inject constructor(
     }
     
     suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
-        return scriptSyncRepository.getScript(scriptName, category)
+        val fetchResult = scriptSyncRepository.getScriptWithInfo(scriptName, category)
+        if (!fetchResult.fromCloud && fetchResult.content.isNotBlank()) {
+            val now = System.currentTimeMillis()
+            if (now - lastLocalScriptHintAt > 5000) {
+                lastLocalScriptHintAt = now
+                _uiState.update {
+                    it.copy(
+                        resultText = "云端脚本拉取失败，正在使用本地脚本（可能不是最新版本）"
+                    )
+                }
+            }
+        }
+        return fetchResult.content
     }
 
     /**

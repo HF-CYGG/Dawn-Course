@@ -1,6 +1,19 @@
 package com.dawncourse.core.domain.repository
 
 /**
+ * 脚本获取结果
+ *
+ * @property content 脚本内容
+ * @property fromCloud 是否来自云端
+ * @property source 来源标识（cloud_primary / cloud_fallback / local_cache / assets）
+ */
+data class ScriptFetchResult(
+    val content: String,
+    val fromCloud: Boolean,
+    val source: String
+)
+
+/**
  * 脚本同步仓库接口
  * 用于从云端拉取最新的解析与导航脚本，应对教务系统的频繁变动。
  */
@@ -12,6 +25,14 @@ interface ScriptSyncRepository {
      * @return 脚本的完整字符串内容
      */
     suspend fun getScript(scriptName: String, category: String = "js"): String
+
+    /**
+     * 获取脚本并返回来源信息
+     *
+     * 该接口用于上层感知“是否成功拉取云端脚本”，
+     * 以便在降级到本地缓存/内置脚本时进行用户提示。
+     */
+    suspend fun getScriptWithInfo(scriptName: String, category: String = "js"): ScriptFetchResult
     
     /**
      * 强制从云端更新脚本

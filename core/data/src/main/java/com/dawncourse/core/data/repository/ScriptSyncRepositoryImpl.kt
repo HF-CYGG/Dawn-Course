@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import android.content.Context
 import com.dawncourse.core.data.BuildConfig
+import com.dawncourse.core.domain.repository.ScriptFetchResult
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     // 云端脚本的存储路径
     private val primaryUrl = "http://yyh163.xyz:10000/scripts/"
     private val fallbackUrl = "http://47.105.76.193/scripts/"
+    private val primaryPullStatUrl = "http://yyh163.xyz:10000/api/v1/script_pull"
+    private val fallbackPullStatUrl = "http://47.105.76.193/api/v1/script_pull"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -55,59 +58,69 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     )
 
     override suspend fun getScript(scriptName: String, category: String): String {
+        return getScriptWithInfo(scriptName, category).content
+    }
+
+    override suspend fun getScriptWithInfo(scriptName: String, category: String): ScriptFetchResult {
         return withContext(Dispatchers.IO) {
-            val safeCategory = normalizePathSegment(category) ?: return@withContext ""
-            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext ""
+            val safeCategory = normalizePathSegment(category)
+                ?: return@withContext ScriptFetchResult("", false, "invalid_category")
+            val safeScriptName = normalizePathSegment(scriptName)
+                ?: return@withContext ScriptFetchResult("", false, "invalid_script_name")
             val cacheKey = buildCacheKey(safeCategory, safeScriptName)
-
-            val cached = cacheMutex.withLock { memoryCache[cacheKey] }
-            if (cached != null && isMemoryCacheValid(cached.fetchedAt)) {
-                return@withContext cached.content
-            }
-
-            val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            val remoteResult = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            val remoteScript = remoteResult?.content
             val remoteMeta = runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
             if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
+                val remoteSource = remoteResult?.source ?: "cloud_unknown"
                 saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
                 saveMetaToLocalCache(safeScriptName, safeCategory, remoteMeta)
                 updateMemoryCache(cacheKey, remoteScript)
-                return@withContext remoteScript
+                reportScriptPullStat(
+                    scriptName = safeScriptName,
+                    category = safeCategory,
+                    source = remoteSource
+                )
+                return@withContext ScriptFetchResult(
+                    content = remoteScript,
+                    fromCloud = true,
+                    source = remoteSource
+                )
             }
 
             val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
             val cachedMeta = readMetaFromLocalCache(safeScriptName, safeCategory)
             if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
                 updateMemoryCache(cacheKey, cachedScript)
-                return@withContext cachedScript
+                reportScriptPullStat(
+                    scriptName = safeScriptName,
+                    category = safeCategory,
+                    source = "local_cache"
+                )
+                return@withContext ScriptFetchResult(
+                    content = cachedScript,
+                    fromCloud = false,
+                    source = "local_cache"
+                )
             }
 
-            readScriptFromAssets(safeScriptName, safeCategory)
+            val assetsScript = readScriptFromAssets(safeScriptName, safeCategory)
+            reportScriptPullStat(
+                scriptName = safeScriptName,
+                category = safeCategory,
+                source = "assets"
+            )
+            ScriptFetchResult(
+                content = assetsScript,
+                fromCloud = false,
+                source = "assets"
+            )
         }
     }
 
     override suspend fun fetchAndCacheScript(scriptName: String, category: String): String {
         return withContext(Dispatchers.IO) {
-            val safeCategory = normalizePathSegment(category) ?: return@withContext ""
-            val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext ""
-            val cacheKey = buildCacheKey(safeCategory, safeScriptName)
-
-            val remoteScript = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
-            val remoteMeta = runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
-            if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
-                saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
-                saveMetaToLocalCache(safeScriptName, safeCategory, remoteMeta)
-                updateMemoryCache(cacheKey, remoteScript)
-                return@withContext remoteScript
-            }
-
-            val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
-            val cachedMeta = readMetaFromLocalCache(safeScriptName, safeCategory)
-            if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
-                updateMemoryCache(cacheKey, cachedScript)
-                return@withContext cachedScript
-            }
-
-            readScriptFromAssets(safeScriptName, safeCategory)
+            getScriptWithInfo(scriptName, category).content
         }
     }
 
@@ -147,11 +160,21 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun fetchScriptFromCloud(scriptName: String, category: String): String? {
+    private data class CloudScriptResult(
+        val content: String?,
+        val source: String
+    )
+
+    private fun fetchScriptFromCloud(scriptName: String, category: String): CloudScriptResult {
         var result = tryFetch(primaryUrl + category + "/" + scriptName)
-        if (result != null) return result
+        if (result != null) {
+            return CloudScriptResult(result, "cloud_primary")
+        }
         result = tryFetch(fallbackUrl + category + "/" + scriptName)
-        return result
+        if (result != null) {
+            return CloudScriptResult(result, "cloud_fallback")
+        }
+        return CloudScriptResult(null, "cloud_failed")
     }
 
     private fun fetchScriptMetaFromCloud(scriptName: String, category: String): String? {
@@ -180,6 +203,40 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val baseHostUrl = baseScriptsUrl.removeSuffix("scripts/")
         val request = Request.Builder()
             .url("${baseHostUrl}api/v1/script_feedback")
+            .post(body)
+            .build()
+        client.newCall(request).execute().use { response ->
+            return response.isSuccessful
+        }
+    }
+
+    /**
+     * 上报脚本拉取统计（最佳努力，不影响主流程）
+     *
+     * 每次脚本请求都会触发一次上报，用于服务端统计：
+     * - 来自云端（主域名/备用域名）
+     * - 降级本地缓存
+     * - 降级 assets
+     */
+    private fun reportScriptPullStat(scriptName: String, category: String, source: String) {
+        runCatching {
+            val payload = JSONObject()
+                .put("scriptName", scriptName)
+                .put("category", category)
+                .put("source", source)
+                .put("fromCloud", source == "cloud_primary" || source == "cloud_fallback")
+                .put("timestamp", System.currentTimeMillis())
+                .toString()
+            val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+            if (!postScriptPull(primaryPullStatUrl, body)) {
+                postScriptPull(fallbackPullStatUrl, body)
+            }
+        }
+    }
+
+    private fun postScriptPull(url: String, body: okhttp3.RequestBody): Boolean {
+        val request = Request.Builder()
+            .url(url)
             .post(body)
             .build()
         client.newCall(request).execute().use { response ->
