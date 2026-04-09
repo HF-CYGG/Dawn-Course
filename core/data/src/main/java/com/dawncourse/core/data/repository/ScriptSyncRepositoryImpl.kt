@@ -31,9 +31,9 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
     // 云端脚本的存储路径
     private val primaryUrl = "http://yyh163.xyz:10000/scripts/"
-    private val fallbackUrl = "http://47.105.76.193/scripts/"
+    private val fallbackUrl = "http://47.105.76.193:15000/scripts/"
     private val primaryPullStatUrl = "http://yyh163.xyz:10000/api/v1/script_pull"
-    private val fallbackPullStatUrl = "http://47.105.76.193/api/v1/script_pull"
+    private val fallbackPullStatUrl = "http://47.105.76.193:15000/api/v1/script_pull"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)

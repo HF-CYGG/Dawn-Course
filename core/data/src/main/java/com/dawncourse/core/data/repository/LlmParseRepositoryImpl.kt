@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
 
     private val primaryUrl = "http://yyh163.xyz:10000/"
-    private val fallbackUrl = "http://47.105.76.193/"
+    private val fallbackUrl = "http://47.105.76.193:15000/"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
