@@ -61,7 +61,7 @@ buildscript {
             force("org.bitbucket.b_c:jose4j:0.9.6")
             
             // 强制 Guava (>= 33.0.0-android)
-            force("com.google.guava:guava:33.5.0-android")
+            force("com.google.guava:guava:33.6.0-android")
             
             // 强制 Gson (>= 2.10.1)
             force("com.google.code.gson:gson:2.13.2")
@@ -72,7 +72,7 @@ buildscript {
                 substitute(module("com.google.protobuf:protobuf-java")).using(module("com.google.protobuf:protobuf-java:4.34.1"))
                 substitute(module("org.jdom:jdom2")).using(module("org.jdom:jdom2:2.0.6.1"))
                 substitute(module("org.bitbucket.b_c:jose4j")).using(module("org.bitbucket.b_c:jose4j:0.9.6"))
-                substitute(module("com.google.guava:guava")).using(module("com.google.guava:guava:33.5.0-android"))
+                substitute(module("com.google.guava:guava")).using(module("com.google.guava:guava:33.6.0-android"))
                 substitute(module("com.google.code.gson:gson")).using(module("com.google.code.gson:gson:2.13.2"))
                 substitute(module("io.netty:netty-codec-http2")).using(module("io.netty:netty-codec-http2:4.2.12.Final"))
                 substitute(module("io.netty:netty-handler")).using(module("io.netty:netty-handler:4.2.12.Final"))
