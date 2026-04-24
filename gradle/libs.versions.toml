@@ -35,7 +35,7 @@ protobuf = "4.34.1"
 jdom = "2.0.6.1"
 guava = "33.5.0-android"
 gson = "2.13.2"
-jsoup = "1.18.1"
+jsoup = "1.22.2"
 palette = "1.0.0"
 
 # 库依赖定义 (Libraries)
