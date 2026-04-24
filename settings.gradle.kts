@@ -64,7 +64,7 @@ buildscript {
             force("com.google.guava:guava:33.5.0-android")
             
             // 强制 Gson (>= 2.10.1)
-            force("com.google.code.gson:gson:2.13.2")
+            force("com.google.code.gson:gson:2.14.0")
 
             dependencySubstitution {
                 substitute(module("commons-io:commons-io")).using(module("commons-io:commons-io:2.21.0"))
@@ -73,7 +73,7 @@ buildscript {
                 substitute(module("org.jdom:jdom2")).using(module("org.jdom:jdom2:2.0.6.1"))
                 substitute(module("org.bitbucket.b_c:jose4j")).using(module("org.bitbucket.b_c:jose4j:0.9.6"))
                 substitute(module("com.google.guava:guava")).using(module("com.google.guava:guava:33.5.0-android"))
-                substitute(module("com.google.code.gson:gson")).using(module("com.google.code.gson:gson:2.13.2"))
+                substitute(module("com.google.code.gson:gson")).using(module("com.google.code.gson:gson:2.14.0"))
                 substitute(module("io.netty:netty-codec-http2")).using(module("io.netty:netty-codec-http2:4.2.12.Final"))
                 substitute(module("io.netty:netty-handler")).using(module("io.netty:netty-handler:4.2.12.Final"))
                 substitute(module("io.netty:netty-codec")).using(module("io.netty:netty-codec:4.2.12.Final"))
