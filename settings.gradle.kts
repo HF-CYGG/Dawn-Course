@@ -46,7 +46,7 @@ buildscript {
             force("org.bouncycastle:bcpkix-jdk18on:1.83")
             
             // 强制 Apache Commons IO (>= 2.18.0)
-            force("commons-io:commons-io:2.21.0")
+            force("commons-io:commons-io:2.22.0")
             
             // 强制 Apache Commons Compress (>= 1.28.0)
             force("org.apache.commons:commons-compress:1.28.0")
@@ -67,7 +67,7 @@ buildscript {
             force("com.google.code.gson:gson:2.13.2")
 
             dependencySubstitution {
-                substitute(module("commons-io:commons-io")).using(module("commons-io:commons-io:2.21.0"))
+                substitute(module("commons-io:commons-io")).using(module("commons-io:commons-io:2.22.0"))
                 substitute(module("org.apache.commons:commons-compress")).using(module("org.apache.commons:commons-compress:1.28.0"))
                 substitute(module("com.google.protobuf:protobuf-java")).using(module("com.google.protobuf:protobuf-java:4.34.1"))
                 substitute(module("org.jdom:jdom2")).using(module("org.jdom:jdom2:2.0.6.1"))
