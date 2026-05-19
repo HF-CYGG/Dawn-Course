@@ -638,31 +638,71 @@ fun QidiAutoSyncScreen(
                 addLog("开始解析课程数据", SyncLogType.INFO)
                 var wait = 0
                 var parsed: List<ParsedCourse> = emptyList()
-                while (wait < 300) {
+                var cloudFailureReason = ""
+                while (wait < 900) {
                     val ui = importViewModel.uiState.value
                     parsed = ui.parsedCourses
                     if (parsed.isNotEmpty()) break
-                    if (ui.showLlmConsentDialog) {
-                        currentStep = "等待用户确认云端解析"
-                        subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
-                        if (wait % 25 == 0) {
-                            addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                    when (ui.parsePipelineStage) {
+                        ParsePipelineStage.WAITING_USER_CONSENT -> {
+                            currentStep = "等待用户确认云端解析"
+                            subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
+                            if (wait % 25 == 0) {
+                                addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                            }
                         }
-                    } else if (ui.isLoading) {
-                        currentStep = "云端解析中"
+                        ParsePipelineStage.CLOUD_PARSING -> {
+                            currentStep = "云端解析中"
+                            if (wait % 25 == 0) {
+                                addLog("云端解析处理中", SyncLogType.INFO)
+                            }
+                        }
+                        ParsePipelineStage.CLOUD_FAILED -> {
+                            cloudFailureReason = ui.resultText.ifBlank { "云端解析失败" }
+                            break
+                        }
+                        ParsePipelineStage.LOCAL_PARSING -> {
+                            if (wait % 25 == 0) {
+                                currentStep = "本地解析中"
+                            }
+                        }
+                        else -> {
+                            if (ui.showLlmConsentDialog) {
+                                currentStep = "等待用户确认云端解析"
+                            } else if (ui.isLoading) {
+                                currentStep = "解析中"
+                            }
+                        }
+                    }
+                    if (ui.showLlmConsentDialog && ui.parsePipelineStage == ParsePipelineStage.IDLE) {
+                        currentStep = "等待用户确认云端解析"
                     }
                     if (wait % 10 == 0) {
-                        addLog("等待解析结果：${wait}/300", SyncLogType.INFO)
+                        addLog("等待解析结果：${wait}/900", SyncLogType.INFO)
                     }
                     wait++
                     kotlinx.coroutines.delay(200)
                 }
                 if (parsed.isEmpty()) {
                     val ui = importViewModel.uiState.value
-                    if (ui.showLlmConsentDialog || ui.isLoading) {
+                    if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
+                        subTitle = cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
                         loading = false
-                        currentStep = "等待云端解析"
-                        addLog("已进入云端解析等待流程", SyncLogType.WARNING)
+                        currentStep = "云端解析失败"
+                        addLog(subTitle, SyncLogType.ERROR)
+                        reportError(subTitle)
+                        return@launch
+                    }
+                    if (ui.parsePipelineStage == ParsePipelineStage.CLOUD_PARSING ||
+                        ui.parsePipelineStage == ParsePipelineStage.WAITING_USER_CONSENT ||
+                        ui.showLlmConsentDialog ||
+                        ui.isLoading
+                    ) {
+                        subTitle = "云端解析超时，请稍后重试"
+                        loading = false
+                        currentStep = "云端解析超时"
+                        addLog("云端解析等待超时", SyncLogType.ERROR)
+                        reportError("云端解析等待超时")
                         return@launch
                     }
                     subTitle = "解析失败或未发现课程"

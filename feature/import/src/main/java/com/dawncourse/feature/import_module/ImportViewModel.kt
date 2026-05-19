@@ -46,6 +46,15 @@ enum class ImportStep {
     Review      // 步骤三：预览与确认
 }
 
+enum class ParsePipelineStage {
+    IDLE,
+    LOCAL_PARSING,
+    WAITING_USER_CONSENT,
+    CLOUD_PARSING,
+    CLOUD_SUCCESS,
+    CLOUD_FAILED
+}
+
 /**
  * 导入页面的 UI 状态
  *
@@ -103,6 +112,9 @@ data class ImportUiState(
 
     val resultText: String = "",
     val isLoading: Boolean = false,
+    val parsePipelineStage: ParsePipelineStage = ParsePipelineStage.IDLE,
+    val parseFailureType: String = "",
+    val latestLlmTaskId: String = "",
     val showLlmConsentDialog: Boolean = false,
     val llmConsentPreview: String = "",
     val llmConsentLength: Int = 0,
@@ -117,6 +129,12 @@ private data class LlmRepairContext(
     val scriptSource: String = "",
     val failureType: String = "unsupported_format",
     val attemptedParsers: List<String> = emptyList()
+)
+
+private data class LlmFallbackResult(
+    val courses: List<ParsedCourse> = emptyList(),
+    val taskId: String = "",
+    val failureReason: String = ""
 )
 
 sealed interface ImportEvent {
@@ -158,6 +176,7 @@ class ImportViewModel @Inject constructor(
     private var lastLocalScriptHintAt: Long = 0L
     // 当前脚本拉取任务 ID（用于“按任务去重统计”）
     private var currentScriptPullTaskId: String = ""
+    private val clientVersion by lazy { buildClientVersion() }
     
     init {
         // 初始化学期开始日期为本周一 (符合大多数导入场景)
@@ -186,6 +205,9 @@ class ImportViewModel @Inject constructor(
                 htmlContent = "",
                 resultText = "",
                 isLoading = false,
+                parsePipelineStage = ParsePipelineStage.IDLE,
+                parseFailureType = "",
+                latestLlmTaskId = "",
                 showLlmConsentDialog = false,
                 llmConsentPreview = "",
                 llmConsentLength = 0,
@@ -344,7 +366,16 @@ class ImportViewModel @Inject constructor(
      */
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    resultText = "正在解析...",
+                    parsedCourses = emptyList(),
+                    parsePipelineStage = ParsePipelineStage.LOCAL_PARSING,
+                    parseFailureType = "",
+                    latestLlmTaskId = ""
+                )
+            }
             try {
                 var repairContext: LlmRepairContext? = null
                 val parsed = withContext(Dispatchers.IO) {
@@ -465,7 +496,14 @@ class ImportViewModel @Inject constructor(
                         requestLlmConsent(raw, context)
                         return@launch
                     }
-                    _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            parsePipelineStage = ParsePipelineStage.IDLE,
+                            parseFailureType = context?.failureType ?: "",
+                            resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载"
+                        )
+                    }
                 } else {
                     val lastUrl = _uiState.value.webUrl
                     if (lastUrl.isNotBlank()) {
@@ -477,6 +515,8 @@ class ImportViewModel @Inject constructor(
                         it.copy(
                             isLoading = false,
                             parsedCourses = parsed,
+                            parsePipelineStage = ParsePipelineStage.IDLE,
+                            parseFailureType = "",
                             step = ImportStep.Review,
                             detectedMaxSection = safeMaxSection,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
@@ -499,6 +539,8 @@ class ImportViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            parsePipelineStage = ParsePipelineStage.IDLE,
+                            parseFailureType = "parser_crash",
                             resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，可尝试文件导入或更换导入方式。"
                         )
                     }
@@ -508,6 +550,8 @@ class ImportViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        parsePipelineStage = ParsePipelineStage.IDLE,
+                        parseFailureType = "unsupported_format",
                         resultText = "解析失败：数据格式不支持或解析过程发生异常。\n请重试；若仍失败，请确认已登录且位于课表页面。"
                     )
                 }
@@ -529,8 +573,8 @@ class ImportViewModel @Inject constructor(
         schoolSystemType: String,
         sourceUrl: String,
         repairContext: LlmRepairContext
-    ): List<ParsedCourse> {
-        if (content.isBlank()) return emptyList()
+    ): LlmFallbackResult {
+        if (content.isBlank()) return LlmFallbackResult(failureReason = "content_blank")
         val submitResult = submitLlmParseTaskUseCase(
             content = content,
             schoolName = schoolName,
@@ -540,20 +584,30 @@ class ImportViewModel @Inject constructor(
             scriptVersion = repairContext.scriptVersion.takeIf { it > 0 },
             scriptSource = repairContext.scriptSource,
             failureType = repairContext.failureType,
-            clientVersion = "android",
+            clientVersion = clientVersion,
             attemptedParsers = repairContext.attemptedParsers,
             consent = true,
             consentAt = System.currentTimeMillis()
         )
         val taskId = submitResult.taskId
-        if (!submitResult.success || taskId.isNullOrBlank()) return emptyList()
+        if (!submitResult.success || taskId.isNullOrBlank()) {
+            return LlmFallbackResult(
+                taskId = taskId.orEmpty(),
+                failureReason = submitResult.message?.ifBlank { "submit_failed" } ?: "submit_failed"
+            )
+        }
         val maxAttempts = if (submitResult.message == "accepted_pending_model_key") 24 else 12
         var continuousRequestFailures = 0
         repeat(maxAttempts) { attempt ->
             val statusResult = fetchLlmParseStatusUseCase(taskId)
             if (!statusResult.success) {
                 continuousRequestFailures += 1
-                if (continuousRequestFailures >= 3) return emptyList()
+                if (continuousRequestFailures >= 3) {
+                    return LlmFallbackResult(
+                        taskId = taskId,
+                        failureReason = statusResult.message?.ifBlank { "status_fetch_failed" } ?: "status_fetch_failed"
+                    )
+                }
                 if (attempt < maxAttempts - 1) {
                     kotlinx.coroutines.delay(2000)
                 }
@@ -568,10 +622,17 @@ class ImportViewModel @Inject constructor(
                 }
                 com.dawncourse.core.domain.model.LlmParseStatus.SUCCESS -> {
                     val jsonResult = statusResult.resultText.orEmpty()
-                    return parseLlmFallbackResult(jsonResult)
+                    val parsed = parseLlmFallbackResult(jsonResult)
+                    if (parsed.isNotEmpty()) {
+                        return LlmFallbackResult(courses = parsed, taskId = taskId)
+                    }
+                    return LlmFallbackResult(taskId = taskId, failureReason = "cloud_empty_result")
                 }
                 com.dawncourse.core.domain.model.LlmParseStatus.FAILED -> {
-                    return emptyList()
+                    return LlmFallbackResult(
+                        taskId = taskId,
+                        failureReason = statusResult.message?.ifBlank { "cloud_failed" } ?: "cloud_failed"
+                    )
                 }
                 com.dawncourse.core.domain.model.LlmParseStatus.PROCESSING -> {
                     if (attempt < maxAttempts - 1) {
@@ -580,7 +641,7 @@ class ImportViewModel @Inject constructor(
                 }
             }
         }
-        return emptyList()
+        return LlmFallbackResult(taskId = taskId, failureReason = "cloud_timeout")
     }
 
     private fun parseLlmFallbackResult(raw: String): List<ParsedCourse> {
@@ -675,6 +736,8 @@ class ImportViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 isLoading = false,
+                parsePipelineStage = ParsePipelineStage.WAITING_USER_CONSENT,
+                parseFailureType = repairContext.failureType,
                 showLlmConsentDialog = true,
                 llmConsentPreview = preview,
                 llmConsentLength = sanitized.length,
@@ -765,36 +828,43 @@ class ImportViewModel @Inject constructor(
                     showLlmConsentDialog = false,
                     llmConsentChecked = false,
                     isLoading = true,
+                    parsePipelineStage = ParsePipelineStage.CLOUD_PARSING,
+                    parseFailureType = repairContext.failureType,
                     resultText = "已获得授权，正在进行云端解析..."
                 )
             }
-            val parsed = withContext(Dispatchers.IO) {
+            val fallbackResult = withContext(Dispatchers.IO) {
                 tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl, repairContext)
             }
             pendingLlmContent = ""
             pendingLlmRepairContext = LlmRepairContext()
-            if (parsed.isNotEmpty()) {
+            if (fallbackResult.courses.isNotEmpty()) {
                 val lastUrl = _uiState.value.webUrl
                 if (lastUrl.isNotBlank()) {
                     settingsRepository.setLastImportUrl(lastUrl)
                 }
-                val maxSection = parsed.maxOfOrNull { it.endSection } ?: 12
+                val maxSection = fallbackResult.courses.maxOfOrNull { it.endSection } ?: 12
                 val safeMaxSection = maxSection.coerceAtLeast(4)
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        parsedCourses = parsed,
+                        parsedCourses = fallbackResult.courses,
+                        parsePipelineStage = ParsePipelineStage.CLOUD_SUCCESS,
+                        parseFailureType = "",
+                        latestLlmTaskId = fallbackResult.taskId,
                         step = ImportStep.Review,
                         detectedMaxSection = safeMaxSection,
                         sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                        resultText = "已启用云端解析兜底，成功解析 ${parsed.size} 个课程段"
+                        resultText = "已启用云端解析兜底，成功解析 ${fallbackResult.courses.size} 个课程段"
                     )
                 }
             } else {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        resultText = "云端解析失败：请确认页面数据完整或稍后重试。"
+                        parsePipelineStage = ParsePipelineStage.CLOUD_FAILED,
+                        latestLlmTaskId = fallbackResult.taskId,
+                        resultText = "云端解析失败：${fallbackResult.failureReason.ifBlank { "请确认页面数据完整或稍后重试" }}"
                     )
                 }
             }
@@ -811,9 +881,24 @@ class ImportViewModel @Inject constructor(
             it.copy(
                 showLlmConsentDialog = false,
                 llmConsentChecked = false,
+                parsePipelineStage = ParsePipelineStage.IDLE,
                 resultText = "已取消云端解析上传，可继续尝试其他导入方式。"
             )
         }
+    }
+
+    private fun buildClientVersion(): String {
+        return runCatching {
+            val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+            val versionName = packageInfo.versionName?.ifBlank { "unknown" } ?: "unknown"
+            @Suppress("DEPRECATION")
+            val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                packageInfo.versionCode.toLong()
+            }
+            "android/$versionName($versionCode)"
+        }.getOrElse { "android/unknown" }
     }
 
     /**
