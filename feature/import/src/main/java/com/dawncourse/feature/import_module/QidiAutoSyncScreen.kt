@@ -278,6 +278,7 @@ fun QidiAutoSyncScreen(
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
+    val importUiState by importViewModel.uiState.collectAsState()
     val providerName = when (provider) {
         SyncProviderType.ZF -> "正方"
         else -> "教务"
@@ -356,6 +357,14 @@ fun QidiAutoSyncScreen(
     var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     var loginErrorMessage by remember { mutableStateOf("") }
+
+    LlmConsentDialog(
+        uiState = importUiState,
+        onDismiss = { importViewModel.cancelLlmConsent() },
+        onConfirm = { importViewModel.confirmLlmConsent() },
+        onCheckedChange = { importViewModel.updateLlmConsentChecked(it) },
+        onSchoolNameChange = { importViewModel.updateLlmConsentSchoolName(it) }
+    )
 
     fun addLog(message: String, type: SyncLogType = SyncLogType.INFO) {
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
@@ -629,17 +638,33 @@ fun QidiAutoSyncScreen(
                 addLog("开始解析课程数据", SyncLogType.INFO)
                 var wait = 0
                 var parsed: List<ParsedCourse> = emptyList()
-                while (wait < 40) {
+                while (wait < 300) {
                     val ui = importViewModel.uiState.value
                     parsed = ui.parsedCourses
                     if (parsed.isNotEmpty()) break
+                    if (ui.showLlmConsentDialog) {
+                        currentStep = "等待用户确认云端解析"
+                        subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
+                        if (wait % 25 == 0) {
+                            addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                        }
+                    } else if (ui.isLoading) {
+                        currentStep = "云端解析中"
+                    }
                     if (wait % 10 == 0) {
-                        addLog("等待解析结果：${wait}/40", SyncLogType.INFO)
+                        addLog("等待解析结果：${wait}/300", SyncLogType.INFO)
                     }
                     wait++
                     kotlinx.coroutines.delay(200)
                 }
                 if (parsed.isEmpty()) {
+                    val ui = importViewModel.uiState.value
+                    if (ui.showLlmConsentDialog || ui.isLoading) {
+                        loading = false
+                        currentStep = "等待云端解析"
+                        addLog("已进入云端解析等待流程", SyncLogType.WARNING)
+                        return@launch
+                    }
                     subTitle = "解析失败或未发现课程"
                     loading = false
                     currentStep = "解析失败"

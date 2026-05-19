@@ -111,6 +111,14 @@ data class ImportUiState(
     val llmConsentSchoolName: String = ""
 )
 
+private data class LlmRepairContext(
+    val scriptName: String = "",
+    val scriptVersion: Int = 0,
+    val scriptSource: String = "",
+    val failureType: String = "unsupported_format",
+    val attemptedParsers: List<String> = emptyList()
+)
+
 sealed interface ImportEvent {
     data object Success : ImportEvent
 }
@@ -145,6 +153,7 @@ class ImportViewModel @Inject constructor(
 
     // 用户确认前暂存云端解析的完整内容，避免在 UI 状态中存放大文本
     private var pendingLlmContent: String = ""
+    private var pendingLlmRepairContext: LlmRepairContext = LlmRepairContext()
     // 本地脚本降级提示节流时间，避免一次提取触发多次相同提示
     private var lastLocalScriptHintAt: Long = 0L
     // 当前脚本拉取任务 ID（用于“按任务去重统计”）
@@ -337,9 +346,14 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
             try {
+                var repairContext: LlmRepairContext? = null
                 val parsed = withContext(Dispatchers.IO) {
                     var hasParserCrash = false
                     var hasAnyParserAttempt = false
+                    val attemptedParsers = mutableListOf<String>()
+                    var lastScriptName = ""
+                    var lastScriptVersion = 0
+                    var lastScriptSource = ""
                     val currentUrl = _uiState.value.webUrl
                     if (qiangZhiApiEngine.isQiangZhiHost(currentUrl)) {
                         val qiangZhiCourses = qiangZhiApiEngine.parseHtmlWithJsoup(raw)
@@ -357,40 +371,31 @@ class ImportViewModel @Inject constructor(
                     }
                     if (courses.isEmpty()) {
                         val parsers = listOf("qiangzhi.js", "zhengfang.js", "kingosoft.js")
-                        val runParserRound: suspend (Boolean) -> List<ParsedCourse> = runParserRound@{ forceRefresh ->
+                        val runParserRound: suspend (Boolean) -> List<ParsedCourse> = runParserRound@{ _ ->
                             val commonUtils = try {
-                                if (forceRefresh) {
-                                    scriptSyncRepository.fetchAndCacheScript(
-                                        scriptName = "common_parser_utils.js",
-                                        category = "parsers",
-                                        pullTaskId = currentScriptPullTaskId
-                                    )
-                                } else {
-                                    scriptSyncRepository.getScript(
-                                        scriptName = "common_parser_utils.js",
-                                        category = "parsers",
-                                        pullTaskId = currentScriptPullTaskId
-                                    )
-                                }
+                                scriptSyncRepository.getScript(
+                                    scriptName = "common_parser_utils.js",
+                                    category = "parsers",
+                                    pullTaskId = currentScriptPullTaskId
+                                )
                             } catch (_: Exception) {
                                 ""
                             }
                             for (parserName in parsers) {
                                 hasAnyParserAttempt = true
+                                if (!attemptedParsers.contains(parserName)) {
+                                    attemptedParsers.add(parserName)
+                                }
                                 try {
-                                    val script = if (forceRefresh) {
-                                        scriptSyncRepository.fetchAndCacheScript(
-                                            scriptName = parserName,
-                                            category = "parsers",
-                                            pullTaskId = currentScriptPullTaskId
-                                        )
-                                    } else {
-                                        scriptSyncRepository.getScript(
-                                            scriptName = parserName,
-                                            category = "parsers",
-                                            pullTaskId = currentScriptPullTaskId
-                                        )
-                                    }
+                                    val fetchResult = scriptSyncRepository.getScriptWithInfo(
+                                        scriptName = parserName,
+                                        category = "parsers",
+                                        pullTaskId = currentScriptPullTaskId
+                                    )
+                                    val script = fetchResult.content
+                                    lastScriptName = parserName
+                                    lastScriptSource = fetchResult.source
+                                    lastScriptVersion = scriptSyncRepository.getScriptVersion(parserName, "parsers") ?: 0
                                     val fullScript = if (commonUtils.isNotEmpty()) "$commonUtils\n$script" else script
                                     val jsonResult = scriptEngine.parseHtml(fullScript, raw)
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
@@ -430,13 +435,36 @@ class ImportViewModel @Inject constructor(
                             courses = runParserRound(true)
                         }
                     }
-                    if (courses.isEmpty() && hasAnyParserAttempt && hasParserCrash) {
-                        throw ScriptEngine.ScriptExecutionException("解析器运行失败")
+                    if (courses.isEmpty()) {
+                        val failureType = when {
+                            hasParserCrash -> "parser_crash"
+                            hasAnyParserAttempt && isRepairableTimetableContent(raw, currentUrl) -> "parser_empty"
+                            raw.isBlank() -> "extractor_empty"
+                            else -> "unsupported_format"
+                        }
+                        val selectedScript = selectParserForRepair(
+                            currentUrl = currentUrl,
+                            content = raw,
+                            attemptedParsers = attemptedParsers,
+                            fallback = lastScriptName
+                        )
+                        repairContext = LlmRepairContext(
+                            scriptName = selectedScript,
+                            scriptVersion = if (selectedScript == lastScriptName) lastScriptVersion else 0,
+                            scriptSource = lastScriptSource,
+                            failureType = failureType,
+                            attemptedParsers = attemptedParsers.toList()
+                        )
                     }
                     courses
                 }
                 
                 if (parsed.isEmpty()) {
+                    val context = repairContext
+                    if (context != null && shouldOfferCloudRepair(context.failureType, raw)) {
+                        requestLlmConsent(raw, context)
+                        return@launch
+                    }
                     _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
                 } else {
                     val lastUrl = _uiState.value.webUrl
@@ -457,7 +485,13 @@ class ImportViewModel @Inject constructor(
                     }
                 }
             } catch (_: ScriptEngine.ScriptExecutionException) {
-                val hasConsent = requestLlmConsent(raw)
+                val hasConsent = requestLlmConsent(
+                    raw,
+                    LlmRepairContext(
+                        scriptName = selectParserForRepair(_uiState.value.webUrl, raw, emptyList(), ""),
+                        failureType = "parser_crash"
+                    )
+                )
                 if (!hasConsent) {
                     // 给出明确但不泄露敏感信息的提示，并保持“可重试”：
                     // - 不显示底层异常 message（可能包含页面片段/请求信息）
@@ -493,7 +527,8 @@ class ImportViewModel @Inject constructor(
         content: String,
         schoolName: String,
         schoolSystemType: String,
-        sourceUrl: String
+        sourceUrl: String,
+        repairContext: LlmRepairContext
     ): List<ParsedCourse> {
         if (content.isBlank()) return emptyList()
         val submitResult = submitLlmParseTaskUseCase(
@@ -501,6 +536,12 @@ class ImportViewModel @Inject constructor(
             schoolName = schoolName,
             schoolSystemType = schoolSystemType,
             sourceUrl = sourceUrl,
+            scriptName = repairContext.scriptName,
+            scriptVersion = repairContext.scriptVersion.takeIf { it > 0 },
+            scriptSource = repairContext.scriptSource,
+            failureType = repairContext.failureType,
+            clientVersion = "android",
+            attemptedParsers = repairContext.attemptedParsers,
             consent = true,
             consentAt = System.currentTimeMillis()
         )
@@ -580,16 +621,55 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    private fun selectParserForRepair(
+        currentUrl: String,
+        content: String,
+        attemptedParsers: List<String>,
+        fallback: String
+    ): String {
+        val systemType = detectSchoolSystemTypeForLlm(content, currentUrl)
+        val mapped = when (systemType) {
+            "zhengfang" -> "zhengfang.js"
+            "qiangzhi" -> "qiangzhi.js"
+            "kingosoft" -> "kingosoft.js"
+            else -> ""
+        }
+        return when {
+            mapped.isNotBlank() && (attemptedParsers.isEmpty() || attemptedParsers.contains(mapped)) -> mapped
+            fallback.isNotBlank() -> fallback
+            attemptedParsers.isNotEmpty() -> attemptedParsers.first()
+            else -> ""
+        }
+    }
+
+    private fun shouldOfferCloudRepair(failureType: String, raw: String): Boolean {
+        if (raw.isBlank()) return false
+        return failureType == "parser_crash" || failureType == "parser_empty"
+    }
+
+    private fun isRepairableTimetableContent(raw: String, sourceUrl: String): Boolean {
+        val text = "$sourceUrl\n$raw".lowercase()
+        val looksLikeTimetable = listOf(
+            "课表", "课程表", "上课", "节次", "星期", "周次", "教师", "教室",
+            "timetable", "schedule", "kbcx", "xskbcx", "kbtable", "kbgrid", "pkSchedule"
+        ).any { text.contains(it.lowercase()) }
+        val looksLikeLoginOnly = listOf(
+            "验证码", "密码", "登录", "login", "captcha", "password"
+        ).any { text.contains(it.lowercase()) } && !looksLikeTimetable
+        return looksLikeTimetable && !looksLikeLoginOnly
+    }
+
     /**
      * 请求用户确认云端解析上传
      *
      * 若内容为空则返回 false，表示无需弹窗。
      */
-    private fun requestLlmConsent(raw: String): Boolean {
+    private fun requestLlmConsent(raw: String, repairContext: LlmRepairContext): Boolean {
         val sourceUrl = _uiState.value.webUrl
         val sanitized = sanitizeHtmlForLlm(raw)
         if (sanitized.isBlank()) return false
         pendingLlmContent = sanitized
+        pendingLlmRepairContext = repairContext
         val preview = sanitized.take(1200)
         val guessedSchoolName = guessSchoolNameForLlm(raw, sanitized)
         _uiState.update {
@@ -662,6 +742,7 @@ class ImportViewModel @Inject constructor(
      */
     fun confirmLlmConsent() {
         val content = pendingLlmContent
+        val repairContext = pendingLlmRepairContext
         if (content.isBlank()) {
             _uiState.update { it.copy(showLlmConsentDialog = false, llmConsentChecked = false) }
             return
@@ -688,9 +769,10 @@ class ImportViewModel @Inject constructor(
                 )
             }
             val parsed = withContext(Dispatchers.IO) {
-                tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl)
+                tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl, repairContext)
             }
             pendingLlmContent = ""
+            pendingLlmRepairContext = LlmRepairContext()
             if (parsed.isNotEmpty()) {
                 val lastUrl = _uiState.value.webUrl
                 if (lastUrl.isNotBlank()) {
@@ -724,6 +806,7 @@ class ImportViewModel @Inject constructor(
      */
     fun cancelLlmConsent() {
         pendingLlmContent = ""
+        pendingLlmRepairContext = LlmRepairContext()
         _uiState.update {
             it.copy(
                 showLlmConsentDialog = false,

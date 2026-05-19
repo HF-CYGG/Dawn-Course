@@ -26,7 +26,13 @@ interface LlmParseRepository {
         schoolId: String? = null,
         schoolName: String? = null,
         schoolSystemType: String? = null,
-        sourceUrl: String? = null
+        sourceUrl: String? = null,
+        scriptName: String? = null,
+        scriptVersion: Int? = null,
+        scriptSource: String? = null,
+        failureType: String? = null,
+        clientVersion: String? = null,
+        attemptedParsers: List<String> = emptyList()
     ): LlmParseTaskResult
 
     /**

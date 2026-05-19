@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -41,7 +42,13 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
         schoolId: String?,
         schoolName: String?,
         schoolSystemType: String?,
-        sourceUrl: String?
+        sourceUrl: String?,
+        scriptName: String?,
+        scriptVersion: Int?,
+        scriptSource: String?,
+        failureType: String?,
+        clientVersion: String?,
+        attemptedParsers: List<String>
     ): LlmParseTaskResult = withContext(Dispatchers.IO) {
         // 服务端要求必须携带用户明确同意的标记，避免自动上传
         val payload = JSONObject()
@@ -52,6 +59,12 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .put("schoolName", schoolName ?: "")
             .put("schoolSystemType", schoolSystemType ?: "")
             .put("sourceUrl", sourceUrl ?: "")
+            .put("scriptName", scriptName ?: "")
+            .put("scriptVersion", scriptVersion ?: 0)
+            .put("scriptSource", scriptSource ?: "")
+            .put("failureType", failureType ?: "")
+            .put("clientVersion", clientVersion ?: "")
+            .put("attemptedParsers", JSONArray(attemptedParsers))
             .toString()
         val requestBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
         val primaryResult = runCatching { executeSubmit(primaryUrl, requestBody) }

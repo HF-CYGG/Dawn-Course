@@ -134,8 +134,16 @@ fun ImportScreen(
     var qiangZhiStudentId by remember { mutableStateOf("") }
     var qiangZhiPassword by remember { mutableStateOf("") }
 
+    LlmConsentDialog(
+        uiState = uiState,
+        onDismiss = { viewModel.cancelLlmConsent() },
+        onConfirm = { viewModel.confirmLlmConsent() },
+        onCheckedChange = { viewModel.updateLlmConsentChecked(it) },
+        onSchoolNameChange = { viewModel.updateLlmConsentSchoolName(it) }
+    )
+
     // 云端解析上传确认弹窗（必须用户明确同意）
-    if (uiState.showLlmConsentDialog) {
+    if (false && uiState.showLlmConsentDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.cancelLlmConsent() },
             title = { Text("确认上传到云端解析") },
