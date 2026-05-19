@@ -61,6 +61,12 @@ interface ScriptSyncRepository {
         category: String = "parsers",
         success: Boolean,
         errorMessage: String? = null,
-        sourceUrl: String? = null
+        sourceUrl: String? = null,
+        parseSessionId: String? = null,
+        isSessionFinal: Boolean = false,
+        finalResult: String? = null,
+        failureType: String? = null,
+        schoolSystemType: String? = null,
+        attemptedParsers: List<String> = emptyList()
     ): Boolean
 }

@@ -48,6 +48,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
         scriptSource: String?,
         failureType: String?,
         clientVersion: String?,
+        parseSessionId: String?,
         attemptedParsers: List<String>
     ): LlmParseTaskResult = withContext(Dispatchers.IO) {
         // 服务端要求必须携带用户明确同意的标记，避免自动上传
@@ -64,6 +65,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .put("scriptSource", scriptSource ?: "")
             .put("failureType", failureType ?: "")
             .put("clientVersion", clientVersion ?: "")
+            .put("parseSessionId", parseSessionId ?: "")
             .put("attemptedParsers", JSONArray(attemptedParsers))
             .toString()
         val requestBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())

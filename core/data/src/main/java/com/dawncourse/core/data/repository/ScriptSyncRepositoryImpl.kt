@@ -22,6 +22,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
 import org.json.JSONObject
 
 @Singleton
@@ -146,7 +147,13 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         category: String,
         success: Boolean,
         errorMessage: String?,
-        sourceUrl: String?
+        sourceUrl: String?,
+        parseSessionId: String?,
+        isSessionFinal: Boolean,
+        finalResult: String?,
+        failureType: String?,
+        schoolSystemType: String?,
+        attemptedParsers: List<String>
     ): Boolean {
         return withContext(Dispatchers.IO) {
             val safeCategory = normalizePathSegment(category) ?: return@withContext false
@@ -159,6 +166,12 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 .put("success", success)
                 .put("errorMessage", errorMessage ?: "")
                 .put("sourceUrl", sourceUrl ?: "")
+                .put("parseSessionId", parseSessionId ?: "")
+                .put("isSessionFinal", isSessionFinal)
+                .put("finalResult", finalResult ?: "")
+                .put("failureType", failureType ?: "")
+                .put("schoolSystemType", schoolSystemType ?: "")
+                .put("attemptedParsers", JSONArray(attemptedParsers))
                 .toString()
             val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
             runCatching { postFeedback(primaryUrl, body) }.getOrElse {

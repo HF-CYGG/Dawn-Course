@@ -33,6 +33,7 @@ class SubmitLlmParseTaskUseCase @Inject constructor(
         scriptSource: String? = null,
         failureType: String? = null,
         clientVersion: String? = null,
+        parseSessionId: String? = null,
         attemptedParsers: List<String> = emptyList()
     ): LlmParseTaskResult {
         return repository.submitParseTask(
@@ -48,6 +49,7 @@ class SubmitLlmParseTaskUseCase @Inject constructor(
             scriptSource = scriptSource,
             failureType = failureType,
             clientVersion = clientVersion,
+            parseSessionId = parseSessionId,
             attemptedParsers = attemptedParsers
         )
     }

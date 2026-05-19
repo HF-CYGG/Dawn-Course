@@ -38,6 +38,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
+import java.util.UUID
 import javax.inject.Inject
 
 enum class ImportStep {
@@ -176,6 +177,7 @@ class ImportViewModel @Inject constructor(
     private var lastLocalScriptHintAt: Long = 0L
     // 当前脚本拉取任务 ID（用于“按任务去重统计”）
     private var currentScriptPullTaskId: String = ""
+    private var currentParseSessionId: String = ""
     private val clientVersion by lazy { buildClientVersion() }
     
     init {
@@ -198,6 +200,7 @@ class ImportViewModel @Inject constructor(
      * 切换步骤时会重置部分临时状态，如解析结果和错误信息，确保流程清晰。
      */
     fun setStep(step: ImportStep) {
+        currentParseSessionId = ""
         _uiState.update { 
             it.copy(
                 step = step,
@@ -366,6 +369,7 @@ class ImportViewModel @Inject constructor(
      */
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
+            currentParseSessionId = UUID.randomUUID().toString()
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -385,6 +389,7 @@ class ImportViewModel @Inject constructor(
                     var lastScriptName = ""
                     var lastScriptVersion = 0
                     var lastScriptSource = ""
+                    var successfulScriptName = ""
                     val currentUrl = _uiState.value.webUrl
                     if (qiangZhiApiEngine.isQiangZhiHost(currentUrl)) {
                         val qiangZhiCourses = qiangZhiApiEngine.parseHtmlWithJsoup(raw)
@@ -431,12 +436,14 @@ class ImportViewModel @Inject constructor(
                                     val jsonResult = scriptEngine.parseHtml(fullScript, raw)
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
                                     if (parsedDirect.isNotEmpty()) {
+                                        successfulScriptName = parserName
                                         reportParserParseFeedback(parserName, true, null, currentUrl)
                                         return@runParserRound parsedDirect
                                     }
                                     val xiaoai = parseXiaoaiProviderResult(jsonResult)
                                     val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                                     if (parsedFromXiaoai.isNotEmpty()) {
+                                        successfulScriptName = parserName
                                         reportParserParseFeedback(parserName, true, null, currentUrl)
                                         return@runParserRound parsedFromXiaoai
                                     }
@@ -466,6 +473,16 @@ class ImportViewModel @Inject constructor(
                             courses = runParserRound(true)
                         }
                     }
+                    if (courses.isNotEmpty() && successfulScriptName.isNotBlank()) {
+                        reportParseSessionFeedback(
+                            scriptName = successfulScriptName,
+                            success = true,
+                            failureType = null,
+                            schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
+                            attemptedParsers = attemptedParsers.toList(),
+                            sourceUrl = currentUrl
+                        )
+                    }
                     if (courses.isEmpty()) {
                         val failureType = when {
                             hasParserCrash -> "parser_crash"
@@ -486,6 +503,16 @@ class ImportViewModel @Inject constructor(
                             failureType = failureType,
                             attemptedParsers = attemptedParsers.toList()
                         )
+                        if (selectedScript.isNotBlank()) {
+                            reportParseSessionFeedback(
+                                scriptName = selectedScript,
+                                success = false,
+                                failureType = failureType,
+                                schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
+                                attemptedParsers = attemptedParsers.toList(),
+                                sourceUrl = currentUrl
+                            )
+                        }
                     }
                     courses
                 }
@@ -525,10 +552,21 @@ class ImportViewModel @Inject constructor(
                     }
                 }
             } catch (_: ScriptEngine.ScriptExecutionException) {
+                val selectedScript = selectParserForRepair(_uiState.value.webUrl, raw, emptyList(), "")
+                if (selectedScript.isNotBlank()) {
+                    reportParseSessionFeedback(
+                        scriptName = selectedScript,
+                        success = false,
+                        failureType = "parser_crash",
+                        schoolSystemType = detectSchoolSystemTypeForLlm(raw, _uiState.value.webUrl),
+                        attemptedParsers = emptyList(),
+                        sourceUrl = _uiState.value.webUrl
+                    )
+                }
                 val hasConsent = requestLlmConsent(
                     raw,
                     LlmRepairContext(
-                        scriptName = selectParserForRepair(_uiState.value.webUrl, raw, emptyList(), ""),
+                        scriptName = selectedScript,
                         failureType = "parser_crash"
                     )
                 )
@@ -585,6 +623,7 @@ class ImportViewModel @Inject constructor(
             scriptSource = repairContext.scriptSource,
             failureType = repairContext.failureType,
             clientVersion = clientVersion,
+            parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() },
             attemptedParsers = repairContext.attemptedParsers,
             consent = true,
             consentAt = System.currentTimeMillis()
@@ -665,7 +704,37 @@ class ImportViewModel @Inject constructor(
                     category = "parsers",
                     success = success,
                     errorMessage = errorMessage?.take(500),
-                    sourceUrl = sourceUrl
+                    sourceUrl = sourceUrl,
+                    parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() }
+                )
+            }
+        }
+    }
+
+    private fun reportParseSessionFeedback(
+        scriptName: String,
+        success: Boolean,
+        failureType: String?,
+        schoolSystemType: String,
+        attemptedParsers: List<String>,
+        sourceUrl: String
+    ) {
+        val parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() } ?: return
+        if (scriptName.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                scriptSyncRepository.reportScriptParseFeedback(
+                    scriptName = scriptName,
+                    category = "parsers",
+                    success = success,
+                    errorMessage = failureType?.take(120),
+                    sourceUrl = sourceUrl,
+                    parseSessionId = parseSessionId,
+                    isSessionFinal = true,
+                    finalResult = if (success) "success" else "failed",
+                    failureType = failureType,
+                    schoolSystemType = schoolSystemType,
+                    attemptedParsers = attemptedParsers
                 )
             }
         }

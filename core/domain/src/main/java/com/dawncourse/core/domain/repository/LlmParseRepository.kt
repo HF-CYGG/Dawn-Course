@@ -32,6 +32,7 @@ interface LlmParseRepository {
         scriptSource: String? = null,
         failureType: String? = null,
         clientVersion: String? = null,
+        parseSessionId: String? = null,
         attemptedParsers: List<String> = emptyList()
     ): LlmParseTaskResult
 
