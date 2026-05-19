@@ -314,6 +314,7 @@ fun QidiAutoSyncScreen(
     var lastZfMenuJumpUrl by remember { mutableStateOf("") }
     var triedJwglxtFallback by remember { mutableStateOf(false) }
     var endpointCheckFailed by remember { mutableStateOf(false) }
+    var termReadFallbackTriggered by remember { mutableStateOf(false) }
     val mainScrollState = rememberScrollState()
     var yearMenuExpanded by remember { mutableStateOf(false) }
     var termMenuExpanded by remember { mutableStateOf(false) }
@@ -355,6 +356,7 @@ fun QidiAutoSyncScreen(
     val clipboardManager = LocalClipboardManager.current
     val autoUpdateSupported = provider == SyncProviderType.ZF
     var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    lateinit var triggerParseFailureFlow: (String) -> Unit
 
     var loginErrorMessage by remember { mutableStateOf("") }
 
@@ -551,6 +553,7 @@ fun QidiAutoSyncScreen(
             }
             triedJwglxtFallback = false
             endpointCheckFailed = false
+            termReadFallbackTriggered = false
             addressBar = normalized
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
@@ -822,13 +825,20 @@ fun QidiAutoSyncScreen(
             val txt = parseJsReturn(res)
             if (txt.isNotBlank()) {
                 applyOptionSnapshot(txt)
-                addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-                if (showProgressDialog) {
-                    runCatching { sheetState.hide() }
-                    showProgressDialog = false
+                if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
+                    termReadFallbackTriggered = false
+                    addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
+                    if (showProgressDialog) {
+                        runCatching { sheetState.hide() }
+                        showProgressDialog = false
+                    }
+                } else {
+                    addLog("学年学期选项为空，转入解析失败流程", SyncLogType.WARNING)
+                    triggerParseFailureFlow("未能正确读取学年学期选项")
                 }
             } else {
-                addLog("未读取到学年学期选项", SyncLogType.WARNING)
+                addLog("未读取到学年学期选项，转入解析失败流程", SyncLogType.WARNING)
+                triggerParseFailureFlow("未读取到学年学期选项")
             }
         }
     }
@@ -951,6 +961,207 @@ fun QidiAutoSyncScreen(
                 }
 
                 kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    suspend fun captureCurrentPageHtml(): String {
+        val wv = webView ?: return ""
+        val result = suspendEvaluateJs(
+            wv,
+            """
+            (function(){
+              try{
+                return document.documentElement ? document.documentElement.outerHTML : '';
+              }catch(e){
+                return '';
+              }
+            })();
+            """.trimIndent()
+        )
+        return parseJsReturn(result)
+    }
+
+    suspend fun awaitParseResult(): List<ParsedCourse> {
+        var wait = 0
+        var parsed: List<ParsedCourse> = emptyList()
+        var cloudFailureReason = ""
+        while (wait < 900) {
+            val ui = importViewModel.uiState.value
+            parsed = ui.parsedCourses
+            if (parsed.isNotEmpty()) break
+            when (ui.parsePipelineStage) {
+                ParsePipelineStage.WAITING_USER_CONSENT -> {
+                    currentStep = "等待用户确认云端解析"
+                    subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
+                    if (wait % 25 == 0) {
+                        addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                    }
+                }
+                ParsePipelineStage.CLOUD_PARSING -> {
+                    currentStep = "云端解析中"
+                    if (wait % 25 == 0) {
+                        addLog("云端解析处理中", SyncLogType.INFO)
+                    }
+                }
+                ParsePipelineStage.CLOUD_FAILED -> {
+                    cloudFailureReason = ui.resultText.ifBlank { "云端解析失败" }
+                    break
+                }
+                ParsePipelineStage.LOCAL_PARSING -> {
+                    if (wait % 25 == 0) {
+                        currentStep = "本地解析中"
+                    }
+                }
+                else -> {
+                    if (ui.showLlmConsentDialog) {
+                        currentStep = "等待用户确认云端解析"
+                    } else if (ui.isLoading) {
+                        currentStep = "解析中"
+                    }
+                }
+            }
+            if (ui.showLlmConsentDialog && ui.parsePipelineStage == ParsePipelineStage.IDLE) {
+                currentStep = "等待用户确认云端解析"
+            }
+            if (wait % 10 == 0) {
+                addLog("等待解析结果：$wait/900", SyncLogType.INFO)
+            }
+            wait++
+            kotlinx.coroutines.delay(200)
+        }
+        if (parsed.isNotEmpty()) {
+            return parsed
+        }
+        val ui = importViewModel.uiState.value
+        if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
+            subTitle = cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+            loading = false
+            currentStep = "云端解析失败"
+            addLog(subTitle, SyncLogType.ERROR)
+            reportError(subTitle)
+            return emptyList()
+        }
+        if (
+            ui.parsePipelineStage == ParsePipelineStage.CLOUD_PARSING ||
+            ui.parsePipelineStage == ParsePipelineStage.WAITING_USER_CONSENT ||
+            ui.showLlmConsentDialog ||
+            ui.isLoading
+        ) {
+            subTitle = "云端解析超时，请稍后重试"
+            loading = false
+            currentStep = "云端解析超时"
+            addLog("云端解析等待超时", SyncLogType.ERROR)
+            reportError("云端解析等待超时")
+            return emptyList()
+        }
+        subTitle = "解析失败或未发现课程"
+        loading = false
+        currentStep = "解析失败"
+        addLog("解析失败或未发现课程", SyncLogType.ERROR)
+        reportError("解析失败或未发现课程")
+        return emptyList()
+    }
+
+    suspend fun handleParsedCourses(parsed: List<ParsedCourse>) {
+        currentStep = "对比课表"
+        addLog("解析完成，课程数：${parsed.size}", SyncLogType.SUCCESS)
+        addLog("开始对比当前课表", SyncLogType.INFO)
+        pendingParsedCourses = parsed
+        var semesterId = viewModel.getCurrentSemesterId()
+        if (semesterId == null) {
+            val allSemesters = viewModel.getAllSemesters()
+            if (allSemesters.isNotEmpty()) {
+                val firstSemester = allSemesters.first()
+                viewModel.setCurrentSemester(firstSemester.id)
+                semesterId = viewModel.getCurrentSemesterId()
+            }
+        }
+        if (semesterId == null) {
+            loading = false
+            currentStep = "操作中止：未设置本地学期"
+            subTitle = "请先在设置中配置当前学期"
+            addLog("检测到本地未设置当前学期，无法保存课表", SyncLogType.ERROR)
+            runCatching { sheetState.hide() }
+            showProgressDialog = false
+            showNoSemesterDialog = true
+            return
+        }
+        val currentSemesterId = semesterId ?: return
+        val existing = viewModel.getCoursesBySemester(currentSemesterId)
+        if (existing.isEmpty()) {
+            loading = false
+            currentStep = "需要先导入课表"
+            subTitle = "请先通过教务系统导入一次课表"
+            addLog("当前学期尚无课表数据，需先完成首次导入", SyncLogType.WARNING)
+            runCatching { sheetState.hide() }
+            showProgressDialog = false
+            showNeedInitialImportDialog = true
+            return
+        }
+        val diff = buildDiffItems(parsed, existing)
+        diffItems = diff
+        diffSelections.clear()
+        diffSelections.addAll(List(diff.size) { true })
+        loading = false
+        if (diff.isEmpty()) {
+            currentStep = "课表无变动"
+            subTitle = "课表无变动"
+            addLog("课表无变动", SyncLogType.SUCCESS)
+            sheetState.hide()
+            showProgressDialog = false
+            showNoDiffDialog = true
+            syncStep = SyncStep.Done
+        } else {
+            currentStep = "等待选择同步方式"
+            subTitle = "已获取课表，请选择同步方式"
+            addLog("发现差异：${diff.size} 项", SyncLogType.WARNING)
+            sheetState.hide()
+            showProgressDialog = false
+            showDiffSelectDialog = true
+            syncStep = SyncStep.Done
+        }
+    }
+
+    triggerParseFailureFlow = { reason ->
+        val wv = webView
+        if (wv == null) {
+            addLog("WebView 未就绪，无法进入解析失败流程", SyncLogType.ERROR)
+            reportError(reason)
+        } else if (termReadFallbackTriggered) {
+            addLog("解析失败兜底流程已触发，忽略重复请求", SyncLogType.INFO)
+        } else {
+            termReadFallbackTriggered = true
+            scope.launch {
+                try {
+                    loading = true
+                    showProgressDialog = true
+                    currentStep = "采集页面内容"
+                    subTitle = reason
+                    addLog("$reason，转入解析失败处理流程", SyncLogType.WARNING)
+                    importViewModel.updateWebUrl(addressBar)
+                    val rawHtml = captureCurrentPageHtml()
+                    if (rawHtml.isBlank()) {
+                        loading = false
+                        currentStep = "无法读取页面内容"
+                        subTitle = "页面内容读取失败，请稍后重试"
+                        addLog("页面内容读取失败，无法触发解析失败流程", SyncLogType.ERROR)
+                        reportError("页面内容读取失败，无法触发解析失败流程")
+                        return@launch
+                    }
+                    importViewModel.parseResultFromWebView(rawHtml)
+                    addLog("已提交当前页面到解析引擎", SyncLogType.INFO)
+                    val parsed = awaitParseResult()
+                    if (parsed.isNotEmpty()) {
+                        handleParsedCourses(parsed)
+                    }
+                } catch (e: Throwable) {
+                    loading = false
+                    currentStep = "解析失败流程异常"
+                    subTitle = "无法完成解析失败处理"
+                    addLog("解析失败流程异常：${e.message ?: e.javaClass.simpleName}", SyncLogType.ERROR)
+                    reportError("解析失败流程异常", e)
+                }
             }
         }
     }
@@ -1078,6 +1289,7 @@ fun QidiAutoSyncScreen(
                             }
                             triedJwglxtFallback = false
                             endpointCheckFailed = false
+                            termReadFallbackTriggered = false
                             addressBar = url
                             wv.loadUrl(url)
                             addLog("手动前往地址：$url", SyncLogType.ACTION)
@@ -1660,6 +1872,7 @@ fun QidiAutoSyncScreen(
                     }
                     if (url.isNotBlank()) {
                         addressBar = url
+                        importViewModel.updateWebUrl(url)
                     }
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
@@ -1757,6 +1970,8 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 if (pageHref.isNotBlank()) {
+                                    addressBar = pageHref
+                                    importViewModel.updateWebUrl(pageHref)
                                     val updated = viewModel.updateEndpointIfNeeded(pageHref, provider)
                                     if (updated) {
                                         subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"
