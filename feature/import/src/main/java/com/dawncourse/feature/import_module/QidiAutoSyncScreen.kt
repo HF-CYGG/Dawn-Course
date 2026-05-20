@@ -356,6 +356,7 @@ fun QidiAutoSyncScreen(
     val clipboardManager = LocalClipboardManager.current
     val autoUpdateSupported = provider == SyncProviderType.ZF
     var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var selectableOptionsFetchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     lateinit var triggerParseFailureFlow: (String) -> Unit
 
     var loginErrorMessage by remember { mutableStateOf("") }
@@ -554,6 +555,8 @@ fun QidiAutoSyncScreen(
             triedJwglxtFallback = false
             endpointCheckFailed = false
             termReadFallbackTriggered = false
+            selectableOptionsFetchJob?.cancel()
+            pageStatePollingJob?.cancel()
             addressBar = normalized
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
@@ -792,64 +795,73 @@ fun QidiAutoSyncScreen(
             addLog("WebView 未就绪", SyncLogType.WARNING)
             return
         }
-        scope.launch {
-            val res = suspendEvaluateJs(
-                wv,
-                """
-                (function(){
-                  try{
-                    // 修复：同时兼容 id 与 name 的学年学期下拉框
-                    var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
-                    var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
-                    var years=[];
-                    var terms=[];
-                    if(y && y.options){
-                      for(var i=0;i<y.options.length;i++){
-                        var o=y.options[i];
-                        if(o && o.value){ years.push({value:o.value,text:o.text}); }
-                      }
+        selectableOptionsFetchJob?.cancel()
+        selectableOptionsFetchJob = scope.launch {
+            val maxAttempts = 8
+            repeat(maxAttempts) { attempt ->
+                val res = suspendEvaluateJs(
+                    wv,
+                    """
+                    (function(){
+                      try{
+                        // 修复：同时兼容 id 与 name 的学年学期下拉框
+                        var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
+                        var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
+                        var years=[];
+                        var terms=[];
+                        if(y && y.options){
+                          for(var i=0;i<y.options.length;i++){
+                            var o=y.options[i];
+                            if(o && o.value){ years.push({value:o.value,text:o.text}); }
+                          }
+                        }
+                        if(t && t.options){
+                          for(var j=0;j<t.options.length;j++){
+                            var o2=t.options[j];
+                            if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
+                          }
+                        }
+                        var yv = y ? y.value : '';
+                        var tv = t ? t.value : '';
+                        return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv,url:location.href});
+                      }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:'',url:location.href||''}); }
+                    })();
+                    """.trimIndent()
+                )
+                val txt = parseJsReturn(res)
+                if (txt.isNotBlank()) {
+                    applyOptionSnapshot(txt)
+                    if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
+                        termReadFallbackTriggered = false
+                        addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
+                        if (showProgressDialog) {
+                            runCatching { sheetState.hide() }
+                            showProgressDialog = false
+                        }
+                        return@launch
                     }
-                    if(t && t.options){
-                      for(var j=0;j<t.options.length;j++){
-                        var o2=t.options[j];
-                        if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
-                      }
-                    }
-                    var yv = y ? y.value : '';
-                    var tv = t ? t.value : '';
-                    return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv});
-                  }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:''}); }
-                })();
-                """.trimIndent()
-            )
-            val txt = parseJsReturn(res)
-            if (txt.isNotBlank()) {
-                applyOptionSnapshot(txt)
-                if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
-                    termReadFallbackTriggered = false
-                    addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-                    if (showProgressDialog) {
-                        runCatching { sheetState.hide() }
-                        showProgressDialog = false
-                    }
-                } else {
-                    addLog("学年学期选项为空，转入解析失败流程", SyncLogType.WARNING)
-                    triggerParseFailureFlow("未能正确读取学年学期选项")
                 }
-            } else {
-                addLog("未读取到学年学期选项，转入解析失败流程", SyncLogType.WARNING)
-                triggerParseFailureFlow("未读取到学年学期选项")
+                if (attempt < maxAttempts - 1) {
+                    currentStep = "等待学年学期加载"
+                    subTitle = "系统选项仍在加载，正在重试..."
+                    if (attempt == 0 || attempt == maxAttempts / 2) {
+                        addLog("学年学期选项暂未就绪，继续等待加载", SyncLogType.INFO)
+                    }
+                    kotlinx.coroutines.delay(600)
+                }
             }
+            addLog("学年学期选项持续为空，转入解析失败流程", SyncLogType.WARNING)
+            triggerParseFailureFlow("未能正确读取学年学期选项")
         }
     }
 
     fun pollPageStateIfNeeded() {
-        if (syncStep != SyncStep.Login || needManualLogin) return
+        if (syncStep != SyncStep.Login || needManualLogin || termReadFallbackTriggered) return
         val wv = webView ?: return
         pageStatePollingJob?.cancel()
         pageStatePollingJob = scope.launch {
             repeat(30) {
-                if (syncStep != SyncStep.Login || needManualLogin) return@launch
+                if (syncStep != SyncStep.Login || needManualLogin || termReadFallbackTriggered) return@launch
                 val res = suspendEvaluateJs(
                     wv,
                     """
@@ -1132,6 +1144,8 @@ fun QidiAutoSyncScreen(
             addLog("解析失败兜底流程已触发，忽略重复请求", SyncLogType.INFO)
         } else {
             termReadFallbackTriggered = true
+            selectableOptionsFetchJob?.cancel()
+            pageStatePollingJob?.cancel()
             scope.launch {
                 try {
                     loading = true
@@ -1290,6 +1304,8 @@ fun QidiAutoSyncScreen(
                             triedJwglxtFallback = false
                             endpointCheckFailed = false
                             termReadFallbackTriggered = false
+                            selectableOptionsFetchJob?.cancel()
+                            pageStatePollingJob?.cancel()
                             addressBar = url
                             wv.loadUrl(url)
                             addLog("手动前往地址：$url", SyncLogType.ACTION)
@@ -1865,8 +1881,15 @@ fun QidiAutoSyncScreen(
                     addLog("WebView 初始化完成", SyncLogType.INFO)
                 },
                 onPageStarted = { url ->
-                    loading = true
-                    if (showProgressDialog) {
+                    val fallbackFlowActive = termReadFallbackTriggered && (
+                        importUiState.showLlmConsentDialog ||
+                            importUiState.isLoading ||
+                            importUiState.parsePipelineStage != ParsePipelineStage.IDLE
+                        )
+                    if (!fallbackFlowActive) {
+                        loading = true
+                    }
+                    if (showProgressDialog && !fallbackFlowActive) {
                         currentStep = "页面加载中"
                         addLog("开始加载：$url", SyncLogType.INFO)
                     }
@@ -1877,8 +1900,15 @@ fun QidiAutoSyncScreen(
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
                 onPageFinished = { wv, _ ->
-                    loading = false
-                    if (showProgressDialog) {
+                    val fallbackFlowActive = termReadFallbackTriggered && (
+                        importUiState.showLlmConsentDialog ||
+                            importUiState.isLoading ||
+                            importUiState.parsePipelineStage != ParsePipelineStage.IDLE
+                        )
+                    if (!fallbackFlowActive) {
+                        loading = false
+                    }
+                    if (showProgressDialog && !fallbackFlowActive) {
                         currentStep = "页面加载完成"
                         addLog("页面加载完成")
                     }
@@ -1901,6 +1931,13 @@ fun QidiAutoSyncScreen(
                                 val loggedIn = txt.contains("\"loggedIn\":true")
                                 val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
                                 val pageHref = hrefMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
+                                if (pageHref.isNotBlank()) {
+                                    addressBar = pageHref
+                                    importViewModel.updateWebUrl(pageHref)
+                                }
+                                if (fallbackFlowActive) {
+                                    return@launch
+                                }
                                 
                                 val errorMsgMatch = Regex("\"errorMsg\":\"(.*?)\"").find(txt)
                                 val errorMsg = errorMsgMatch?.groups?.get(1)?.value.orEmpty()
@@ -1970,8 +2007,6 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 if (pageHref.isNotBlank()) {
-                                    addressBar = pageHref
-                                    importViewModel.updateWebUrl(pageHref)
                                     val updated = viewModel.updateEndpointIfNeeded(pageHref, provider)
                                     if (updated) {
                                         subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"

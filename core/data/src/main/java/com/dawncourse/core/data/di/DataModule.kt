@@ -8,6 +8,8 @@ import com.dawncourse.core.data.repository.CourseRepositoryImpl
 import com.dawncourse.core.data.repository.CredentialsRepositoryImpl
 import com.dawncourse.core.data.repository.LocalBackupRepositoryImpl
 import com.dawncourse.core.data.repository.LlmParseRepositoryImpl
+import com.dawncourse.core.data.repository.ParseReportRepositoryImpl
+import com.dawncourse.core.data.repository.ScriptManifestRepositoryImpl
 import com.dawncourse.core.data.repository.SyncStateRepositoryImpl
 import com.dawncourse.core.data.repository.TimetableSyncRepositoryImpl
 import com.dawncourse.core.data.repository.WebDavCredentialsRepositoryImpl
@@ -19,11 +21,13 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.dawncourse.core.domain.repository.LocalBackupRepository
 import com.dawncourse.core.domain.repository.LlmParseRepository
+import com.dawncourse.core.domain.repository.ParseReportRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.ScriptManifestRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
@@ -224,6 +228,18 @@ abstract class RepositoryModule {
     abstract fun bindLlmParseRepository(
         impl: LlmParseRepositoryImpl
     ): LlmParseRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindScriptManifestRepository(
+        impl: ScriptManifestRepositoryImpl
+    ): ScriptManifestRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindParseReportRepository(
+        impl: ParseReportRepositoryImpl
+    ): ParseReportRepository
 
     /**
      * 绑定 [CalendarExportRepository] 接口到 [CalendarExportRepositoryImpl] 实现

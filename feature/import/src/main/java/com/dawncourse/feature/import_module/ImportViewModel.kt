@@ -1,8 +1,16 @@
-package com.dawncourse.feature.import_module
+﻿package com.dawncourse.feature.import_module
 
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dawncourse.core.domain.model.ImportSourceType
+import com.dawncourse.core.domain.model.PageFingerprint
+import com.dawncourse.core.domain.model.ParseFailureType
+import com.dawncourse.core.domain.model.ParseReportPayload
+import com.dawncourse.core.domain.model.ParseSessionContext
+import com.dawncourse.core.domain.model.ParserAttemptReport
+import com.dawncourse.core.domain.model.SanitizedSample
+import com.dawncourse.core.domain.model.SchoolSystemType
 import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
@@ -10,6 +18,7 @@ import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import com.dawncourse.core.domain.usecase.FetchLlmParseStatusUseCase
+import com.dawncourse.core.domain.usecase.ReportParseResultUseCase
 import com.dawncourse.core.domain.usecase.SubmitLlmParseTaskUseCase
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ScriptEngine
@@ -33,6 +42,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URI
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -161,7 +171,8 @@ class ImportViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val scriptSyncRepository: ScriptSyncRepository,
     private val submitLlmParseTaskUseCase: SubmitLlmParseTaskUseCase,
-    private val fetchLlmParseStatusUseCase: FetchLlmParseStatusUseCase
+    private val fetchLlmParseStatusUseCase: FetchLlmParseStatusUseCase,
+    private val reportParseResultUseCase: ReportParseResultUseCase
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ImportUiState())
@@ -178,6 +189,7 @@ class ImportViewModel @Inject constructor(
     // 当前脚本拉取任务 ID（用于“按任务去重统计”）
     private var currentScriptPullTaskId: String = ""
     private var currentParseSessionId: String = ""
+    private var currentParseStartedAt: Long = 0L
     private val clientVersion by lazy { buildClientVersion() }
     
     init {
@@ -370,6 +382,7 @@ class ImportViewModel @Inject constructor(
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
             currentParseSessionId = UUID.randomUUID().toString()
+            currentParseStartedAt = System.currentTimeMillis()
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -480,7 +493,8 @@ class ImportViewModel @Inject constructor(
                             failureType = null,
                             schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
                             attemptedParsers = attemptedParsers.toList(),
-                            sourceUrl = currentUrl
+                            sourceUrl = currentUrl,
+                            raw = raw
                         )
                     }
                     if (courses.isEmpty()) {
@@ -510,7 +524,8 @@ class ImportViewModel @Inject constructor(
                                 failureType = failureType,
                                 schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
                                 attemptedParsers = attemptedParsers.toList(),
-                                sourceUrl = currentUrl
+                                sourceUrl = currentUrl,
+                                raw = raw
                             )
                         }
                     }
@@ -560,7 +575,8 @@ class ImportViewModel @Inject constructor(
                         failureType = "parser_crash",
                         schoolSystemType = detectSchoolSystemTypeForLlm(raw, _uiState.value.webUrl),
                         attemptedParsers = emptyList(),
-                        sourceUrl = _uiState.value.webUrl
+                        sourceUrl = _uiState.value.webUrl,
+                        raw = raw
                     )
                 }
                 val hasConsent = requestLlmConsent(
@@ -717,7 +733,8 @@ class ImportViewModel @Inject constructor(
         failureType: String?,
         schoolSystemType: String,
         attemptedParsers: List<String>,
-        sourceUrl: String
+        sourceUrl: String,
+        raw: String = ""
     ) {
         val parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() } ?: return
         if (scriptName.isBlank()) return
@@ -736,8 +753,110 @@ class ImportViewModel @Inject constructor(
                     schoolSystemType = schoolSystemType,
                     attemptedParsers = attemptedParsers
                 )
+                reportParseResultUseCase(
+                    buildParseReportPayload(
+                        parseSessionId = parseSessionId,
+                        scriptName = scriptName,
+                        success = success,
+                        failureType = failureType,
+                        schoolSystemType = schoolSystemType,
+                        attemptedParsers = attemptedParsers,
+                        sourceUrl = sourceUrl,
+                        raw = raw,
+                        sanitizedSample = null
+                    )
+                )
             }
         }
+    }
+
+    private suspend fun reportSanitizedParseSample(
+        content: String,
+        schoolName: String,
+        schoolSystemType: String,
+        sourceUrl: String,
+        repairContext: LlmRepairContext
+    ) {
+        val parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() } ?: return
+        val scriptName = repairContext.scriptName.ifBlank {
+            repairContext.attemptedParsers.firstOrNull().orEmpty()
+        }
+        if (scriptName.isBlank()) return
+        val sample = SanitizedSample(
+            hasUserConsent = true,
+            sanitizerVersion = 1,
+            contentSha256 = hashSha256(content),
+            content = content
+        )
+        reportParseResultUseCase(
+            buildParseReportPayload(
+                parseSessionId = parseSessionId,
+                scriptName = scriptName,
+                success = false,
+                failureType = repairContext.failureType,
+                schoolSystemType = schoolSystemType,
+                attemptedParsers = repairContext.attemptedParsers,
+                sourceUrl = sourceUrl,
+                raw = content,
+                schoolName = schoolName,
+                sanitizedSample = sample
+            )
+        )
+    }
+
+    private suspend fun buildParseReportPayload(
+        parseSessionId: String,
+        scriptName: String,
+        success: Boolean,
+        failureType: String?,
+        schoolSystemType: String,
+        attemptedParsers: List<String>,
+        sourceUrl: String,
+        raw: String,
+        schoolName: String? = null,
+        sanitizedSample: SanitizedSample?
+    ): ParseReportPayload {
+        val finalFailureType = if (success) null else mapParseFailureType(failureType)
+        val parserNames = (if (attemptedParsers.isNotEmpty()) attemptedParsers else listOf(scriptName)).distinct()
+        val attempts = parserNames.map { parserName ->
+            val parserVersion = runCatching {
+                scriptSyncRepository.getScriptVersion(parserName, "parsers")
+            }.getOrNull() ?: 0
+            ParserAttemptReport(
+                parserName = parserName,
+                category = "parsers",
+                parserVersion = parserVersion,
+                releaseId = null,
+                scriptSource = if (parserName == scriptName) "client_selected" else "client_attempted",
+                scriptSha256 = null,
+                durationMs = 0L,
+                success = success && parserName == scriptName,
+                resultCount = if (success && parserName == scriptName) 1 else 0,
+                failureType = if (success && parserName == scriptName) null else finalFailureType,
+                safeErrorCode = failureType,
+                schemaValid = success && parserName == scriptName,
+                confidence = if (success && parserName == scriptName) 1.0f else 0.0f
+            )
+        }
+        return ParseReportPayload(
+            session = ParseSessionContext(
+                parseSessionId = parseSessionId,
+                appVersionCode = getAppVersionCode(),
+                appVersionName = getAppVersionName(),
+                installBucketIdHash = "",
+                importSource = ImportSourceType.WEBVIEW,
+                schoolId = null,
+                schoolName = schoolName,
+                schoolSystemType = mapSchoolSystemType(schoolSystemType),
+                sourceUrlHost = extractHost(sourceUrl),
+                startedAt = currentParseStartedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            ),
+            pageFingerprint = buildPageFingerprint(raw, sourceUrl),
+            attempts = attempts,
+            finalSuccess = success,
+            finalFailureType = finalFailureType,
+            sanitizedSample = sanitizedSample
+        )
     }
 
     private fun detectSchoolSystemTypeForLlm(content: String, sourceUrl: String): String {
@@ -903,6 +1022,13 @@ class ImportViewModel @Inject constructor(
                 )
             }
             val fallbackResult = withContext(Dispatchers.IO) {
+                reportSanitizedParseSample(
+                    content = content,
+                    schoolName = schoolName,
+                    schoolSystemType = schoolSystemType,
+                    sourceUrl = sourceUrl,
+                    repairContext = repairContext
+                )
                 tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl, repairContext)
             }
             pendingLlmContent = ""
@@ -968,6 +1094,110 @@ class ImportViewModel @Inject constructor(
             }
             "android/$versionName($versionCode)"
         }.getOrElse { "android/unknown" }
+    }
+
+    private fun getAppVersionCode(): Long {
+        return runCatching {
+            val packageInfo = application.packageManager.getPackageInfo(application.packageName, 0)
+            @Suppress("DEPRECATION")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                packageInfo.versionCode.toLong()
+            }
+        }.getOrDefault(0L)
+    }
+
+    private fun getAppVersionName(): String {
+        return runCatching {
+            application.packageManager.getPackageInfo(application.packageName, 0)
+                .versionName
+                ?.ifBlank { "unknown" }
+                ?: "unknown"
+        }.getOrDefault("unknown")
+    }
+
+    private fun buildPageFingerprint(raw: String, sourceUrl: String): PageFingerprint {
+        val text = raw
+            .replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), "")
+            .replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), "")
+        val title = Regex("(?is)<title[^>]*>(.*?)</title>")
+            .find(raw)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+        val lower = "$sourceUrl\n$text".lowercase()
+        val structure = Regex("(?is)<([a-z0-9]+)\\b")
+            .findAll(raw)
+            .mapNotNull { it.groupValues.getOrNull(1)?.lowercase() }
+            .take(300)
+            .joinToString(">")
+        return PageFingerprint(
+            host = extractHost(sourceUrl),
+            pathPattern = extractPathPattern(sourceUrl),
+            titleHash = hashSha256(title).takeIf { title.isNotBlank() },
+            bodyTextHash = hashSha256(text.take(8000)).takeIf { text.isNotBlank() },
+            htmlStructureHash = hashSha256(structure).takeIf { structure.isNotBlank() },
+            tableShape = buildTableShape(raw),
+            formActionHash = Regex("(?is)<form\\b[^>]*action=['\"]?([^'\"\\s>]+)")
+                .find(raw)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.let { hashSha256(it) },
+            hasCaptcha = lower.contains("captcha") || lower.contains("checkcode") || lower.contains("verifycode"),
+            hasLoginKeyword = lower.contains("login") || lower.contains("password") || lower.contains("signin"),
+            hasCourseKeyword = lower.contains("schedule") || lower.contains("timetable") || lower.contains("kbtable")
+        )
+    }
+
+    private fun buildTableShape(raw: String): String? {
+        val tables = Regex("(?is)<table\\b[^>]*>(.*?)</table>").findAll(raw).take(4).toList()
+        if (tables.isEmpty()) return null
+        return tables.joinToString(";") { match ->
+            val table = match.groupValues.getOrNull(1).orEmpty()
+            val rows = Regex("(?is)<tr\\b").findAll(table).count()
+            val cells = Regex("(?is)<t[dh]\\b").findAll(table).count()
+            "rows=$rows,cells=$cells"
+        }
+    }
+
+    private fun extractHost(sourceUrl: String): String? {
+        return runCatching { URI(sourceUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun extractPathPattern(sourceUrl: String): String? {
+        return runCatching {
+            URI(sourceUrl).path
+                ?.replace(Regex("\\d+"), "*")
+                ?.take(160)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun mapSchoolSystemType(value: String): SchoolSystemType {
+        return when (value.lowercase()) {
+            "zhengfang", "zf" -> SchoolSystemType.ZF
+            "qiangzhi" -> SchoolSystemType.QIANGZHI
+            "kingosoft" -> SchoolSystemType.KINGOSOFT
+            "qidi" -> SchoolSystemType.QIDI
+            "chaoxing" -> SchoolSystemType.CHAOXING
+            else -> SchoolSystemType.UNKNOWN
+        }
+    }
+
+    private fun mapParseFailureType(value: String?): ParseFailureType {
+        return when (value?.lowercase()) {
+            "parser_crash" -> ParseFailureType.SCRIPT_EXECUTION_EXCEPTION
+            "parser_empty" -> ParseFailureType.PARSER_EMPTY_RESULT
+            "extractor_empty" -> ParseFailureType.PAGE_NOT_LOADED
+            "unsupported_format" -> ParseFailureType.UNSUPPORTED_PAGE
+            "cloud_failed" -> ParseFailureType.CLOUD_TASK_FAILED
+            else -> ParseFailureType.UNKNOWN
+        }
+    }
+
+    private fun hashSha256(content: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     /**

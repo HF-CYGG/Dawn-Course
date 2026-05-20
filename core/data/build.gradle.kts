@@ -13,7 +13,15 @@ android {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
-        buildConfigField("String", "SCRIPT_VERIFY_PUBLIC_KEY", "\"\"")
+        val scriptVerifyPublicKey = providers
+            .gradleProperty("SCRIPT_VERIFY_PUBLIC_KEY")
+            .orElse(providers.environmentVariable("SCRIPT_VERIFY_PUBLIC_KEY"))
+            .orElse("")
+            .get()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+        buildConfigField("String", "SCRIPT_VERIFY_PUBLIC_KEY", "\"$scriptVerifyPublicKey\"")
     }
 
     buildFeatures {

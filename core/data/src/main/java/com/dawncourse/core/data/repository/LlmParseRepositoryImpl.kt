@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
 @Singleton
 class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
 
-    private val primaryUrl = "http://yyh163.xyz:10000/"
-    private val fallbackUrl = "http://47.105.76.193:15000/"
+    private val primaryUrl = "https://yyh163.xyz:10000/"
+    private val fallbackUrl = "https://47.105.76.193:15000/"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -49,6 +49,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
         failureType: String?,
         clientVersion: String?,
         parseSessionId: String?,
+        issueId: String?,
         attemptedParsers: List<String>
     ): LlmParseTaskResult = withContext(Dispatchers.IO) {
         // 服务端要求必须携带用户明确同意的标记，避免自动上传
@@ -66,6 +67,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .put("failureType", failureType ?: "")
             .put("clientVersion", clientVersion ?: "")
             .put("parseSessionId", parseSessionId ?: "")
+            .put("issueId", issueId ?: "")
             .put("attemptedParsers", JSONArray(attemptedParsers))
             .toString()
         val requestBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())

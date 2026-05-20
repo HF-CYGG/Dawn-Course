@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import android.content.Context
 import com.dawncourse.core.data.BuildConfig
+import com.dawncourse.core.domain.model.RemoteScriptDescriptor
 import com.dawncourse.core.domain.repository.ScriptFetchResult
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -12,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.net.URLEncoder
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.Signature
@@ -31,10 +33,12 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 ) : ScriptSyncRepository {
 
     // 云端脚本的存储路径
-    private val primaryUrl = "http://yyh163.xyz:10000/scripts/"
-    private val fallbackUrl = "http://47.105.76.193:15000/scripts/"
-    private val primaryPullStatUrl = "http://yyh163.xyz:10000/api/v1/script_pull"
-    private val fallbackPullStatUrl = "http://47.105.76.193:15000/api/v1/script_pull"
+    private val primaryBaseUrl = "https://yyh163.xyz:10000/"
+    private val fallbackBaseUrl = "https://47.105.76.193:15000/"
+    private val primaryUrl = "${primaryBaseUrl}scripts/"
+    private val fallbackUrl = "${fallbackBaseUrl}scripts/"
+    private val primaryPullStatUrl = "${primaryBaseUrl}api/v1/script_pull"
+    private val fallbackPullStatUrl = "${fallbackBaseUrl}api/v1/script_pull"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -58,6 +62,12 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val version: Int?
     )
 
+    private data class ManifestFetchResult(
+        val script: String,
+        val metaRaw: String?,
+        val source: String
+    )
+
     override suspend fun getScript(scriptName: String, category: String, pullTaskId: String): String {
         return getScriptWithInfo(scriptName, category, pullTaskId).content
     }
@@ -75,11 +85,13 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             val cacheKey = buildCacheKey(safeCategory, safeScriptName)
             val remoteResult = runCatching { fetchScriptFromCloud(safeScriptName, safeCategory) }.getOrNull()
             val remoteScript = remoteResult?.content
-            val remoteMeta = runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
+            val remoteMeta = remoteResult?.metaRaw
+                ?: runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
             if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
                 val remoteSource = remoteResult?.source ?: "cloud_unknown"
-                saveScriptToLocalCache(safeScriptName, safeCategory, remoteScript)
-                saveMetaToLocalCache(safeScriptName, safeCategory, remoteMeta)
+                promoteCurrentScriptToPrevious(safeScriptName, safeCategory)
+                saveScriptToScopedCache("current", safeScriptName, safeCategory, remoteScript)
+                saveMetaToScopedCache("current", safeScriptName, safeCategory, remoteMeta)
                 updateMemoryCache(cacheKey, remoteScript)
                 reportScriptPullStat(
                     scriptName = safeScriptName,
@@ -94,8 +106,10 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 )
             }
 
-            val cachedScript = readScriptFromLocalCache(safeScriptName, safeCategory)
-            val cachedMeta = readMetaFromLocalCache(safeScriptName, safeCategory)
+            val cachedScript = readScriptFromScopedCache("current", safeScriptName, safeCategory)
+                ?: readScriptFromLocalCache(safeScriptName, safeCategory)
+            val cachedMeta = readMetaFromScopedCache("current", safeScriptName, safeCategory)
+                ?: readMetaFromLocalCache(safeScriptName, safeCategory)
             if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
                 updateMemoryCache(cacheKey, cachedScript)
                 reportScriptPullStat(
@@ -108,6 +122,23 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                     content = cachedScript,
                     fromCloud = false,
                     source = "local_cache"
+                )
+            }
+
+            val previousScript = readScriptFromScopedCache("previous_stable", safeScriptName, safeCategory)
+            val previousMeta = readMetaFromScopedCache("previous_stable", safeScriptName, safeCategory)
+            if (!previousScript.isNullOrBlank() && verifyScript(previousScript, previousMeta, safeCategory != "parsers")) {
+                updateMemoryCache(cacheKey, previousScript)
+                reportScriptPullStat(
+                    scriptName = safeScriptName,
+                    category = safeCategory,
+                    source = "previous_stable",
+                    pullTaskId = pullTaskId
+                )
+                return@withContext ScriptFetchResult(
+                    content = previousScript,
+                    fromCloud = false,
+                    source = "previous_stable"
                 )
             }
 
@@ -136,7 +167,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         return withContext(Dispatchers.IO) {
             val safeCategory = normalizePathSegment(category) ?: return@withContext null
             val safeScriptName = normalizePathSegment(scriptName) ?: return@withContext null
-            val metaRaw = readMetaFromLocalCache(safeScriptName, safeCategory)
+            val metaRaw = readMetaFromScopedCache("current", safeScriptName, safeCategory)
+                ?: readMetaFromLocalCache(safeScriptName, safeCategory)
                 ?: runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
             parseScriptMeta(metaRaw)?.version
         }
@@ -182,19 +214,45 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
     private data class CloudScriptResult(
         val content: String?,
+        val metaRaw: String?,
         val source: String
     )
 
     private fun fetchScriptFromCloud(scriptName: String, category: String): CloudScriptResult {
+        fetchScriptFromManifest(scriptName, category, primaryBaseUrl, "manifest_primary")?.let { return it }
+        fetchScriptFromManifest(scriptName, category, fallbackBaseUrl, "manifest_fallback")?.let { return it }
         var result = tryFetch(primaryUrl + category + "/" + scriptName)
         if (result != null) {
-            return CloudScriptResult(result, "cloud_primary")
+            return CloudScriptResult(result, null, "cloud_primary")
         }
         result = tryFetch(fallbackUrl + category + "/" + scriptName)
         if (result != null) {
-            return CloudScriptResult(result, "cloud_fallback")
+            return CloudScriptResult(result, null, "cloud_fallback")
         }
-        return CloudScriptResult(null, "cloud_failed")
+        return CloudScriptResult(null, null, "cloud_failed")
+    }
+
+    private fun fetchScriptFromManifest(
+        scriptName: String,
+        category: String,
+        baseUrl: String,
+        source: String
+    ): CloudScriptResult? {
+        val manifestUrl = buildString {
+            append(baseUrl).append("api/v1/scripts/manifest?platform=android")
+            append("&appVersionCode=").append(getAppVersionCode())
+        }
+        val raw = tryFetch(manifestUrl) ?: return null
+        val manifestJson = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        if (!verifyManifest(manifestJson)) return null
+        val descriptor = selectRemoteDescriptor(manifestJson, scriptName, category) ?: return null
+        val script = tryFetch(descriptor.url).takeIf { !it.isNullOrBlank() } ?: return null
+        if (descriptor.sha256.isNotBlank() && !hashSha256(script).equals(descriptor.sha256, ignoreCase = true)) {
+            return null
+        }
+        val metaRaw = tryFetch(descriptor.metaUrl)
+            ?: buildDescriptorMeta(descriptor)
+        return CloudScriptResult(script, metaRaw, source)
     }
 
     private fun fetchScriptMetaFromCloud(scriptName: String, category: String): String? {
@@ -278,6 +336,17 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
+    private fun saveScriptToScopedCache(scope: String, scriptName: String, category: String, content: String) {
+        try {
+            val dir = File(context.filesDir, "scripts/$scope/$category")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            File(dir, scriptName).writeText(content)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun saveMetaToLocalCache(scriptName: String, category: String, metaRaw: String?) {
         if (metaRaw.isNullOrBlank()) return
         try {
@@ -289,6 +358,28 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             file.writeText(metaRaw)
         } catch (_: Exception) {
         }
+    }
+
+    private fun saveMetaToScopedCache(scope: String, scriptName: String, category: String, metaRaw: String?) {
+        if (metaRaw.isNullOrBlank()) return
+        try {
+            val dir = File(context.filesDir, "scripts/$scope/$category")
+            if (!dir.exists()) {
+                dir.mkdirs()
+            }
+            File(dir, buildMetaFileName(scriptName)).writeText(metaRaw)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun promoteCurrentScriptToPrevious(scriptName: String, category: String) {
+        val currentScript = readScriptFromScopedCache("current", scriptName, category)
+            ?: readScriptFromLocalCache(scriptName, category)
+            ?: return
+        val currentMeta = readMetaFromScopedCache("current", scriptName, category)
+            ?: readMetaFromLocalCache(scriptName, category)
+        saveScriptToScopedCache("previous_stable", scriptName, category, currentScript)
+        saveMetaToScopedCache("previous_stable", scriptName, category, currentMeta)
     }
 
     private fun readScriptFromLocalCache(scriptName: String, category: String): String? {
@@ -304,6 +395,15 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         }
     }
 
+    private fun readScriptFromScopedCache(scope: String, scriptName: String, category: String): String? {
+        return try {
+            val file = File(context.filesDir, "scripts/$scope/$category/$scriptName")
+            if (file.exists()) file.readText() else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun readMetaFromLocalCache(scriptName: String, category: String): String? {
         return try {
             val file = File(context.filesDir, "scripts/$category/${buildMetaFileName(scriptName)}")
@@ -312,6 +412,15 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             } else {
                 null
             }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun readMetaFromScopedCache(scope: String, scriptName: String, category: String): String? {
+        return try {
+            val file = File(context.filesDir, "scripts/$scope/$category/${buildMetaFileName(scriptName)}")
+            if (file.exists()) file.readText() else null
         } catch (_: Exception) {
             null
         }
@@ -358,7 +467,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val meta = parseScriptMeta(metaRaw) ?: return allowUnsigned
         val sha256 = hashSha256(content)
         if (!sha256.equals(meta.sha256, ignoreCase = true)) return false
-        if (scriptVerifyPublicKey.isBlank()) return true
+        if (scriptVerifyPublicKey.isBlank()) return allowUnsigned
         if (meta.signature.isBlank() || meta.alg != "rsa-sha256") return false
         return verifyRsaSignature(content, meta.signature)
     }
@@ -388,6 +497,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             val cleanKey = scriptVerifyPublicKey
                 .replace("-----BEGIN PUBLIC KEY-----", "")
                 .replace("-----END PUBLIC KEY-----", "")
+                .replace("\\n", "")
                 .replace("\\s".toRegex(), "")
             val decoded = Base64.getDecoder().decode(cleanKey)
             val spec = X509EncodedKeySpec(decoded)
@@ -399,5 +509,119 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun verifyManifest(json: JSONObject): Boolean {
+        if (scriptVerifyPublicKey.isBlank()) return false
+        val signature = json.optString("signature")
+        if (signature.isBlank()) return false
+        val payload = JSONObject(json.toString())
+        payload.remove("signature")
+        payload.remove("alg")
+        return verifyRsaSignature(payload.toString(), signature)
+    }
+
+    private fun selectRemoteDescriptor(
+        manifestJson: JSONObject,
+        scriptName: String,
+        category: String
+    ): RemoteScriptDescriptor? {
+        val scripts = manifestJson.optJSONArray("scripts") ?: return null
+        val appVersionCode = getAppVersionCode()
+        val candidates = mutableListOf<RemoteScriptDescriptor>()
+        for (index in 0 until scripts.length()) {
+            val item = scripts.optJSONObject(index) ?: continue
+            if (item.optString("name") != scriptName || item.optString("category") != category) continue
+            val descriptor = parseRemoteDescriptor(item)
+            if (descriptor.killSwitch) continue
+            if (appVersionCode < descriptor.minAppVersionCode) continue
+            val maxVersion = descriptor.maxAppVersionCode
+            if (maxVersion != null && appVersionCode > maxVersion) continue
+            if (!isInRollout(descriptor)) continue
+            candidates.add(descriptor)
+        }
+        return candidates.maxWithOrNull(
+            compareBy<RemoteScriptDescriptor> { it.priority }.thenBy { it.version }
+        )
+    }
+
+    private fun parseRemoteDescriptor(item: JSONObject): RemoteScriptDescriptor {
+        return RemoteScriptDescriptor(
+            scriptId = item.optString("scriptId"),
+            category = item.optString("category"),
+            name = item.optString("name"),
+            version = item.optInt("version", 0),
+            releaseId = item.optString("releaseId"),
+            channel = item.optString("channel"),
+            url = item.optString("url"),
+            metaUrl = item.optString("metaUrl"),
+            sha256 = item.optString("sha256"),
+            signature = item.optString("signature"),
+            alg = item.optString("alg"),
+            priority = item.optInt("priority", 0),
+            schoolSystemTypes = item.optJSONArray("schoolSystemTypes").toStringList(),
+            schoolIds = item.optJSONArray("schoolIds").toStringList(),
+            rolloutPercent = item.optInt("rolloutPercent", 100),
+            killSwitch = item.optBoolean("killSwitch", false),
+            minAppVersionCode = item.optLong("minAppVersionCode", 0L),
+            maxAppVersionCode = item.optLong("maxAppVersionCode", 0L).takeIf { it > 0L },
+            parserApiVersion = item.optInt("parserApiVersion", 1),
+            dependencies = emptyList(),
+            changelog = item.optString("changelog")
+        )
+    }
+
+    private fun JSONArray?.toStringList(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                optString(index).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+    }
+
+    private fun buildDescriptorMeta(descriptor: RemoteScriptDescriptor): String? {
+        if (descriptor.sha256.isBlank() || descriptor.signature.isBlank()) return null
+        return JSONObject()
+            .put("sha256", descriptor.sha256)
+            .put("signature", descriptor.signature)
+            .put("alg", descriptor.alg)
+            .put("version", descriptor.version)
+            .put("releaseId", descriptor.releaseId)
+            .toString()
+    }
+
+    private fun isInRollout(descriptor: RemoteScriptDescriptor): Boolean {
+        val rollout = descriptor.rolloutPercent.coerceIn(0, 100)
+        if (rollout >= 100) return true
+        if (rollout <= 0) return false
+        val bucketSource = getInstallBucketId() + ":" + descriptor.scriptId + ":" + descriptor.releaseId
+        val bucket = hashSha256(bucketSource).take(8).toLong(16) % 100
+        return bucket < rollout
+    }
+
+    private fun getInstallBucketId(): String {
+        val preferences = context.getSharedPreferences("script_runtime", Context.MODE_PRIVATE)
+        val existing = preferences.getString("install_bucket_id", null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = java.util.UUID.randomUUID().toString()
+        preferences.edit().putString("install_bucket_id", created).apply()
+        return created
+    }
+
+    private fun getAppVersionCode(): Long {
+        return runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            @Suppress("DEPRECATION")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                info.versionCode.toLong()
+            }
+        }.getOrDefault(0L)
+    }
+
+    private fun urlEncode(value: String): String {
+        return URLEncoder.encode(value, Charsets.UTF_8.name())
     }
 }

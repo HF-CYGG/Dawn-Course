@@ -33,6 +33,7 @@ interface LlmParseRepository {
         failureType: String? = null,
         clientVersion: String? = null,
         parseSessionId: String? = null,
+        issueId: String? = null,
         attemptedParsers: List<String> = emptyList()
     ): LlmParseTaskResult
 

@@ -72,9 +72,9 @@ class UpdateRepository @Inject constructor() {
     }
 
     // 懒加载主 API 实例
-    private val primaryApi by lazy { createApi("http://yyh163.xyz:10000/") }
+    private val primaryApi by lazy { createApi("https://yyh163.xyz:10000/") }
     // 懒加载备用 API 实例
-    private val fallbackApi by lazy { createApi("http://47.105.76.193/") }
+    private val fallbackApi by lazy { createApi("https://47.105.76.193/") }
 
     /**
      * 检查更新
