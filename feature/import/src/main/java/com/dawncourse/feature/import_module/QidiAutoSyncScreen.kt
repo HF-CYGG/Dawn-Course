@@ -640,7 +640,10 @@ fun QidiAutoSyncScreen(
                     return@launch
                 }
                 addLog("页面数据已获取", SyncLogType.SUCCESS)
-                importViewModel.parseResultFromWebView(raw)
+                importViewModel.parseResultFromWebView(
+                    raw = raw,
+                    allowDiagnosticsUpload = false
+                )
                 addLog("开始解析课程数据", SyncLogType.INFO)
                 var wait = 0
                 var parsed: List<ParsedCourse> = emptyList()
@@ -1163,7 +1166,10 @@ fun QidiAutoSyncScreen(
                         reportError("页面内容读取失败，无法触发解析失败流程")
                         return@launch
                     }
-                    importViewModel.parseResultFromWebView(rawHtml)
+                    importViewModel.parseResultFromWebView(
+                        raw = rawHtml,
+                        allowDiagnosticsUpload = false
+                    )
                     addLog("已提交当前页面到解析引擎", SyncLogType.INFO)
                     val parsed = awaitParseResult()
                     if (parsed.isNotEmpty()) {

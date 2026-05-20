@@ -379,7 +379,10 @@ class ImportViewModel @Inject constructor(
      * 1. 优先尝试作为 JSON 直接解析 (适配小爱课程表/内部格式)
      * 2. 如果失败，尝试作为 HTML 使用内置脚本逐个解析 (适配正方、青果等教务)
      */
-    fun parseResultFromWebView(raw: String) {
+    fun parseResultFromWebView(
+        raw: String,
+        allowDiagnosticsUpload: Boolean = true
+    ) {
         viewModelScope.launch {
             currentParseSessionId = UUID.randomUUID().toString()
             currentParseStartedAt = System.currentTimeMillis()
@@ -494,6 +497,7 @@ class ImportViewModel @Inject constructor(
                             schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
                             attemptedParsers = attemptedParsers.toList(),
                             sourceUrl = currentUrl,
+                            allowDiagnosticsUpload = allowDiagnosticsUpload,
                             raw = raw
                         )
                     }
@@ -525,6 +529,7 @@ class ImportViewModel @Inject constructor(
                                 schoolSystemType = detectSchoolSystemTypeForLlm(raw, currentUrl),
                                 attemptedParsers = attemptedParsers.toList(),
                                 sourceUrl = currentUrl,
+                                allowDiagnosticsUpload = allowDiagnosticsUpload,
                                 raw = raw
                             )
                         }
@@ -576,6 +581,7 @@ class ImportViewModel @Inject constructor(
                         schoolSystemType = detectSchoolSystemTypeForLlm(raw, _uiState.value.webUrl),
                         attemptedParsers = emptyList(),
                         sourceUrl = _uiState.value.webUrl,
+                        allowDiagnosticsUpload = allowDiagnosticsUpload,
                         raw = raw
                     )
                 }
@@ -734,6 +740,7 @@ class ImportViewModel @Inject constructor(
         schoolSystemType: String,
         attemptedParsers: List<String>,
         sourceUrl: String,
+        allowDiagnosticsUpload: Boolean,
         raw: String = ""
     ) {
         val parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() } ?: return
@@ -753,19 +760,21 @@ class ImportViewModel @Inject constructor(
                     schoolSystemType = schoolSystemType,
                     attemptedParsers = attemptedParsers
                 )
-                reportParseResultUseCase(
-                    buildParseReportPayload(
-                        parseSessionId = parseSessionId,
-                        scriptName = scriptName,
-                        success = success,
-                        failureType = failureType,
-                        schoolSystemType = schoolSystemType,
-                        attemptedParsers = attemptedParsers,
-                        sourceUrl = sourceUrl,
-                        raw = raw,
-                        sanitizedSample = null
+                if (allowDiagnosticsUpload) {
+                    reportParseResultUseCase(
+                        buildParseReportPayload(
+                            parseSessionId = parseSessionId,
+                            scriptName = scriptName,
+                            success = success,
+                            failureType = failureType,
+                            schoolSystemType = schoolSystemType,
+                            attemptedParsers = attemptedParsers,
+                            sourceUrl = sourceUrl,
+                            raw = raw,
+                            sanitizedSample = null
+                        )
                     )
-                )
+                }
             }
         }
     }
