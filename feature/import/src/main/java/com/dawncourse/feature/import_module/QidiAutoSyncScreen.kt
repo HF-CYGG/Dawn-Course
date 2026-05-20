@@ -642,7 +642,7 @@ fun QidiAutoSyncScreen(
                 addLog("页面数据已获取", SyncLogType.SUCCESS)
                 importViewModel.parseResultFromWebView(
                     raw = raw,
-                    allowDiagnosticsUpload = false
+                    allowDiagnosticsUpload = true
                 )
                 addLog("开始解析课程数据", SyncLogType.INFO)
                 var wait = 0
@@ -1168,7 +1168,9 @@ fun QidiAutoSyncScreen(
                     }
                     importViewModel.parseResultFromWebView(
                         raw = rawHtml,
-                        allowDiagnosticsUpload = false
+                        allowDiagnosticsUpload = true,
+                        failureTypeHint = "parser_empty",
+                        forceCloudRepair = true
                     )
                     addLog("已提交当前页面到解析引擎", SyncLogType.INFO)
                     val parsed = awaitParseResult()

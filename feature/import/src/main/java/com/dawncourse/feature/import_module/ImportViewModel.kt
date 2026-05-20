@@ -139,7 +139,8 @@ private data class LlmRepairContext(
     val scriptVersion: Int = 0,
     val scriptSource: String = "",
     val failureType: String = "unsupported_format",
-    val attemptedParsers: List<String> = emptyList()
+    val attemptedParsers: List<String> = emptyList(),
+    val forceCloudRepair: Boolean = false
 )
 
 private data class LlmFallbackResult(
@@ -381,7 +382,9 @@ class ImportViewModel @Inject constructor(
      */
     fun parseResultFromWebView(
         raw: String,
-        allowDiagnosticsUpload: Boolean = true
+        allowDiagnosticsUpload: Boolean = true,
+        failureTypeHint: String? = null,
+        forceCloudRepair: Boolean = false
     ) {
         viewModelScope.launch {
             currentParseSessionId = UUID.randomUUID().toString()
@@ -502,7 +505,9 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                     if (courses.isEmpty()) {
+                        val hintedFailureType = normalizeRepairFailureHint(failureTypeHint)
                         val failureType = when {
+                            hintedFailureType.isNotBlank() -> hintedFailureType
                             hasParserCrash -> "parser_crash"
                             hasAnyParserAttempt && isRepairableTimetableContent(raw, currentUrl) -> "parser_empty"
                             raw.isBlank() -> "extractor_empty"
@@ -519,7 +524,8 @@ class ImportViewModel @Inject constructor(
                             scriptVersion = if (selectedScript == lastScriptName) lastScriptVersion else 0,
                             scriptSource = lastScriptSource,
                             failureType = failureType,
-                            attemptedParsers = attemptedParsers.toList()
+                            attemptedParsers = attemptedParsers.toList(),
+                            forceCloudRepair = forceCloudRepair
                         )
                         if (selectedScript.isNotBlank()) {
                             reportParseSessionFeedback(
@@ -539,7 +545,13 @@ class ImportViewModel @Inject constructor(
                 
                 if (parsed.isEmpty()) {
                     val context = repairContext
-                    if (context != null && shouldOfferCloudRepair(context.failureType, raw)) {
+                    if (context != null && shouldOfferCloudRepair(
+                            failureType = context.failureType,
+                            raw = raw,
+                            sourceUrl = _uiState.value.webUrl,
+                            forceOffer = context.forceCloudRepair
+                        )
+                    ) {
                         requestLlmConsent(raw, context)
                         return@launch
                     }
@@ -900,9 +912,26 @@ class ImportViewModel @Inject constructor(
         }
     }
 
-    private fun shouldOfferCloudRepair(failureType: String, raw: String): Boolean {
+    private fun normalizeRepairFailureHint(value: String?): String {
+        return when (value?.trim()?.lowercase()) {
+            "parser_crash" -> "parser_crash"
+            "parser_empty" -> "parser_empty"
+            "extractor_empty" -> "extractor_empty"
+            "unsupported_format" -> "unsupported_format"
+            else -> ""
+        }
+    }
+
+    private fun shouldOfferCloudRepair(
+        failureType: String,
+        raw: String,
+        sourceUrl: String,
+        forceOffer: Boolean = false
+    ): Boolean {
         if (raw.isBlank()) return false
-        return failureType == "parser_crash" || failureType == "parser_empty"
+        if (forceOffer) return true
+        if (failureType == "parser_crash" || failureType == "parser_empty") return true
+        return failureType == "extractor_empty" && isRepairableTimetableContent(raw, sourceUrl)
     }
 
     private fun isRepairableTimetableContent(raw: String, sourceUrl: String): Boolean {
