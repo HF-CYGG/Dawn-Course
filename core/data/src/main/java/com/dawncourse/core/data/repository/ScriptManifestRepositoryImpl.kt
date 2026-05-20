@@ -1,5 +1,6 @@
 package com.dawncourse.core.data.repository
 
+import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.RemoteScriptDescriptor
 import com.dawncourse.core.domain.model.ScriptDependency
 import com.dawncourse.core.domain.model.ScriptManifest
@@ -17,9 +18,6 @@ import org.json.JSONObject
 
 @Singleton
 class ScriptManifestRepositoryImpl @Inject constructor() : ScriptManifestRepository {
-
-    private val primaryUrl = "https://yyh163.xyz:10000/"
-    private val fallbackUrl = "https://47.105.76.193:15000/"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
@@ -41,9 +39,15 @@ class ScriptManifestRepositoryImpl @Inject constructor() : ScriptManifestReposit
                 append("&schoolSystemType=").append(urlEncode(schoolSystemType))
             }
         }
-        val primary = runCatching { requestManifest("${primaryUrl}api/v1/scripts/manifest?$query") }
-        if (primary.isSuccess) return@withContext primary
-        runCatching { requestManifest("${fallbackUrl}api/v1/scripts/manifest?$query") }
+        val errors = mutableListOf<Throwable>()
+        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+            val attempt = runCatching { requestManifest("${endpoint.baseUrl}api/v1/scripts/manifest?$query") }
+            if (attempt.isSuccess) {
+                return@withContext attempt
+            }
+            errors += attempt.exceptionOrNull() ?: IllegalStateException("manifest fetch failed")
+        }
+        Result.failure(errors.lastOrNull() ?: IllegalStateException("manifest fetch failed"))
     }
 
     private fun requestManifest(url: String): ScriptManifest {

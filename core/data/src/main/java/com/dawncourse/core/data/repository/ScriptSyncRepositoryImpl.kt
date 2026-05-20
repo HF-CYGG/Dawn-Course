@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import android.content.Context
 import com.dawncourse.core.data.BuildConfig
+import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.RemoteScriptDescriptor
 import com.dawncourse.core.domain.repository.ScriptFetchResult
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
@@ -33,12 +34,9 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 ) : ScriptSyncRepository {
 
     // 云端脚本的存储路径
-    private val primaryBaseUrl = "https://yyh163.xyz:10000/"
-    private val fallbackBaseUrl = "https://47.105.76.193:15000/"
-    private val primaryUrl = "${primaryBaseUrl}scripts/"
-    private val fallbackUrl = "${fallbackBaseUrl}scripts/"
-    private val primaryPullStatUrl = "${primaryBaseUrl}api/v1/script_pull"
-    private val fallbackPullStatUrl = "${fallbackBaseUrl}api/v1/script_pull"
+    private val backendEndpoints = CloudBackendEndpoints.apiBaseUrls
+    private val scriptBaseUrls = backendEndpoints.map { it.label to "${it.baseUrl}scripts/" }
+    private val pullStatUrls = backendEndpoints.map { "${it.baseUrl}api/v1/script_pull" }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -88,7 +86,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             val remoteMeta = remoteResult?.metaRaw
                 ?: runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
             if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
-                val remoteSource = remoteResult?.source ?: "cloud_unknown"
+                val remoteSource = remoteResult.source
                 promoteCurrentScriptToPrevious(safeScriptName, safeCategory)
                 saveScriptToScopedCache("current", safeScriptName, safeCategory, remoteScript)
                 saveMetaToScopedCache("current", safeScriptName, safeCategory, remoteMeta)
@@ -206,8 +204,8 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 .put("attemptedParsers", JSONArray(attemptedParsers))
                 .toString()
             val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-            runCatching { postFeedback(primaryUrl, body) }.getOrElse {
-                runCatching { postFeedback(fallbackUrl, body) }.getOrDefault(false)
+            scriptBaseUrls.any { (_, baseUrl) ->
+                runCatching { postFeedback(baseUrl, body) }.getOrDefault(false)
             }
         }
     }
@@ -219,15 +217,14 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     )
 
     private fun fetchScriptFromCloud(scriptName: String, category: String): CloudScriptResult {
-        fetchScriptFromManifest(scriptName, category, primaryBaseUrl, "manifest_primary")?.let { return it }
-        fetchScriptFromManifest(scriptName, category, fallbackBaseUrl, "manifest_fallback")?.let { return it }
-        var result = tryFetch(primaryUrl + category + "/" + scriptName)
-        if (result != null) {
-            return CloudScriptResult(result, null, "cloud_primary")
+        for ((label, baseUrl) in backendEndpoints.map { it.label to it.baseUrl }) {
+            fetchScriptFromManifest(scriptName, category, baseUrl, "manifest_$label")?.let { return it }
         }
-        result = tryFetch(fallbackUrl + category + "/" + scriptName)
-        if (result != null) {
-            return CloudScriptResult(result, null, "cloud_fallback")
+        for ((label, baseUrl) in scriptBaseUrls) {
+            val result = tryFetch(baseUrl + category + "/" + scriptName)
+            if (result != null) {
+                return CloudScriptResult(result, null, "cloud_$label")
+            }
         }
         return CloudScriptResult(null, null, "cloud_failed")
     }
@@ -257,10 +254,13 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
     private fun fetchScriptMetaFromCloud(scriptName: String, category: String): String? {
         val metaName = buildMetaFileName(scriptName)
-        var result = tryFetch(primaryUrl + category + "/" + metaName)
-        if (result != null) return result
-        result = tryFetch(fallbackUrl + category + "/" + metaName)
-        return result
+        for ((_, baseUrl) in scriptBaseUrls) {
+            val result = tryFetch(baseUrl + category + "/" + metaName)
+            if (result != null) {
+                return result
+            }
+        }
+        return null
     }
 
     private fun tryFetch(url: String): String? {
@@ -307,8 +307,10 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 .put("timestamp", System.currentTimeMillis())
                 .toString()
             val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-            if (!postScriptPull(primaryPullStatUrl, body)) {
-                postScriptPull(fallbackPullStatUrl, body)
+            for (url in pullStatUrls) {
+                if (postScriptPull(url, body)) {
+                    break
+                }
             }
         }
     }

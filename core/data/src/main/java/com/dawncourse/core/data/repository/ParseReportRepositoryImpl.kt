@@ -1,5 +1,6 @@
 package com.dawncourse.core.data.repository
 
+import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.PageFingerprint
 import com.dawncourse.core.domain.model.ParseReportPayload
 import com.dawncourse.core.domain.model.ParserAttemptReport
@@ -20,9 +21,6 @@ import org.json.JSONObject
 @Singleton
 class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
 
-    private val primaryUrl = "https://yyh163.xyz:10000/"
-    private val fallbackUrl = "https://47.105.76.193:15000/"
-
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
@@ -32,9 +30,15 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
         val body = payload.toJson()
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
-        val primary = runCatching { post("${primaryUrl}api/v1/parse/report", body) }
-        if (primary.isSuccess) return@withContext primary
-        runCatching { post("${fallbackUrl}api/v1/parse/report", body) }
+        val errors = mutableListOf<Throwable>()
+        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+            val attempt = runCatching { post("${endpoint.baseUrl}api/v1/parse/report", body) }
+            if (attempt.isSuccess) {
+                return@withContext Result.success(Unit)
+            }
+            errors += attempt.exceptionOrNull() ?: IllegalStateException("parse report failed")
+        }
+        Result.failure(errors.lastOrNull() ?: IllegalStateException("parse report failed"))
     }
 
     private fun post(url: String, body: okhttp3.RequestBody) {

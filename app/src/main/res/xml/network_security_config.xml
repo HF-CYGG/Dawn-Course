@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- App-owned services must use HTTPS. -->
+    <!-- Self-hosted app services prefer HTTPS, but current deployments may expose HTTP on custom ports. -->
     <base-config cleartextTrafficPermitted="false" />
+
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">yyh163.xyz</domain>
+        <domain>47.105.76.193</domain>
+    </domain-config>
 
     <!-- Some school educational systems still expose WebView pages over HTTP. -->
     <domain-config cleartextTrafficPermitted="true">

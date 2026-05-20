@@ -1,9 +1,11 @@
 package com.dawncourse.core.data.repository
 
+import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.LlmParseStatus
 import com.dawncourse.core.domain.model.LlmParseStatusResult
 import com.dawncourse.core.domain.model.LlmParseTaskResult
 import com.dawncourse.core.domain.repository.LlmParseRepository
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -14,21 +16,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
-/**
- * LLM 异步解析仓库实现
- *
- * 负责：
- * 1. 提交脱敏后的文本到服务端生成解析任务
- * 2. 轮询任务状态并获取解析结果
- * 3. 提供主域名与备用域名的兜底请求能力
- */
 @Singleton
 class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
-
-    private val primaryUrl = "https://yyh163.xyz:10000/"
-    private val fallbackUrl = "https://47.105.76.193:15000/"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -52,7 +42,6 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
         issueId: String?,
         attemptedParsers: List<String>
     ): LlmParseTaskResult = withContext(Dispatchers.IO) {
-        // 服务端要求必须携带用户明确同意的标记，避免自动上传
         val payload = JSONObject()
             .put("content", content)
             .put("userConsent", consent)
@@ -71,28 +60,60 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
             .put("attemptedParsers", JSONArray(attemptedParsers))
             .toString()
         val requestBody = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val primaryResult = runCatching { executeSubmit(primaryUrl, requestBody) }
-        if (primaryResult.isSuccess) return@withContext primaryResult.getOrThrow()
-        val fallbackResult = runCatching { executeSubmit(fallbackUrl, requestBody) }
-        fallbackResult.getOrElse {
+        executeSubmitWithFallback(requestBody).getOrElse {
             LlmParseTaskResult(
                 success = false,
-                message = "任务提交失败：${it.message ?: "网络异常"}"
+                message = "任务提交失败：${CloudBackendEndpoints.toUserFacingMessage(it)}"
             )
         }
     }
 
     override suspend fun fetchTaskStatus(taskId: String): LlmParseStatusResult = withContext(Dispatchers.IO) {
-        val primaryResult = runCatching { executeStatus(primaryUrl, taskId) }
-        if (primaryResult.isSuccess) return@withContext primaryResult.getOrThrow()
-        val fallbackResult = runCatching { executeStatus(fallbackUrl, taskId) }
-        fallbackResult.getOrElse {
+        executeStatusWithFallback(taskId).getOrElse {
             LlmParseStatusResult(
                 success = false,
                 status = LlmParseStatus.FAILED,
-                message = "状态查询失败：${it.message ?: "网络异常"}"
+                message = "状态查询失败：${CloudBackendEndpoints.toUserFacingMessage(it)}"
             )
         }
+    }
+
+    private fun executeSubmitWithFallback(body: okhttp3.RequestBody): Result<LlmParseTaskResult> {
+        val errors = mutableListOf<Throwable>()
+        var lastResult: LlmParseTaskResult? = null
+        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+            val attempt = runCatching { executeSubmit(endpoint.baseUrl, body) }
+            if (attempt.isSuccess) {
+                val value = attempt.getOrThrow()
+                if (value.success) {
+                    return Result.success(value)
+                }
+                lastResult = value
+                continue
+            }
+            errors += attempt.exceptionOrNull() ?: IllegalStateException("submit failed")
+        }
+        lastResult?.let { return Result.success(it) }
+        return Result.failure(errors.lastOrNull() ?: IllegalStateException("submit failed"))
+    }
+
+    private fun executeStatusWithFallback(taskId: String): Result<LlmParseStatusResult> {
+        val errors = mutableListOf<Throwable>()
+        var lastResult: LlmParseStatusResult? = null
+        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+            val attempt = runCatching { executeStatus(endpoint.baseUrl, taskId) }
+            if (attempt.isSuccess) {
+                val value = attempt.getOrThrow()
+                if (value.success) {
+                    return Result.success(value)
+                }
+                lastResult = value
+                continue
+            }
+            errors += attempt.exceptionOrNull() ?: IllegalStateException("status failed")
+        }
+        lastResult?.let { return Result.success(it) }
+        return Result.failure(errors.lastOrNull() ?: IllegalStateException("status failed"))
     }
 
     private fun executeSubmit(baseUrl: String, body: okhttp3.RequestBody): LlmParseTaskResult {
