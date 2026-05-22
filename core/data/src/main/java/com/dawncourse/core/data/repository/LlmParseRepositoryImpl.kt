@@ -1,3 +1,6 @@
+/**
+ * 文件说明：负责对接云端兜底解析接口，提交解析任务并轮询服务端状态。
+ */
 package com.dawncourse.core.data.repository
 
 import com.dawncourse.core.data.network.CloudBackendEndpoints
@@ -207,6 +210,8 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
                 ?: json.optString("result").takeIf { it.isNotBlank() }
                 ?: json.optString("data").takeIf { it.isNotBlank() }
             val message = data?.optString("pendingReason")?.takeIf { it.isNotBlank() }
+                ?: data?.optString("error")?.takeIf { it.isNotBlank() }
+                ?: json.optString("error").takeIf { it.isNotBlank() }
                 ?: json.optString("msg").takeIf { it.isNotBlank() }
             return LlmParseStatusResult(
                 success = true,
