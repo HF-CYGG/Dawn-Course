@@ -16,10 +16,12 @@ data class ScriptManifest(
  */
 data class RemoteScriptDescriptor(
     val scriptId: String,
+    val targetType: String,
     val category: String,
     val name: String,
     val version: Int,
     val releaseId: String,
+    val releaseStage: String,
     val channel: String,
     val url: String,
     val metaUrl: String,
@@ -34,6 +36,9 @@ data class RemoteScriptDescriptor(
     val minAppVersionCode: Long,
     val maxAppVersionCode: Long?,
     val parserApiVersion: Int,
+    val runnerContractVersion: Int,
+    val schoolBindingId: String?,
+    val selectionPolicy: String,
     val dependencies: List<ScriptDependency>,
     val changelog: String
 )

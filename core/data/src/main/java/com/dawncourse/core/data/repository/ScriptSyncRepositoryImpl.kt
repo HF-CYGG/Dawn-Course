@@ -550,10 +550,12 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     private fun parseRemoteDescriptor(item: JSONObject): RemoteScriptDescriptor {
         return RemoteScriptDescriptor(
             scriptId = item.optString("scriptId"),
+            targetType = item.optString("targetType", "parser"),
             category = item.optString("category"),
             name = item.optString("name"),
             version = item.optInt("version", 0),
             releaseId = item.optString("releaseId"),
+            releaseStage = item.optString("releaseStage", item.optString("channel")),
             channel = item.optString("channel"),
             url = item.optString("url"),
             metaUrl = item.optString("metaUrl"),
@@ -568,6 +570,9 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             minAppVersionCode = item.optLong("minAppVersionCode", 0L),
             maxAppVersionCode = item.optLong("maxAppVersionCode", 0L).takeIf { it > 0L },
             parserApiVersion = item.optInt("parserApiVersion", 1),
+            runnerContractVersion = item.optInt("runnerContractVersion", 1),
+            schoolBindingId = item.optString("schoolBindingId").takeIf { value -> value.isNotBlank() },
+            selectionPolicy = item.optString("selectionPolicy", "auto"),
             dependencies = emptyList(),
             changelog = item.optString("changelog")
         )
