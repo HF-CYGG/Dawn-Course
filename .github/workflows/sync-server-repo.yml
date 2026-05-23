@@ -1,0 +1,70 @@
+name: Sync Server Repo
+
+on:
+  # 文件说明：当 monorepo 中的 server 子目录发生变更时，
+  # 自动把该子目录同步到独立的 DawnCourse-server 仓库，
+  # 保证阿里云 ACR 源码构建拿到的就是当前仓库中的最新服务端代码。
+  push:
+    branches:
+      - main
+    paths:
+      - "server/**"
+      - ".github/workflows/sync-server-repo.yml"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 目标独立仓库：阿里云 ACR 当前就是从这里拉源码构建。
+  SERVER_REPO: HF-CYGG/DawnCourse-server
+
+jobs:
+  sync-server-subtree:
+    name: Sync server subtree to standalone repo
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      group: sync-server-repo
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout monorepo with full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate required sync secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SERVER_REPO_SYNC_TOKEN}" ]]; then
+            echo "缺少 SERVER_REPO_SYNC_TOKEN，无法把 server 子目录推送到独立仓库。" >&2
+            exit 1
+          fi
+        env:
+          SERVER_REPO_SYNC_TOKEN: ${{ secrets.SERVER_REPO_SYNC_TOKEN }}
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Split server subtree
+        id: split
+        shell: bash
+        run: |
+          set -euo pipefail
+          split_sha="$(git subtree split --prefix server HEAD)"
+          echo "split_sha=${split_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push subtree to standalone server repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push --force "https://x-access-token:${SERVER_REPO_SYNC_TOKEN}@github.com/${SERVER_REPO}.git" \
+            "${SERVER_SPLIT_SHA}:refs/heads/main"
+        env:
+          SERVER_REPO_SYNC_TOKEN: ${{ secrets.SERVER_REPO_SYNC_TOKEN }}
+          SERVER_SPLIT_SHA: ${{ steps.split.outputs.split_sha }}
