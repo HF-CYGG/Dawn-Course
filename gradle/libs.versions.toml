@@ -26,7 +26,7 @@ security-crypto = "1.1.0" # AndroidX Security Crypto
 startup-runtime = "1.1.1" # App Startup
 
 # Security Fixes (Dependabot)
-netty = "4.1.125.Final"
+netty = "4.2.12.Final"
 bouncycastle = "1.83"
 jose4j = "0.9.6"
 commons-compress = "1.28.0"
