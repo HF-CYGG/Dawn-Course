@@ -19,4 +19,15 @@ class UpdateNetworkPolicyTest {
         assertTrue(specs.contains(ConnectionSpec.COMPATIBLE_TLS))
         assertTrue(specs.contains(ConnectionSpec.CLEARTEXT))
     }
+
+    @Test
+    fun `更新地址应优先走 HTTP IP 的 10000 端口并保留域名兜底`() {
+        val endpoints = buildUpdateEndpointConfigs()
+
+        assertEquals(2, endpoints.size)
+        assertEquals("主地址", endpoints[0].label)
+        assertEquals("http://47.105.76.193:10000/", endpoints[0].baseUrl)
+        assertEquals("备用地址", endpoints[1].label)
+        assertEquals("http://yyh163.xyz:10000/", endpoints[1].baseUrl)
+    }
 }

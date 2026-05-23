@@ -69,10 +69,13 @@ class UpdateRepository @Inject constructor() {
             .create(UpdateApi::class.java)
     }
 
+    private val endpointConfigs = buildUpdateEndpointConfigs()
     // 懒加载主 API 实例
-    private val primaryApi by lazy { createApi("https://yyh163.xyz:10000/") }
+    private val primaryEndpoint by lazy { endpointConfigs[0] }
+    private val primaryApi by lazy { createApi(primaryEndpoint.baseUrl) }
     // 懒加载备用 API 实例
-    private val fallbackApi by lazy { createApi("https://47.105.76.193/") }
+    private val fallbackEndpoint by lazy { endpointConfigs[1] }
+    private val fallbackApi by lazy { createApi(fallbackEndpoint.baseUrl) }
 
     /**
      * 检查更新
@@ -87,12 +90,14 @@ class UpdateRepository @Inject constructor() {
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名
-        val primaryAttempt = runCatching { requestUpdateInfo(primaryApi, "主地址", "https://yyh163.xyz:10000/version.json") }
+        val primaryAttempt = runCatching {
+            requestUpdateInfo(primaryApi, primaryEndpoint.label, "${primaryEndpoint.baseUrl}version.json")
+        }
         if (primaryAttempt.isSuccess) return@withContext Result.success(primaryAttempt.getOrThrow())
         val primaryFailure = primaryAttempt.exceptionOrNull() as? UpdateEndpointRequestException
             ?: UpdateEndpointRequestException(
-                endpointLabel = "主地址",
-                endpointUrl = "https://yyh163.xyz:10000/version.json",
+                endpointLabel = primaryEndpoint.label,
+                endpointUrl = "${primaryEndpoint.baseUrl}version.json",
                 stage = "request",
                 detail = primaryAttempt.exceptionOrNull()?.message ?: "unknown_error",
                 cause = primaryAttempt.exceptionOrNull()
@@ -100,7 +105,7 @@ class UpdateRepository @Inject constructor() {
 
         // 2. 尝试兜底 IP
         try {
-            val body = requestUpdateInfo(fallbackApi, "备用地址", "https://47.105.76.193/version.json")
+            val body = requestUpdateInfo(fallbackApi, fallbackEndpoint.label, "${fallbackEndpoint.baseUrl}version.json")
             return@withContext Result.success(body)
         } catch (fallbackFailure: UpdateEndpointRequestException) {
             val ex = UpdateCheckException(
@@ -113,8 +118,8 @@ class UpdateRepository @Inject constructor() {
         } catch (e: Throwable) {
             // 主/备均失败：返回“用户可理解”的错误信息，并保留 cause 供排查问题
             val fallbackFailure = UpdateEndpointRequestException(
-                endpointLabel = "备用地址",
-                endpointUrl = "https://47.105.76.193/version.json",
+                endpointLabel = fallbackEndpoint.label,
+                endpointUrl = "${fallbackEndpoint.baseUrl}version.json",
                 stage = "request",
                 detail = e.message ?: "unknown_error",
                 cause = e
