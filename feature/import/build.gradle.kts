@@ -63,4 +63,7 @@ dependencies {
 
     // HTML 解析 (Jsoup)
     implementation(libs.jsoup)
+
+    // 单元测试（纯 JVM 测试）
+    testImplementation(libs.junit)
 }

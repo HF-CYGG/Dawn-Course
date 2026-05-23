@@ -1,4 +1,4 @@
-﻿package com.dawncourse.feature.import_module
+package com.dawncourse.feature.import_module
 
 import android.app.Application
 import androidx.lifecycle.ViewModel
@@ -1092,12 +1092,15 @@ class ImportViewModel @Inject constructor(
                     )
                 }
             } else {
+                val cloudFailurePresentation = buildCloudParseFailurePresentation(
+                    fallbackResult.failureReason.ifBlank { "请确认页面数据完整或稍后重试" }
+                )
                 _uiState.update {
                     it.copy(
                         isLoading = false,
                         parsePipelineStage = ParsePipelineStage.CLOUD_FAILED,
                         latestLlmTaskId = fallbackResult.taskId,
-                        resultText = "云端解析失败：${fallbackResult.failureReason.ifBlank { "请确认页面数据完整或稍后重试" }}"
+                        resultText = cloudFailurePresentation.userMessage
                     )
                 }
             }

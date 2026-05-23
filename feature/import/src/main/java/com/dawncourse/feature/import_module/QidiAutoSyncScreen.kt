@@ -695,11 +695,19 @@ fun QidiAutoSyncScreen(
                 if (parsed.isEmpty()) {
                     val ui = importViewModel.uiState.value
                     if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
-                        subTitle = cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+                        val cloudFailurePresentation = buildCloudParseFailurePresentation(
+                            cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+                        )
+                        subTitle = cloudFailurePresentation.userMessage
                         loading = false
-                        currentStep = "云端解析失败"
-                        addLog(subTitle, SyncLogType.ERROR)
-                        reportError(subTitle)
+                        currentStep = cloudFailurePresentation.currentStep
+                        addLog(
+                            subTitle,
+                            if (cloudFailurePresentation.shouldReportError) SyncLogType.ERROR else SyncLogType.WARNING
+                        )
+                        if (cloudFailurePresentation.shouldReportError) {
+                            reportError(subTitle)
+                        }
                         return@launch
                     }
                     if (ui.parsePipelineStage == ParsePipelineStage.CLOUD_PARSING ||
@@ -1050,11 +1058,19 @@ fun QidiAutoSyncScreen(
         }
         val ui = importViewModel.uiState.value
         if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
-            subTitle = cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+            val cloudFailurePresentation = buildCloudParseFailurePresentation(
+                cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+            )
+            subTitle = cloudFailurePresentation.userMessage
             loading = false
-            currentStep = "云端解析失败"
-            addLog(subTitle, SyncLogType.ERROR)
-            reportError(subTitle)
+            currentStep = cloudFailurePresentation.currentStep
+            addLog(
+                subTitle,
+                if (cloudFailurePresentation.shouldReportError) SyncLogType.ERROR else SyncLogType.WARNING
+            )
+            if (cloudFailurePresentation.shouldReportError) {
+                reportError(subTitle)
+            }
             return emptyList()
         }
         if (
