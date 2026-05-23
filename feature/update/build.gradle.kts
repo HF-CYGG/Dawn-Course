@@ -50,4 +50,7 @@ dependencies {
     implementation(libs.converter.gson)
     implementation(libs.okhttp)
     implementation(libs.logging.interceptor)
+
+    // 单元测试（纯 JVM 测试）
+    testImplementation(libs.junit)
 }

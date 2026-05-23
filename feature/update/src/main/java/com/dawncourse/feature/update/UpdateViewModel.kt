@@ -106,7 +106,7 @@ class UpdateViewModel @Inject constructor(
                         "无法连接服务器，请检查网络 (DNS Error)"
                     it is java.net.SocketTimeoutException -> 
                         "连接超时，请重试 (Timeout)"
-                    else -> "检查失败: ${it.message}"
+                    else -> formatUpdateErrorMessage(it)
                 }
                 
                 // 只有手动检查才显示错误弹窗，自动检查失败静默处理

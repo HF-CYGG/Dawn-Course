@@ -9,9 +9,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
-import okhttp3.ConnectionSpec
-import java.util.Collections
-import retrofit2.Response
 import retrofit2.Call
 
 /**
@@ -46,16 +43,17 @@ class UpdateRepository @Inject constructor() {
      * - 保留底层 cause（网络异常/HTTP 异常等）用于定位问题，但不打印堆栈
      */
     class UpdateCheckException(
-        message: String,
+        val userMessage: String,
+        val debugDetails: List<UpdateEndpointRequestException> = emptyList(),
         cause: Throwable? = null
-    ) : Exception(message, cause)
+    ) : Exception(userMessage, cause)
 
     // 配置 OkHttpClient，设置超时和连接规格
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
         .readTimeout(15, TimeUnit.SECONDS)
-        // 显式允许明文传输，某些设备或内网环境可能需要
-        .connectionSpecs(listOf(ConnectionSpec.CLEARTEXT, ConnectionSpec.MODERN_TLS))
+        // 独立更新服务器可能使用较旧 TLS 配置，因此客户端需同时兼容现代 TLS 与兼容 TLS。
+        .connectionSpecs(buildUpdateConnectionSpecs())
         .build()
 
     /**
@@ -89,32 +87,72 @@ class UpdateRepository @Inject constructor() {
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         // 1. 尝试主域名
-        val primaryAttempt = runCatching {
-            val response = primaryApi.getUpdateInfo().execute()
-            val body = response.body()
-            // 避免使用非空断言：即使 isSuccessful，也可能出现 body 为空的情况（服务端返回空/解析失败）。
-            if (response.isSuccessful && body != null) body
-            // 如果主域名响应失败（如 404 / body 为空），抛出异常以便尝试 fallback
-            else throw Exception("Primary API failed: HTTP ${response.code()}")
-        }
+        val primaryAttempt = runCatching { requestUpdateInfo(primaryApi, "主地址", "https://yyh163.xyz:10000/version.json") }
         if (primaryAttempt.isSuccess) return@withContext Result.success(primaryAttempt.getOrThrow())
-        val primaryFailure = primaryAttempt.exceptionOrNull() ?: Exception("Primary API failed")
+        val primaryFailure = primaryAttempt.exceptionOrNull() as? UpdateEndpointRequestException
+            ?: UpdateEndpointRequestException(
+                endpointLabel = "主地址",
+                endpointUrl = "https://yyh163.xyz:10000/version.json",
+                stage = "request",
+                detail = primaryAttempt.exceptionOrNull()?.message ?: "unknown_error",
+                cause = primaryAttempt.exceptionOrNull()
+            )
 
         // 2. 尝试兜底 IP
         try {
-            val response = fallbackApi.getUpdateInfo().execute()
-            val body = response.body()
-            // 避免使用非空断言：即使 isSuccessful，也可能出现 body 为空的情况（服务端返回空/解析失败）。
-            if (response.isSuccessful && body != null) return@withContext Result.success(body)
-            val fallbackFailure = Exception("Fallback API failed: HTTP ${response.code()}")
-            val ex = UpdateCheckException("检查更新失败，请稍后重试", fallbackFailure)
+            val body = requestUpdateInfo(fallbackApi, "备用地址", "https://47.105.76.193/version.json")
+            return@withContext Result.success(body)
+        } catch (fallbackFailure: UpdateEndpointRequestException) {
+            val ex = UpdateCheckException(
+                userMessage = "检查更新失败，请稍后重试",
+                debugDetails = listOf(primaryFailure, fallbackFailure),
+                cause = fallbackFailure
+            )
             ex.addSuppressed(primaryFailure)
             return@withContext Result.failure(ex)
         } catch (e: Throwable) {
             // 主/备均失败：返回“用户可理解”的错误信息，并保留 cause 供排查问题
-            val ex = UpdateCheckException("检查更新失败，请检查网络或稍后重试", e)
+            val fallbackFailure = UpdateEndpointRequestException(
+                endpointLabel = "备用地址",
+                endpointUrl = "https://47.105.76.193/version.json",
+                stage = "request",
+                detail = e.message ?: "unknown_error",
+                cause = e
+            )
+            val ex = UpdateCheckException(
+                userMessage = "检查更新失败，请检查网络或稍后重试",
+                debugDetails = listOf(primaryFailure, fallbackFailure),
+                cause = fallbackFailure
+            )
             ex.addSuppressed(primaryFailure)
             return@withContext Result.failure(ex)
+        }
+    }
+
+    /**
+     * 执行一次更新信息请求，并在失败时返回带节点上下文的异常。
+     */
+    private fun requestUpdateInfo(api: UpdateApi, endpointLabel: String, endpointUrl: String): UpdateInfo {
+        try {
+            val response = api.getUpdateInfo().execute()
+            val body = response.body()
+            if (response.isSuccessful && body != null) return body
+            throw UpdateEndpointRequestException(
+                endpointLabel = endpointLabel,
+                endpointUrl = endpointUrl,
+                stage = "http",
+                detail = "HTTP ${response.code()}（响应为空或状态异常）"
+            )
+        } catch (e: UpdateEndpointRequestException) {
+            throw e
+        } catch (e: Throwable) {
+            throw UpdateEndpointRequestException(
+                endpointLabel = endpointLabel,
+                endpointUrl = endpointUrl,
+                stage = "request",
+                detail = e.message ?: "unknown_error",
+                cause = e
+            )
         }
     }
 }
