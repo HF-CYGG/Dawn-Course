@@ -10,12 +10,16 @@ class FetchScriptManifestUseCase @Inject constructor(
     suspend operator fun invoke(
         schoolId: String? = null,
         schoolSystemType: String? = null,
-        appVersionCode: Long
+        appVersionCode: Long,
+        installBucketIdHash: String? = null,
+        selectionPolicy: String? = null
     ): Result<ScriptManifest> {
         return repository.fetchManifest(
             schoolId = schoolId,
             schoolSystemType = schoolSystemType,
-            appVersionCode = appVersionCode
+            appVersionCode = appVersionCode,
+            installBucketIdHash = installBucketIdHash,
+            selectionPolicy = selectionPolicy
         )
     }
 }

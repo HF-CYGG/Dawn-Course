@@ -6,6 +6,8 @@ interface ScriptManifestRepository {
     suspend fun fetchManifest(
         schoolId: String? = null,
         schoolSystemType: String? = null,
-        appVersionCode: Long
+        appVersionCode: Long,
+        installBucketIdHash: String? = null,
+        selectionPolicy: String? = null
     ): Result<ScriptManifest>
 }

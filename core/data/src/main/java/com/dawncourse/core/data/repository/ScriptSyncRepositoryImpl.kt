@@ -4,6 +4,7 @@ import android.content.Context
 import com.dawncourse.core.data.BuildConfig
 import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.RemoteScriptDescriptor
+import com.dawncourse.core.domain.model.ScriptDependency
 import com.dawncourse.core.domain.repository.ScriptFetchResult
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -85,7 +86,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             val remoteScript = remoteResult?.content
             val remoteMeta = remoteResult?.metaRaw
                 ?: runCatching { fetchScriptMetaFromCloud(safeScriptName, safeCategory) }.getOrNull()
-            if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, safeCategory != "parsers")) {
+            if (!remoteScript.isNullOrBlank() && verifyScript(remoteScript, remoteMeta, allowUnsigned = false)) {
                 val remoteSource = remoteResult.source
                 promoteCurrentScriptToPrevious(safeScriptName, safeCategory)
                 saveScriptToScopedCache("current", safeScriptName, safeCategory, remoteScript)
@@ -108,7 +109,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 ?: readScriptFromLocalCache(safeScriptName, safeCategory)
             val cachedMeta = readMetaFromScopedCache("current", safeScriptName, safeCategory)
                 ?: readMetaFromLocalCache(safeScriptName, safeCategory)
-            if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, safeCategory != "parsers")) {
+            if (!cachedScript.isNullOrBlank() && verifyScript(cachedScript, cachedMeta, allowUnsigned = false)) {
                 updateMemoryCache(cacheKey, cachedScript)
                 reportScriptPullStat(
                     scriptName = safeScriptName,
@@ -125,7 +126,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
             val previousScript = readScriptFromScopedCache("previous_stable", safeScriptName, safeCategory)
             val previousMeta = readMetaFromScopedCache("previous_stable", safeScriptName, safeCategory)
-            if (!previousScript.isNullOrBlank() && verifyScript(previousScript, previousMeta, safeCategory != "parsers")) {
+            if (!previousScript.isNullOrBlank() && verifyScript(previousScript, previousMeta, allowUnsigned = false)) {
                 updateMemoryCache(cacheKey, previousScript)
                 reportScriptPullStat(
                     scriptName = safeScriptName,
@@ -238,6 +239,9 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val manifestUrl = buildString {
             append(baseUrl).append("api/v1/scripts/manifest?platform=android")
             append("&appVersionCode=").append(getAppVersionCode())
+            append("&installBucketIdHash=").append(urlEncode(hashSha256(getInstallBucketId())))
+            append("&schoolSystemType=").append(urlEncode(systemTypeForScript(scriptName)))
+            append("&selectionPolicy=").append(urlEncode(getScriptSelectionPolicy()))
         }
         val raw = tryFetch(manifestUrl) ?: return null
         val manifestJson = runCatching { JSONObject(raw) }.getOrNull() ?: return null
@@ -520,7 +524,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         val payload = JSONObject(json.toString())
         payload.remove("signature")
         payload.remove("alg")
-        return verifyRsaSignature(payload.toString(), signature)
+        return verifyRsaSignature(canonicalJson(payload), signature)
     }
 
     private fun selectRemoteDescriptor(
@@ -573,7 +577,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
             runnerContractVersion = item.optInt("runnerContractVersion", 1),
             schoolBindingId = item.optString("schoolBindingId").takeIf { value -> value.isNotBlank() },
             selectionPolicy = item.optString("selectionPolicy", "auto"),
-            dependencies = emptyList(),
+            dependencies = item.optJSONArray("dependencies").toDependencyList(),
             changelog = item.optString("changelog")
         )
     }
@@ -583,6 +587,22 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         return buildList {
             for (index in 0 until length()) {
                 optString(index).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+    }
+
+    private fun JSONArray?.toDependencyList(): List<ScriptDependency> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                val item = optJSONObject(index) ?: continue
+                add(
+                    ScriptDependency(
+                        category = item.optString("category"),
+                        name = item.optString("name"),
+                        version = item.optInt("version", 0)
+                    )
+                )
             }
         }
     }
@@ -616,6 +636,23 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         return created
     }
 
+    private fun getScriptSelectionPolicy(): String {
+        val preferences = context.getSharedPreferences("script_runtime", Context.MODE_PRIVATE)
+        return preferences.getString("selection_policy", "auto") ?: "auto"
+    }
+
+    private fun systemTypeForScript(scriptName: String): String {
+        val lower = scriptName.lowercase()
+        return when {
+            lower.contains("qiangzhi") -> "QIANGZHI"
+            lower.contains("kingosoft") -> "KINGOSOFT"
+            lower.contains("qidi") -> "QIDI"
+            lower.contains("chaoxing") -> "CHAOXING"
+            lower.contains("zhengfang") || lower.startsWith("zf_") -> "ZF"
+            else -> ""
+        }
+    }
+
     private fun getAppVersionCode(): Long {
         return runCatching {
             val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -630,5 +667,29 @@ class ScriptSyncRepositoryImpl @Inject constructor(
 
     private fun urlEncode(value: String): String {
         return URLEncoder.encode(value, Charsets.UTF_8.name())
+    }
+
+    private fun canonicalJson(value: Any?): String {
+        return when (value) {
+            null, JSONObject.NULL -> "null"
+            is JSONObject -> {
+                val keys = value.keys().asSequence().toList().sorted()
+                keys.joinToString(prefix = "{", postfix = "}") { key ->
+                    JSONObject.quote(key) + ":" + canonicalJson(value.opt(key))
+                }
+            }
+            is JSONArray -> {
+                buildString {
+                    append("[")
+                    for (index in 0 until value.length()) {
+                        if (index > 0) append(",")
+                        append(canonicalJson(value.opt(index)))
+                    }
+                    append("]")
+                }
+            }
+            is Number, is Boolean -> value.toString()
+            else -> JSONObject.quote(value.toString())
+        }
     }
 }

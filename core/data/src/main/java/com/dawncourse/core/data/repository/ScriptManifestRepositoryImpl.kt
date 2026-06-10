@@ -27,11 +27,19 @@ class ScriptManifestRepositoryImpl @Inject constructor() : ScriptManifestReposit
     override suspend fun fetchManifest(
         schoolId: String?,
         schoolSystemType: String?,
-        appVersionCode: Long
+        appVersionCode: Long,
+        installBucketIdHash: String?,
+        selectionPolicy: String?
     ): Result<ScriptManifest> = withContext(Dispatchers.IO) {
         val query = buildString {
             append("platform=android")
             append("&appVersionCode=").append(appVersionCode)
+            if (!installBucketIdHash.isNullOrBlank()) {
+                append("&installBucketIdHash=").append(urlEncode(installBucketIdHash))
+            }
+            if (!selectionPolicy.isNullOrBlank()) {
+                append("&selectionPolicy=").append(urlEncode(selectionPolicy))
+            }
             if (!schoolId.isNullOrBlank()) {
                 append("&schoolId=").append(urlEncode(schoolId))
             }

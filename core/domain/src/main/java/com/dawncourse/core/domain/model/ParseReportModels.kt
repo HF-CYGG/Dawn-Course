@@ -85,7 +85,13 @@ data class ParseReportPayload(
     val attempts: List<ParserAttemptReport>,
     val finalSuccess: Boolean,
     val finalFailureType: ParseFailureType?,
-    val sanitizedSample: SanitizedSample?
+    val failureStage: String? = null,
+    val repairDomain: String? = null,
+    val targetType: String? = null,
+    val sourceUrl: String? = null,
+    val classificationHint: Map<String, String> = emptyMap(),
+    val consentAt: Long? = null,
+    val sanitizedSample: SanitizedSample? = null
 )
 
 data class SanitizedSample(

@@ -70,6 +70,12 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
             .put("attempts", JSONArray(attempts.map { it.toJson() }))
             .put("finalSuccess", finalSuccess)
             .put("finalFailureType", finalFailureType?.name ?: "")
+            .put("failureStage", failureStage ?: "")
+            .put("repairDomain", repairDomain ?: "")
+            .put("targetType", targetType ?: "")
+            .put("sourceUrl", sourceUrl ?: "")
+            .put("classificationHint", JSONObject(classificationHint))
+            .put("consentAt", consentAt ?: JSONObject.NULL)
             .put("sanitizedSample", sanitizedSample?.toJson())
     }
 

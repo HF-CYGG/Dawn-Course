@@ -838,6 +838,9 @@ class ImportViewModel @Inject constructor(
         sanitizedSample: SanitizedSample?
     ): ParseReportPayload {
         val finalFailureType = if (success) null else mapParseFailureType(failureType)
+        val failureStage = if (success) null else inferFailureStage(failureType, sourceUrl, raw)
+        val repairDomain = failureStage?.let(::repairDomainForStage)
+        val targetType = failureStage?.let(::targetTypeForStage)
         val parserNames = (if (attemptedParsers.isNotEmpty()) attemptedParsers else listOf(scriptName)).distinct()
         val attempts = parserNames.map { parserName ->
             val parserVersion = runCatching {
@@ -864,7 +867,7 @@ class ImportViewModel @Inject constructor(
                 parseSessionId = parseSessionId,
                 appVersionCode = getAppVersionCode(),
                 appVersionName = getAppVersionName(),
-                installBucketIdHash = "",
+                installBucketIdHash = getInstallBucketIdHash(),
                 importSource = ImportSourceType.WEBVIEW,
                 schoolId = null,
                 schoolName = schoolName,
@@ -876,6 +879,16 @@ class ImportViewModel @Inject constructor(
             attempts = attempts,
             finalSuccess = success,
             finalFailureType = finalFailureType,
+            failureStage = failureStage,
+            repairDomain = repairDomain,
+            targetType = targetType,
+            sourceUrl = sourceUrl,
+            classificationHint = buildMap {
+                put("scriptName", scriptName)
+                put("schoolSystemType", schoolSystemType)
+                put("failureType", failureType.orEmpty())
+            },
+            consentAt = sanitizedSample?.takeIf { it.hasUserConsent }?.let { System.currentTimeMillis() },
             sanitizedSample = sanitizedSample
         )
     }
@@ -1234,6 +1247,52 @@ class ImportViewModel @Inject constructor(
             "cloud_failed" -> ParseFailureType.CLOUD_TASK_FAILED
             else -> ParseFailureType.UNKNOWN
         }
+    }
+
+    private fun inferFailureStage(failureType: String?, sourceUrl: String, raw: String): String {
+        val text = "${failureType.orEmpty()}\n$sourceUrl\n${raw.take(4000)}".lowercase()
+        return when {
+            text.contains("captcha") || text.contains("verifycode") || text.contains("login") || text.contains("password") -> "LOGIN_OR_CAPTCHA"
+            text.contains("term") || text.contains("semester") || text.contains("xnxq") || text.contains("学期") || text.contains("学年") || text.contains("extractor_empty") -> "TERM_EXTRACT"
+            text.contains("nav") || text.contains("menu") || text.contains("mmgl") || text.contains("xtgl") || text.contains("jwglxt/xtgl") -> "NAVIGATION"
+            text.contains("cloud") -> "CLOUD_PARSE"
+            text.contains("unsupported_format") -> "NON_TIMETABLE_PAGE"
+            else -> "PARSER"
+        }
+    }
+
+    private fun repairDomainForStage(stage: String): String {
+        return when (stage) {
+            "TERM_EXTRACT" -> "TERM_EXTRACT_FAILURE"
+            "NAVIGATION" -> "NAVIGATION_FAILURE"
+            "LOGIN_OR_CAPTCHA" -> "LOGIN_OR_CAPTCHA"
+            "NON_TIMETABLE_PAGE" -> "NON_TIMETABLE_PAGE"
+            "CLOUD_PARSE" -> "CLOUD_PARSE_FAILURE"
+            else -> "PARSER_FAILURE"
+        }
+    }
+
+    private fun targetTypeForStage(stage: String): String {
+        return when (stage) {
+            "TERM_EXTRACT" -> "term_extractor"
+            "NAVIGATION" -> "navigation"
+            "CLOUD_PARSE" -> "cloud_parse"
+            "LOGIN_OR_CAPTCHA", "NON_TIMETABLE_PAGE" -> "none"
+            else -> "parser"
+        }
+    }
+
+    private fun getInstallBucketIdHash(): String {
+        val preferences = application.getSharedPreferences("script_runtime", android.content.Context.MODE_PRIVATE)
+        val existing = preferences.getString("install_bucket_id", null)
+        val bucketId = if (!existing.isNullOrBlank()) {
+            existing
+        } else {
+            UUID.randomUUID().toString().also { created ->
+                preferences.edit().putString("install_bucket_id", created).apply()
+            }
+        }
+        return hashSha256(bucketId)
     }
 
     private fun hashSha256(content: String): String {
