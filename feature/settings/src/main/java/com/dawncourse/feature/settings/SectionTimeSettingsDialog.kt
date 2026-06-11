@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,19 +49,23 @@ fun SectionTimeSettingsDialog(
 
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.fillMaxWidth().heightIn(max = 650.dp)
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 650.dp),
+            tonalElevation = 0.dp,
+            shadowElevation = 4.dp
         ) {
             AnimatedContent(
                 targetState = currentScreen,
                 transitionSpec = {
                     if (targetState == SectionSettingsScreen.BatchGenerate) {
                         (slideInHorizontally { width -> width } + fadeIn()).togetherWith(
-                            slideOutHorizontally { width -> -width } + fadeOut())
+                            slideOutHorizontally { width -> -width } + fadeOut()
+                        ).using(SizeTransform(clip = false))
                     } else {
                         (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(
-                            slideOutHorizontally { width -> width } + fadeOut())
+                            slideOutHorizontally { width -> width } + fadeOut()
+                        ).using(SizeTransform(clip = false))
                     }
                 },
                 label = "SectionSettingsTransition"
@@ -138,32 +141,44 @@ private fun SectionTimeListContent(
     onOpenBatchGenerate: () -> Unit,
     onEditSection: (Int) -> Unit
 ) {
-    Column(modifier = Modifier.padding(24.dp)) {
+    Column(modifier = Modifier.padding(22.dp)) {
         // Header
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "节次时间设置",
-                style = MaterialTheme.typography.headlineSmall
-            )
-            IconButton(onClick = onDismissRequest) {
-                Icon(Icons.Default.Close, null)
+            Column {
+                Text(
+                    text = "节次时间设置",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "配置每天每节课的上下课时间",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = onDismissRequest,
+                colors = IconButtonDefaults.iconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "关闭")
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         // Quick Settings Button
         FilledTonalButton(
             onClick = onOpenBatchGenerate,
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(vertical = 12.dp)
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(vertical = 14.dp)
         ) {
-            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(8.dp))
             Text("快捷节次设置")
         }
 
@@ -184,11 +199,13 @@ private fun SectionTimeListContent(
         }
 
         // List Card
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
+                .fillMaxWidth(),
+            tonalElevation = 0.dp
         ) {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState())
@@ -199,11 +216,26 @@ private fun SectionTimeListContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onEditSection(sectionIndex) }
-                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                            .padding(horizontal = 16.dp, vertical = 15.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                modifier = Modifier.size(32.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.64f)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = sectionIndex.toString(),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = "第 $sectionIndex 节",
                                 style = MaterialTheme.typography.bodyLarge,
@@ -228,7 +260,7 @@ private fun SectionTimeListContent(
                     if (index < sectionTimes.size - 1) {
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.52f)
                         )
                     }
                 }
