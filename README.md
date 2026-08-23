@@ -7,6 +7,32 @@
 
 破晓课程表（Dawn Course）是一款面向学生日常使用的课程表应用，提供从教务系统导入、课程管理、提醒与个性化显示等核心能力。项目坚持“用户数据主权”与“本地优先”原则：在不强制云账号的前提下，尽可能做到离线可用、可备份、可迁移。
 
+## 界面预览
+
+<table>
+  <tr>
+    <th width="50%">图 1：课程表（浅色）</th>
+    <th width="50%">图 2：课程表（深色）</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="./docs/readme-preview/schedule-light.webp" alt="课程表浅色模式" width="235" /></td>
+    <td align="center"><img src="./docs/readme-preview/schedule-dark.webp" alt="课程表深色模式" width="235" /></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th width="33.33%">图 3：导入课程</th>
+    <th width="33.33%">图 4：课程详情</th>
+    <th width="33.33%">图 5：添加课程</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="./docs/readme-preview/import-course.webp" alt="导入课程页面" width="235" /></td>
+    <td align="center"><img src="./docs/readme-preview/course-detail.webp" alt="课程详情页面" width="235" /></td>
+    <td align="center"><img src="./docs/readme-preview/add-course.webp" alt="添加课程页面" width="235" /></td>
+  </tr>
+</table>
+
 ## 核心原则
 
 本项目严格遵循以下原则：
