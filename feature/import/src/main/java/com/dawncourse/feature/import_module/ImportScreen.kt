@@ -655,6 +655,7 @@ private fun WebViewStep(
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var webView: WebView? by remember { mutableStateOf(null) }
+    var webViewGeneration by remember { mutableIntStateOf(0) }
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
@@ -746,13 +747,7 @@ private fun WebViewStep(
 
     suspend fun evaluateJs(script: String): String {
         val currentWebView = webView ?: return "null"
-        return suspendCancellableCoroutine { cont ->
-            currentWebView.evaluateJavascript(script) { result ->
-                if (cont.isActive) {
-                    cont.resume(result ?: "null")
-                }
-            }
-        }
+        return evaluateWebViewScript(currentWebView, script)
     }
 
     if (showNoDataDialog) {
@@ -920,9 +915,14 @@ private fun WebViewStep(
         }
         
         // WebView 容器
-        AndroidView(
-            factory = { ctx ->
+        key(webViewGeneration) {
+            AndroidView(
+                factory = { ctx ->
                 WebView(ctx).apply {
+                    tag = {
+                        webView = null
+                        webViewGeneration++
+                    }
                     // 开启安全浏览（API 26+）
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         settings.safeBrowsingEnabled = true
@@ -1004,6 +1004,14 @@ private fun WebViewStep(
                                 viewModel.updateWebUrl(it)
                             }
                         }
+
+                        override fun onRenderProcessGone(
+                            view: WebView,
+                            detail: android.webkit.RenderProcessGoneDetail
+                        ): Boolean {
+                            viewModel.updateResultText("网页脚本进程已重建，请重试提取。")
+                            return resetWebViewAfterRendererLoss(view)
+                        }
                     }
                     if (uiState.webUrl.isNotBlank()) {
                         val safeUrl = normalizeHttpUrl(uiState.webUrl)
@@ -1016,11 +1024,12 @@ private fun WebViewStep(
                     }
                     webView = this
                 }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            )
+        }
 
         // 状态提示栏 (显示解析中或错误信息)
         if (uiState.isLoading || uiState.resultText.isNotBlank()) {
@@ -1116,7 +1125,7 @@ private fun WebViewStep(
                                     }
                                 }
 
-                                currentWebView.evaluateJavascript(js, null)
+                                evaluateJs(js)
                                 viewModel.updateResultText("正在提取...")
                                 pollJob?.cancel()
                                 pollJob = coroutineScope.launch {

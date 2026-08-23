@@ -12,7 +12,15 @@ import com.dawncourse.core.domain.model.RemoteScriptDescriptor
 data class ScriptFetchResult(
     val content: String,
     val fromCloud: Boolean,
-    val source: String
+    val source: String,
+    val releaseId: String = "",
+    val scriptKey: String = "",
+    val scopeKind: String = "global",
+    val scopeId: String = "",
+    val schoolSystemType: String = "UNKNOWN",
+    val version: Int = 0,
+    val pendingActivation: Boolean = false,
+    val dependencyContents: List<String> = emptyList()
 )
 
 /**
@@ -20,6 +28,21 @@ data class ScriptFetchResult(
  * 用于从云端拉取最新的解析与导航脚本，应对教务系统的频繁变动。
  */
 interface ScriptSyncRepository {
+    /** 下载并验签 manifest 指定候选，只写入 staging。 */
+    suspend fun prepareScriptCandidate(
+        descriptor: RemoteScriptDescriptor,
+        pullTaskId: String = ""
+    ): ScriptFetchResult
+
+    /** 真实解析成功后将 staging 候选原子提升为 active。 */
+    suspend fun activatePreparedScript(result: ScriptFetchResult): Boolean
+
+    /** 真实解析失败后隔离 staging 候选，active 保持不变。 */
+    suspend fun quarantinePreparedScript(result: ScriptFetchResult, reason: String): Boolean
+
+    /** 已激活 release 真实解析失败时回滚到 previous stable。 */
+    suspend fun rollbackActiveScript(result: ScriptFetchResult, reason: String): Boolean
+
     /**
      * 获取指定名称的脚本内容
      * @param scriptName 脚本文件名，例如 "zhengfang.js" 或 "zf_nav.js"

@@ -11,7 +11,10 @@ import com.dawncourse.core.domain.model.ScriptDependency
  */
 data class ParserPlanEntry(
     val scriptName: String,
-    val dependencies: List<ScriptDependency>
+    val dependencies: List<ScriptDependency>,
+    val releaseId: String = "",
+    val scriptKey: String = "",
+    val descriptor: RemoteScriptDescriptor? = null
 )
 
 /**
@@ -38,7 +41,7 @@ object ParserSelectionPolicy {
      * 1. 只保留 parsers 分类，且排除工具库本身（它是依赖，不是入口）
      * 2. 契约版本门控：脚本要求的契约版本高于客户端支持范围时跳过，
      *    避免新契约脚本下发到旧客户端后以难以诊断的方式失败
-     * 3. 同名脚本只保留优先级最高的一个
+     * 3. 同一 scriptKey 只保留优先级最高的一个，不合并学校与系统轨道
      * 4. 结果为空时回落到内置列表
      *
      * @param candidates 云端候选（调用方已完成签名校验与灰度过滤）
@@ -60,7 +63,7 @@ object ParserSelectionPolicy {
                 compareByDescending<RemoteScriptDescriptor> { it.priority }
                     .thenByDescending { it.version }
             )
-            .distinctBy { it.name }
+            .distinctBy { descriptor -> descriptor.scriptKey.ifBlank { descriptor.name } }
             .toList()
 
         if (eligible.isEmpty()) return fallbackPlan()
@@ -68,7 +71,10 @@ object ParserSelectionPolicy {
         return eligible.map { descriptor ->
             ParserPlanEntry(
                 scriptName = descriptor.name,
-                dependencies = descriptor.dependencies.ifEmpty { defaultDependencies(descriptor.name) }
+                dependencies = descriptor.dependencies.ifEmpty { defaultDependencies(descriptor.name) },
+                releaseId = descriptor.releaseId,
+                scriptKey = descriptor.scriptKey,
+                descriptor = descriptor
             )
         }
     }
@@ -76,7 +82,11 @@ object ParserSelectionPolicy {
     /** 内置兜底计划：manifest 不可用或全部候选被门控时使用 */
     fun fallbackPlan(): List<ParserPlanEntry> {
         return FALLBACK_PARSERS.map { name ->
-            ParserPlanEntry(scriptName = name, dependencies = defaultDependencies(name))
+            ParserPlanEntry(
+                scriptName = name,
+                dependencies = defaultDependencies(name),
+                scriptKey = "local/parsers/$name"
+            )
         }
     }
 

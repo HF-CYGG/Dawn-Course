@@ -329,6 +329,16 @@ class ImportViewModel @Inject constructor(
         }
     }
 
+    /** 隔离失败 staging；若失败的是 active V2 release，则回滚 previous stable。 */
+    private suspend fun handlePreparedScriptFailure(
+        result: com.dawncourse.core.domain.repository.ScriptFetchResult,
+        reason: String
+    ) {
+        if (!scriptSyncRepository.quarantinePreparedScript(result, reason)) {
+            scriptSyncRepository.rollbackActiveScript(result, reason)
+        }
+    }
+
     /**
      * 获取共享执行契约（script_host.js）源码
      *
@@ -492,29 +502,42 @@ class ImportViewModel @Inject constructor(
                             val scriptHostSource = getScriptHostSource()
                             for (planEntry in parserPlan) {
                                 val parserName = planEntry.scriptName
+                                var preparedResult: com.dawncourse.core.domain.repository.ScriptFetchResult? = null
                                 hasAnyParserAttempt = true
                                 if (!attemptedParsers.contains(parserName)) {
                                     attemptedParsers.add(parserName)
                                 }
                                 try {
-                                    val fetchResult = scriptSyncRepository.getScriptWithInfo(
-                                        scriptName = parserName,
-                                        category = "parsers",
-                                        pullTaskId = currentScriptPullTaskId
-                                    )
+                                    val fetchResult = planEntry.descriptor?.let { descriptor ->
+                                        scriptSyncRepository.prepareScriptCandidate(
+                                            descriptor = descriptor,
+                                            pullTaskId = currentScriptPullTaskId
+                                        )
+                                    } ?: scriptSyncRepository.getScriptWithInfo(
+                                            scriptName = parserName,
+                                            category = "parsers",
+                                            pullTaskId = currentScriptPullTaskId
+                                        )
+                                    preparedResult = fetchResult
                                     val script = fetchResult.content
                                     lastScriptName = parserName
                                     lastScriptSource = fetchResult.source
-                                    lastScriptVersion = scriptSyncRepository.getScriptVersion(parserName, "parsers") ?: 0
+                                    lastScriptVersion = fetchResult.version.takeIf { it > 0 }
+                                        ?: scriptSyncRepository.getScriptVersion(parserName, "parsers")
+                                        ?: 0
+                                    val dependencyScripts = fetchResult.dependencyContents.ifEmpty {
+                                        loadDependencyScripts(planEntry.dependencies)
+                                    }
                                     val execution = scriptEngine.parseHtml(
                                         script = script,
                                         html = raw,
                                         harnessSource = scriptHostSource,
-                                        dependencies = loadDependencyScripts(planEntry.dependencies)
+                                        dependencies = dependencyScripts
                                     )
                                     val jsonResult = execution.raw
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
                                     if (parsedDirect.isNotEmpty()) {
+                                        scriptSyncRepository.activatePreparedScript(fetchResult)
                                         successfulScriptName = parserName
                                         reportParserParseFeedback(parserName, true, null, currentUrl)
                                         return@runParserRound parsedDirect
@@ -522,6 +545,7 @@ class ImportViewModel @Inject constructor(
                                     val xiaoai = parseXiaoaiProviderResult(jsonResult)
                                     val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                                     if (parsedFromXiaoai.isNotEmpty()) {
+                                        scriptSyncRepository.activatePreparedScript(fetchResult)
                                         successfulScriptName = parserName
                                         reportParserParseFeedback(parserName, true, null, currentUrl)
                                         return@runParserRound parsedFromXiaoai
@@ -534,7 +558,14 @@ class ImportViewModel @Inject constructor(
                                         execution.errorCode.ifBlank { ScriptEngine.ERROR_EMPTY_RESULT },
                                         currentUrl
                                     )
+                                    handlePreparedScriptFailure(
+                                        fetchResult,
+                                        execution.errorCode.ifBlank { ScriptEngine.ERROR_EMPTY_RESULT }
+                                    )
                                 } catch (e: ScriptEngine.ScriptExecutionException) {
+                                    preparedResult?.let { result ->
+                                        handlePreparedScriptFailure(result, e.errorCode)
+                                    }
                                     reportParserParseFeedback(
                                         parserName,
                                         false,
@@ -543,6 +574,12 @@ class ImportViewModel @Inject constructor(
                                     )
                                     hasParserCrash = true
                                 } catch (e: Throwable) {
+                                    preparedResult?.let { result ->
+                                        handlePreparedScriptFailure(
+                                            result,
+                                            e.message ?: e::class.java.simpleName
+                                        )
+                                    }
                                     reportParserParseFeedback(
                                         parserName,
                                         false,

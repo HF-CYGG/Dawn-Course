@@ -40,11 +40,22 @@ data class RemoteScriptDescriptor(
     val schoolBindingId: String?,
     val selectionPolicy: String,
     val dependencies: List<ScriptDependency>,
-    val changelog: String
+    val changelog: String,
+    val scriptKey: String = "",
+    val bundleUrl: String = "",
+    val scopeKind: String = "global",
+    val scopeId: String = "",
+    val schoolSystemType: String = "UNKNOWN"
 )
 
 data class ScriptDependency(
     val category: String,
     val name: String,
-    val version: Int
+    val version: Int,
+    val releaseId: String = "",
+    val url: String = "",
+    val metaUrl: String = "",
+    val sha256: String = "",
+    val signature: String = "",
+    val alg: String = "rsa-sha256"
 )

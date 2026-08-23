@@ -18,6 +18,8 @@ class ParserSelectionPolicyTest {
         name: String,
         priority: Int = 0,
         version: Int = 1,
+        releaseId: String = "rel-$name-$version",
+        scriptKey: String = "parser/parsers/$name/system/ZF",
         parserApiVersion: Int = 1,
         runnerContractVersion: Int = 1,
         category: String = "parsers",
@@ -28,7 +30,12 @@ class ParserSelectionPolicyTest {
         category = category,
         name = name,
         version = version,
-        releaseId = "rel-$name-$version",
+        releaseId = releaseId,
+        scriptKey = scriptKey,
+        bundleUrl = "https://example.com/api/v1/scripts/releases/$releaseId/bundle",
+        scopeKind = "system",
+        scopeId = "ZF",
+        schoolSystemType = "ZF",
         releaseStage = "active",
         channel = "stable",
         url = "https://example.com/scripts/parsers/$name",
@@ -85,6 +92,29 @@ class ParserSelectionPolicyTest {
 
         assertEquals(1, plan.size)
         assertEquals("zhengfang.js", plan[0].scriptName)
+        assertEquals("rel-zhengfang.js-7", plan[0].releaseId)
+    }
+
+    @Test
+    fun `同名学校轨道与系统轨道都保留`() {
+        val plan = buildPlan(
+            listOf(
+                descriptor(
+                    "zhengfang.js",
+                    priority = 100,
+                    releaseId = "rel-school",
+                    scriptKey = "parser/parsers/zhengfang.js/school/school-a"
+                ),
+                descriptor(
+                    "zhengfang.js",
+                    priority = 50,
+                    releaseId = "rel-system",
+                    scriptKey = "parser/parsers/zhengfang.js/system/ZF"
+                )
+            )
+        )
+
+        assertEquals(listOf("rel-school", "rel-system"), plan.map { it.releaseId })
     }
 
     @Test

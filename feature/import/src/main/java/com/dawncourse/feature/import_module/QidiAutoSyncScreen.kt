@@ -614,7 +614,7 @@ fun QidiAutoSyncScreen(
                     append(autoSyncExtractor)
                     append("\n}catch(e){window.__dawnResult=null;window.__dawnReady=true;}})();")
                 }
-                wv.evaluateJavascript(js, null)
+                suspendEvaluateJs(wv, js)
                 addLog("已注入提取脚本", SyncLogType.ACTION)
                 var attempts = 0
                 var raw = ""
@@ -980,7 +980,7 @@ fun QidiAutoSyncScreen(
                 
                 if (hasMenu) {
                     val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
-                    wv.evaluateJavascript(openMenuJs, null)
+                    suspendEvaluateJs(wv, openMenuJs)
                 }
 
                 kotlinx.coroutines.delay(1000)
@@ -1645,7 +1645,7 @@ fun QidiAutoSyncScreen(
                                         val wv = webView ?: return@OutlinedButton
                                         scope.launch {
                                             val clickJs = viewModel.getScriptContent("zf_refresh_captcha_click.js", "js")
-                                            wv.evaluateJavascript(clickJs, null)
+                                            suspendEvaluateJs(wv, clickJs)
                                             val srcJs = viewModel.getScriptContent("zf_refresh_captcha_src.js", "js")
                                             val res = suspendEvaluateJs(wv, srcJs)
                                             val src = parseJsReturn(res).replace("\\/", "/")
@@ -1668,7 +1668,7 @@ fun QidiAutoSyncScreen(
                                         scope.launch {
                                             val baseJs = viewModel.getScriptContent("zf_submit_captcha.js", "js")
                                             val js = baseJs.replace("{{CAPTCHA_CODE}}", safe)
-                                            wv.evaluateJavascript(js, null)
+                                            suspendEvaluateJs(wv, js)
                                             addLog("已提交验证码并触发登录", SyncLogType.ACTION)
                                         }
                                     }
@@ -2002,10 +2002,13 @@ fun QidiAutoSyncScreen(
                                 if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
                                     if (autoFillKey.isNotBlank() && autoFillKey != lastAutoFillUrl) {
                                         val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
-                                            .replace("{{PASSWORD}}", creds.secret)
+                                        val js = baseJs.replace(
+                                            "{{USERNAME}}",
+                                            escapeJavaScriptSingleQuoted(creds.username ?: "")
+                                        )
+                                            .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        wv.evaluateJavascript(js, null)
+                                        suspendEvaluateJs(wv, js)
                                         lastAutoFillUrl = autoFillKey
                                         if (showProgressDialog) {
                                             addLog("已执行自动填充脚本", SyncLogType.ACTION)
@@ -2025,7 +2028,7 @@ fun QidiAutoSyncScreen(
                                 if (!needManualLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
                                     if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
                                         val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
-                                        wv.evaluateJavascript(openMenuJs, null)
+                                        suspendEvaluateJs(wv, openMenuJs)
                                         lastZfMenuJumpUrl = pageHref
                                         addLog("尝试打开课表页面", SyncLogType.ACTION)
                                     }
@@ -2067,10 +2070,13 @@ fun QidiAutoSyncScreen(
                                 if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
                                     if (addressBar.isNotBlank() && addressBar != lastAutoFillUrl) {
                                         val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
-                                            .replace("{{PASSWORD}}", creds.secret)
+                                        val js = baseJs.replace(
+                                            "{{USERNAME}}",
+                                            escapeJavaScriptSingleQuoted(creds.username ?: "")
+                                        )
+                                            .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        wv.evaluateJavascript(js, null)
+                                        suspendEvaluateJs(wv, js)
                                         lastAutoFillUrl = addressBar
                                         if (showProgressDialog) {
                                             addLog("已执行自动填充脚本", SyncLogType.ACTION)
@@ -2274,11 +2280,7 @@ private fun AnimatedStepCard(
 }
 
 private fun escapeJs(raw: String): String {
-    return raw
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "")
+    return escapeJavaScriptSingleQuoted(raw)
 }
 
 private fun normalizeEndpointForLoad(raw: String?): String? {
@@ -2329,10 +2331,13 @@ private fun WebViewBox(
     onPageFinished: (WebView, String) -> Unit = {_, _ -> },
     onPageError: (String) -> Unit = {}
 ) {
-    AndroidView(
-        modifier = modifier.padding(top = 8.dp),
-        factory = { context ->
+    var webViewGeneration by remember { mutableIntStateOf(0) }
+    key(webViewGeneration) {
+        AndroidView(
+            modifier = modifier.padding(top = 8.dp),
+            factory = { context ->
             val wv = WebView(context)
+            wv.tag = { webViewGeneration++ }
             val settings = wv.settings
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -2385,22 +2390,27 @@ private fun WebViewBox(
                         onPageError("HTTP ${errorResponse.statusCode}")
                     }
                 }
+
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: android.webkit.RenderProcessGoneDetail
+                ): Boolean {
+                    onPageError("网页脚本进程已重建")
+                    return resetWebViewAfterRendererLoss(view)
+                }
             }
             onWebViewReady(wv)
             wv
-        }
-    )
+            }
+        )
+    }
 }
 
 /**
  * 挂起执行 JS 并返回字符串
  */
 private suspend fun suspendEvaluateJs(webView: WebView, script: String): String =
-    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-        webView.evaluateJavascript(script) { value ->
-            if (cont.isActive) cont.resume(value) {}
-        }
-    }
+    evaluateWebViewScript(webView, script)
 
 /**
  * 解析 evaluateJavascript 返回的字符串（去除引号与转义）

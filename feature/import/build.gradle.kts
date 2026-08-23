@@ -31,6 +31,7 @@ android {
     }
     buildFeatures {
         compose = true
+        aidl = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"
@@ -66,4 +67,6 @@ dependencies {
 
     // 单元测试（纯 JVM 测试）
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
