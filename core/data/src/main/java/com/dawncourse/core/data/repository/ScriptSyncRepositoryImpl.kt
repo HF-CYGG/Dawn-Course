@@ -4,6 +4,7 @@ import android.content.Context
 import com.dawncourse.core.data.BuildConfig
 import com.dawncourse.core.data.network.CloudBackendEndpoints
 import com.dawncourse.core.domain.model.RemoteScriptDescriptor
+import com.dawncourse.core.domain.model.ScriptSchoolContext
 import com.dawncourse.core.domain.model.ScriptDependency
 import com.dawncourse.core.domain.repository.ScriptFetchResult
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
@@ -230,22 +231,84 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         return CloudScriptResult(null, null, "cloud_failed")
     }
 
+    override suspend fun listParserCandidates(
+        schoolSystemType: String,
+        schoolId: String
+    ): List<RemoteScriptDescriptor> {
+        return withContext(Dispatchers.IO) {
+            val resolvedSystemType = schoolSystemType.ifBlank { getSavedSchoolSystemType() }
+            val resolvedSchoolId = schoolId.ifBlank { getSchoolIdForScript(resolvedSystemType) }
+            for ((_, baseScriptsUrl) in scriptBaseUrls) {
+                val baseUrl = baseScriptsUrl.removeSuffix("scripts/")
+                val manifestJson = fetchManifestJson(baseUrl, resolvedSystemType, resolvedSchoolId)
+                    ?: continue
+                val scripts = manifestJson.optJSONArray("scripts") ?: continue
+                val appVersionCode = getAppVersionCode()
+                val candidates = mutableListOf<RemoteScriptDescriptor>()
+                for (index in 0 until scripts.length()) {
+                    val item = scripts.optJSONObject(index) ?: continue
+                    if (item.optString("category") != "parsers") continue
+                    val descriptor = parseRemoteDescriptor(item)
+                    if (descriptor.killSwitch) continue
+                    if (appVersionCode < descriptor.minAppVersionCode) continue
+                    val maxVersion = descriptor.maxAppVersionCode
+                    if (maxVersion != null && appVersionCode > maxVersion) continue
+                    if (!isInRollout(descriptor)) continue
+                    candidates.add(descriptor)
+                }
+                if (candidates.isNotEmpty()) {
+                    return@withContext candidates.sortedWith(
+                        compareByDescending<RemoteScriptDescriptor> { it.priority }
+                            .thenByDescending { it.version }
+                    )
+                }
+            }
+            emptyList()
+        }
+    }
+
+    /** 拉取并验签 manifest，失败返回 null */
+    private fun fetchManifestJson(
+        baseUrl: String,
+        schoolSystemType: String,
+        schoolId: String
+    ): JSONObject? {
+        val manifestUrl = buildString {
+            append(baseUrl).append("api/v1/scripts/manifest?platform=android")
+            append("&appVersionCode=").append(getAppVersionCode())
+            append("&installBucketIdHash=").append(urlEncode(hashSha256(getInstallBucketId())))
+            append("&schoolSystemType=").append(urlEncode(schoolSystemType))
+            if (schoolId.isNotBlank()) {
+                append("&schoolId=").append(urlEncode(schoolId))
+            }
+            append("&selectionPolicy=").append(urlEncode(getScriptSelectionPolicy()))
+        }
+        val raw = tryFetch(manifestUrl) ?: return null
+        val manifestJson = runCatching { JSONObject(raw) }.getOrNull() ?: return null
+        return if (verifyManifest(manifestJson)) manifestJson else null
+    }
+
+    /** 读取本地记录的教务系统类型（由导入流程写入） */
+    private fun getSavedSchoolSystemType(): String {
+        val preferences = context.getSharedPreferences(
+            ScriptSchoolContext.PREFERENCES_NAME,
+            Context.MODE_PRIVATE
+        )
+        return preferences.getString(ScriptSchoolContext.KEY_SCHOOL_SYSTEM_TYPE, "").orEmpty()
+    }
+
     private fun fetchScriptFromManifest(
         scriptName: String,
         category: String,
         baseUrl: String,
         source: String
     ): CloudScriptResult? {
-        val manifestUrl = buildString {
-            append(baseUrl).append("api/v1/scripts/manifest?platform=android")
-            append("&appVersionCode=").append(getAppVersionCode())
-            append("&installBucketIdHash=").append(urlEncode(hashSha256(getInstallBucketId())))
-            append("&schoolSystemType=").append(urlEncode(systemTypeForScript(scriptName)))
-            append("&selectionPolicy=").append(urlEncode(getScriptSelectionPolicy()))
-        }
-        val raw = tryFetch(manifestUrl) ?: return null
-        val manifestJson = runCatching { JSONObject(raw) }.getOrNull() ?: return null
-        if (!verifyManifest(manifestJson)) return null
+        val schoolSystemType = systemTypeForScript(scriptName)
+        val manifestJson = fetchManifestJson(
+            baseUrl = baseUrl,
+            schoolSystemType = schoolSystemType,
+            schoolId = getSchoolIdForScript(schoolSystemType)
+        ) ?: return null
         val descriptor = selectRemoteDescriptor(manifestJson, scriptName, category) ?: return null
         val script = tryFetch(descriptor.url).takeIf { !it.isNullOrBlank() } ?: return null
         if (descriptor.sha256.isNotBlank() && !hashSha256(script).equals(descriptor.sha256, ignoreCase = true)) {
@@ -639,6 +702,17 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     private fun getScriptSelectionPolicy(): String {
         val preferences = context.getSharedPreferences("script_runtime", Context.MODE_PRIVATE)
         return preferences.getString("selection_policy", "auto") ?: "auto"
+    }
+
+    private fun getSchoolIdForScript(schoolSystemType: String): String {
+        if (schoolSystemType.isBlank()) return ""
+        val preferences = context.getSharedPreferences(
+            ScriptSchoolContext.PREFERENCES_NAME,
+            Context.MODE_PRIVATE
+        )
+        val savedSystemType = preferences.getString(ScriptSchoolContext.KEY_SCHOOL_SYSTEM_TYPE, "").orEmpty()
+        if (savedSystemType.isNotBlank() && savedSystemType != schoolSystemType) return ""
+        return preferences.getString(ScriptSchoolContext.KEY_SCHOOL_ID, "").orEmpty()
     }
 
     private fun systemTypeForScript(scriptName: String): String {

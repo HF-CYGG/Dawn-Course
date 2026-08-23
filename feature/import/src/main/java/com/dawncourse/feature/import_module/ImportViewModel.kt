@@ -13,6 +13,7 @@ import com.dawncourse.core.domain.model.SanitizedSample
 import com.dawncourse.core.domain.model.SchoolSystemType
 import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.model.ScriptSchoolContext
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
@@ -21,6 +22,8 @@ import com.dawncourse.core.domain.usecase.FetchLlmParseStatusUseCase
 import com.dawncourse.core.domain.usecase.ReportParseResultUseCase
 import com.dawncourse.core.domain.usecase.SubmitLlmParseTaskUseCase
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
+import com.dawncourse.feature.import_module.engine.ParserPlanEntry
+import com.dawncourse.feature.import_module.engine.ParserSelectionPolicy
 import com.dawncourse.feature.import_module.engine.ScriptEngine
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.SectionRange
@@ -287,6 +290,63 @@ class ImportViewModel @Inject constructor(
         currentScriptPullTaskId = "pull_${System.currentTimeMillis()}_${(0..9999).random()}"
     }
 
+    /**
+     * 解析当前设备应使用的解析器执行计划
+     *
+     * 优先使用云端 manifest 下发的候选（含学校专属脚本），失败时回落到内置列表，
+     * 以守住「核心功能离线可用」这一项目底线。
+     */
+    private suspend fun resolveParserPlan(): List<ParserPlanEntry> {
+        return try {
+            ParserSelectionPolicy.buildPlan(
+                candidates = scriptSyncRepository.listParserCandidates(),
+                supportedParserApiVersion = ScriptEngine.SUPPORTED_PARSER_API_VERSION,
+                supportedContractVersion = ScriptEngine.SUPPORTED_CONTRACT_VERSION
+            )
+        } catch (_: Exception) {
+            ParserSelectionPolicy.fallbackPlan()
+        }
+    }
+
+    /**
+     * 按 manifest 声明的依赖顺序拉取依赖脚本内容
+     *
+     * 单个依赖拉取失败不阻断解析：解析器可能本就不依赖它，或已内联所需函数。
+     */
+    private suspend fun loadDependencyScripts(
+        dependencies: List<com.dawncourse.core.domain.model.ScriptDependency>
+    ): List<String> {
+        return dependencies.mapNotNull { dependency ->
+            try {
+                scriptSyncRepository.getScript(
+                    scriptName = dependency.name,
+                    category = dependency.category,
+                    pullTaskId = currentScriptPullTaskId
+                ).takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /**
+     * 获取共享执行契约（script_host.js）源码
+     *
+     * 与解析器脚本走同一条「云端 → 本地缓存 → assets 兜底」链路，
+     * 因此可以独立热更，且在断网时仍有内置副本可用。
+     */
+    private suspend fun getScriptHostSource(): String {
+        return try {
+            scriptSyncRepository.getScript(
+                scriptName = ScriptEngine.SCRIPT_HOST_NAME,
+                category = ScriptEngine.SCRIPT_HOST_CATEGORY,
+                pullTaskId = currentScriptPullTaskId
+            )
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
         val fetchResult = scriptSyncRepository.getScriptWithInfo(
             scriptName = scriptName,
@@ -425,18 +485,13 @@ class ImportViewModel @Inject constructor(
                         courses = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
                     }
                     if (courses.isEmpty()) {
-                        val parsers = listOf("qiangzhi.js", "zhengfang.js", "kingosoft.js")
+                        // 解析器候选由云端 manifest 驱动，使服务端按 schoolId 发布的
+                        // 学校专属脚本能够被真正执行；manifest 不可用时回落到内置列表
+                        val parserPlan = resolveParserPlan()
                         val runParserRound: suspend (Boolean) -> List<ParsedCourse> = runParserRound@{ _ ->
-                            val commonUtils = try {
-                                scriptSyncRepository.getScript(
-                                    scriptName = "common_parser_utils.js",
-                                    category = "parsers",
-                                    pullTaskId = currentScriptPullTaskId
-                                )
-                            } catch (_: Exception) {
-                                ""
-                            }
-                            for (parserName in parsers) {
+                            val scriptHostSource = getScriptHostSource()
+                            for (planEntry in parserPlan) {
+                                val parserName = planEntry.scriptName
                                 hasAnyParserAttempt = true
                                 if (!attemptedParsers.contains(parserName)) {
                                     attemptedParsers.add(parserName)
@@ -451,8 +506,13 @@ class ImportViewModel @Inject constructor(
                                     lastScriptName = parserName
                                     lastScriptSource = fetchResult.source
                                     lastScriptVersion = scriptSyncRepository.getScriptVersion(parserName, "parsers") ?: 0
-                                    val fullScript = if (commonUtils.isNotEmpty()) "$commonUtils\n$script" else script
-                                    val jsonResult = scriptEngine.parseHtml(fullScript, raw)
+                                    val execution = scriptEngine.parseHtml(
+                                        script = script,
+                                        html = raw,
+                                        harnessSource = scriptHostSource,
+                                        dependencies = loadDependencyScripts(planEntry.dependencies)
+                                    )
+                                    val jsonResult = execution.raw
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
                                     if (parsedDirect.isNotEmpty()) {
                                         successfulScriptName = parserName
@@ -466,12 +526,19 @@ class ImportViewModel @Inject constructor(
                                         reportParserParseFeedback(parserName, true, null, currentUrl)
                                         return@runParserRound parsedFromXiaoai
                                     }
-                                    reportParserParseFeedback(parserName, false, "empty_result", currentUrl)
+                                    // 使用契约给出的结构化错误码上报，便于服务端按 empty_result /
+                                    // schema_invalid / duplicate_ratio_high 分别归类失败原因
+                                    reportParserParseFeedback(
+                                        parserName,
+                                        false,
+                                        execution.errorCode.ifBlank { ScriptEngine.ERROR_EMPTY_RESULT },
+                                        currentUrl
+                                    )
                                 } catch (e: ScriptEngine.ScriptExecutionException) {
                                     reportParserParseFeedback(
                                         parserName,
                                         false,
-                                        e.message ?: "script_execution_exception",
+                                        e.errorCode,
                                         currentUrl
                                     )
                                     hasParserCrash = true
@@ -641,6 +708,7 @@ class ImportViewModel @Inject constructor(
      */
     private suspend fun tryLlmFallback(
         content: String,
+        schoolId: String,
         schoolName: String,
         schoolSystemType: String,
         sourceUrl: String,
@@ -649,6 +717,7 @@ class ImportViewModel @Inject constructor(
         if (content.isBlank()) return LlmFallbackResult(failureReason = "content_blank")
         val submitResult = submitLlmParseTaskUseCase(
             content = content,
+            schoolId = schoolId,
             schoolName = schoolName,
             schoolSystemType = schoolSystemType,
             sourceUrl = sourceUrl,
@@ -793,6 +862,7 @@ class ImportViewModel @Inject constructor(
 
     private suspend fun reportSanitizedParseSample(
         content: String,
+        schoolId: String,
         schoolName: String,
         schoolSystemType: String,
         sourceUrl: String,
@@ -819,6 +889,7 @@ class ImportViewModel @Inject constructor(
                 attemptedParsers = repairContext.attemptedParsers,
                 sourceUrl = sourceUrl,
                 raw = content,
+                schoolId = schoolId,
                 schoolName = schoolName,
                 sanitizedSample = sample
             )
@@ -834,6 +905,7 @@ class ImportViewModel @Inject constructor(
         attemptedParsers: List<String>,
         sourceUrl: String,
         raw: String,
+        schoolId: String? = null,
         schoolName: String? = null,
         sanitizedSample: SanitizedSample?
     ): ParseReportPayload {
@@ -869,7 +941,7 @@ class ImportViewModel @Inject constructor(
                 appVersionName = getAppVersionName(),
                 installBucketIdHash = getInstallBucketIdHash(),
                 importSource = ImportSourceType.WEBVIEW,
-                schoolId = null,
+                schoolId = schoolId,
                 schoolName = schoolName,
                 schoolSystemType = mapSchoolSystemType(schoolSystemType),
                 sourceUrlHost = extractHost(sourceUrl),
@@ -1031,6 +1103,25 @@ class ImportViewModel @Inject constructor(
     /**
      * 更新用户是否勾选了“已知情并同意”
      */
+    private fun saveScriptSchoolContext(
+        schoolId: String,
+        schoolName: String,
+        schoolSystemType: String
+    ) {
+        val preferences = application.getSharedPreferences(
+            ScriptSchoolContext.PREFERENCES_NAME,
+            android.content.Context.MODE_PRIVATE
+        )
+        preferences.edit()
+            .putString(ScriptSchoolContext.KEY_SCHOOL_ID, schoolId)
+            .putString(ScriptSchoolContext.KEY_SCHOOL_NAME, schoolName)
+            .putString(
+                ScriptSchoolContext.KEY_SCHOOL_SYSTEM_TYPE,
+                ScriptSchoolContext.normalizeSystemType(schoolSystemType)
+            )
+            .apply()
+    }
+
     fun updateLlmConsentChecked(checked: Boolean) {
         _uiState.update { it.copy(llmConsentChecked = checked) }
     }
@@ -1061,6 +1152,12 @@ class ImportViewModel @Inject constructor(
         } else {
             extractSchoolNameFromText(content)
         }
+        val schoolId = ScriptSchoolContext.buildSchoolId(
+            schoolName = schoolName,
+            schoolSystemType = schoolSystemType,
+            sourceUrl = sourceUrl
+        )
+        saveScriptSchoolContext(schoolId, schoolName, schoolSystemType)
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -1075,12 +1172,13 @@ class ImportViewModel @Inject constructor(
             val fallbackResult = withContext(Dispatchers.IO) {
                 reportSanitizedParseSample(
                     content = content,
+                    schoolId = schoolId,
                     schoolName = schoolName,
                     schoolSystemType = schoolSystemType,
                     sourceUrl = sourceUrl,
                     repairContext = repairContext
                 )
-                tryLlmFallback(content, schoolName, schoolSystemType, sourceUrl, repairContext)
+                tryLlmFallback(content, schoolId, schoolName, schoolSystemType, sourceUrl, repairContext)
             }
             pendingLlmContent = ""
             pendingLlmRepairContext = LlmRepairContext()
@@ -1353,10 +1451,15 @@ class ImportViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "") }
             try {
+                val scriptHostSource = getScriptHostSource()
                 val parsed = withContext(Dispatchers.IO) {
                     // 1. 运行 JS 脚本提取数据
-                    val jsonResult = scriptEngine.parseHtml(script, html)
-                    
+                    val jsonResult = scriptEngine.parseHtml(
+                        script = script,
+                        html = html,
+                        harnessSource = scriptHostSource
+                    ).raw
+
                     // 2. 解析 JSON 结果
                     val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
                     

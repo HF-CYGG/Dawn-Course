@@ -1,5 +1,7 @@
 package com.dawncourse.core.domain.repository
 
+import com.dawncourse.core.domain.model.RemoteScriptDescriptor
+
 /**
  * 脚本获取结果
  *
@@ -55,6 +57,24 @@ interface ScriptSyncRepository {
     ): String
 
     suspend fun getScriptVersion(scriptName: String, category: String = "js"): Int?
+
+    /**
+     * 列出当前设备可用的解析器候选
+     *
+     * 数据来自云端 manifest（含签名校验），并已按 killSwitch、应用版本区间与灰度比例过滤。
+     * 该接口的意义在于：服务端按 schoolId 发布的学校专属脚本能够真正被对应学校的用户执行，
+     * 而不是被客户端写死的解析器列表挡在门外。
+     *
+     * 契约版本门控由调用方负责（调用方才知道自身支持的契约版本）。
+     *
+     * @param schoolSystemType 教务系统类型，留空则使用本地记录的学校上下文
+     * @param schoolId 学校标识，留空则使用本地记录的学校上下文
+     * @return 按优先级降序排列的候选列表；manifest 不可用时返回空列表，调用方应回落到内置列表
+     */
+    suspend fun listParserCandidates(
+        schoolSystemType: String = "",
+        schoolId: String = ""
+    ): List<RemoteScriptDescriptor>
 
     suspend fun reportScriptParseFeedback(
         scriptName: String,
