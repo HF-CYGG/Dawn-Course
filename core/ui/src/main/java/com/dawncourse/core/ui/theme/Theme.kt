@@ -91,14 +91,30 @@ fun DawnTheme(
         wallpaperContrastColor = result?.second
     }
 
+    // 内置回退配色
+    val fallbackScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    // 系统动态取色（Material You）
+    //
+    // dynamic*ColorScheme() 会读取约 65 个 android.R.color.system_* 系统资源，
+    // 这些资源由 ROM 通过 RRO 提供。部分第三方 ROM 上可能缺失或解析失败，
+    // 抛出的 Resources.NotFoundException 会直接让首帧组合崩溃（表现为启动即闪退）。
+    // 动态取色属于视觉增强，失败时回退到内置配色即可。
+    val systemDynamicScheme = remember(darkTheme, context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            }.getOrNull()
+        } else {
+            null
+        }
+    }
+
     // 颜色策略：优先壁纸取色，其次系统动态取色，最后回退到默认主题
     val colorScheme = when {
         appSettings.dynamicColor && wallpaperColorScheme != null -> wallpaperColorScheme!!
-        appSettings.dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        appSettings.dynamicColor && systemDynamicScheme != null -> systemDynamicScheme
+        else -> fallbackScheme
     }
     // 顶栏对比色：优先壁纸对比色，否则使用主题 onSurface
     val resolvedTopBarIconColor = wallpaperContrastColor ?: colorScheme.onSurface

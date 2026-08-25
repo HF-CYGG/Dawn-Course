@@ -78,6 +78,17 @@ class MainActivity : ComponentActivity() {
             viewModel.uiState.value is MainUiState.Loading
         }
 
+        // 获取当前应用版本号
+        //
+        // 必须在 onCreate 中取一次并复用：getPackageInfo 是一次同步 Binder IPC，
+        // 若写在 setContent 的 composable 作用域内，会随每次重组在主线程重复发起 IPC，
+        // 在冷启动阶段 system_server 繁忙时可能显著拖慢首帧。
+        val currentVersionCode = runCatching {
+            val packageInfo = applicationContext.packageManager
+                .getPackageInfo(applicationContext.packageName, 0)
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
+        }.getOrDefault(0L)
+
         // 设置 Compose 内容视图
         setContent {
             val uiState by viewModel.uiState.collectAsState()
@@ -96,10 +107,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-
-            // 获取当前应用版本号
-            val packageInfo = applicationContext.packageManager.getPackageInfo(applicationContext.packageName, 0)
-            val currentVersionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
 
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {

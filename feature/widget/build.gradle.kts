@@ -41,6 +41,9 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:ui"))
 
+    // AndroidX Core (ContextCompat.registerReceiver 等兼容 API)
+    implementation(libs.core.ktx)
+
     // Glance
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
