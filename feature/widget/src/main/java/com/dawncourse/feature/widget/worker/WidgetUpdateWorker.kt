@@ -17,8 +17,10 @@ import java.util.concurrent.TimeUnit
 
 import android.content.Intent
 import android.content.IntentFilter
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import com.dawncourse.feature.widget.MidnightUpdateReceiver
 import com.dawncourse.feature.widget.DawnWidgetReceiver
@@ -176,12 +178,30 @@ object WidgetSyncManager {
      * 适用于需要立即响应的交互场景，如：App 回到前台、时间变更广播等。
      */
     fun updateWidgetNow(context: Context) {
-        CoroutineScope(Dispatchers.IO).launch {
+        // 本方法在 MainActivity.onStart() 中被无条件调用，位于每次启动的关键路径上。
+        //
+        // 必须捕获 Throwable 而不是 Exception：
+        // Glance / RemoteViews 在新版本 Android 上可能抛出 LinkageError 系列错误
+        // （NoSuchMethodError / NoClassDefFoundError / AbstractMethodError 等），
+        // 这些是 Error 而非 Exception，catch (e: Exception) 无法拦截。
+        // 由于这里是没有 CoroutineExceptionHandler 的裸协程作用域，
+        // 漏网的 Throwable 会冒泡到默认 Thread.UncaughtExceptionHandler 并杀死整个进程，
+        // 在启动阶段表现为“白屏后闪退”。
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + widgetExceptionHandler).launch {
             try {
                 DawnWidget().updateAll(context)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (t: Throwable) {
+                Log.w(TAG, "updateWidgetNow failed", t)
             }
         }
+    }
+
+    /**
+     * 小组件后台任务统一异常兜底
+     *
+     * 小组件刷新属于“尽力而为”的增强功能，任何失败都不应升级为进程崩溃。
+     */
+    internal val widgetExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.w(TAG, "Widget coroutine failed", throwable)
     }
 }

@@ -3,6 +3,7 @@ package com.dawncourse.feature.timetable.notification
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
@@ -69,6 +70,11 @@ class ReminderReceiver : BroadcastReceiver() {
                     location = course.location,
                     notificationIdSeed = notificationSeed
                 )
+            } catch (t: Throwable) {
+                // 必须捕获 Throwable：这是一个没有 CoroutineExceptionHandler 的裸协程作用域，
+                // 未捕获的异常会冒泡到默认 UncaughtExceptionHandler 并杀死整个进程。
+                // 上课提醒失败只应丢失一次通知，不应导致 App 崩溃。
+                Log.w(TAG, "showCourseReminder failed", t)
             } finally {
                 pendingResult.finish()
             }
@@ -102,5 +108,9 @@ class ReminderReceiver : BroadcastReceiver() {
     private fun buildStableNotificationSeed(courseId: Long, epochDay: Long): Long {
         val base = abs(courseId) % 100_000L
         return epochDay * 100_000L + base
+    }
+
+    private companion object {
+        private const val TAG = "ReminderReceiver"
     }
 }

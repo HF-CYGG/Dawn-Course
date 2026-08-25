@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import com.dawncourse.core.domain.repository.SettingsRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -27,6 +28,7 @@ class SilenceReceiver : BroadcastReceiver() {
         const val ACTION_UNMUTE = "com.dawncourse.action.UNMUTE"
         private const val EXTRA_COURSE_ID = "COURSE_ID"
         private const val EXTRA_UNMUTE_TIME_MILLIS = "UNMUTE_TIME_MILLIS"
+        private const val TAG = "SilenceReceiver"
     }
 
     @EntryPoint
@@ -52,6 +54,11 @@ class SilenceReceiver : BroadcastReceiver() {
                     }
                     ACTION_UNMUTE -> SilenceHelper.unmute(context)
                 }
+            } catch (t: Throwable) {
+                // 必须捕获 Throwable：这是一个没有 CoroutineExceptionHandler 的裸协程作用域，
+                // 未捕获的异常会冒泡到默认 UncaughtExceptionHandler 并杀死整个进程。
+                // 自动静音失败只应跳过本次操作，不应导致 App 崩溃。
+                Log.w(TAG, "auto-mute action failed", t)
             } finally {
                 pendingResult.finish()
             }
