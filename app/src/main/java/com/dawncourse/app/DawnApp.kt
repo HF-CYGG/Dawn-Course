@@ -1,6 +1,7 @@
 package com.dawncourse.app
 
 import android.app.Application
+import com.dawncourse.app.crash.CrashReporter
 import dagger.hilt.android.HiltAndroidApp
 
 /**
@@ -13,6 +14,11 @@ import dagger.hilt.android.HiltAndroidApp
 @HiltAndroidApp
 class DawnApp : Application() {
     override fun onCreate() {
+        // 必须在 super.onCreate() 与其余任何初始化逻辑之前安装：
+        // 越早安装，越能覆盖 Hilt 组件构建、App Startup 初始化器等后续流程中
+        // 可能出现的崩溃。
+        CrashReporter.install(this)
+
         super.onCreate()
     }
 }

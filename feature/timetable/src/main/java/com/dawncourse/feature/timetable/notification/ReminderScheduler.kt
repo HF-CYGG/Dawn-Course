@@ -1,6 +1,7 @@
 package com.dawncourse.feature.timetable.notification
 
 import android.content.Context
+import android.util.Log
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -22,6 +23,7 @@ import java.util.concurrent.TimeUnit
  * - 本调度器会被 [com.dawncourse.app.MainActivity] 在设置变化时调用，因此必须可重复调用且不会产生多条重复任务。
  */
 object ReminderScheduler {
+    private const val TAG = "ReminderScheduler"
     private const val WORK_NAME = "DailyReminderWorker"
     private val TARGET_LOCAL_TIME: LocalTime = LocalTime.of(6, 0)
 
@@ -31,37 +33,53 @@ object ReminderScheduler {
      * - 周期：24 小时
      */
     fun scheduleDailyWork(context: Context) {
-        val zoneId = ZoneId.systemDefault()
-        val initialDelayMillis = calculateInitialDelayMillis(
-            zoneId = zoneId,
-            targetLocalTime = TARGET_LOCAL_TIME,
-            now = ZonedDateTime.now(zoneId)
-        )
+        // 兜底原因：调用方（MainActivity 的 LaunchedEffect）已有兜底，
+        // 但本方法也可能从其它入口调用，这里再加一层，保证任何调用方式都不会崩溃。
+        // WorkManager.getInstance() 在未初始化时抛 IllegalStateException，
+        // enqueue 在部分 OEM ROM 的 JobScheduler 配额超限时也可能抛异常。
+        runCatching {
+            val zoneId = ZoneId.systemDefault()
+            val initialDelayMillis = calculateInitialDelayMillis(
+                zoneId = zoneId,
+                targetLocalTime = TARGET_LOCAL_TIME,
+                now = ZonedDateTime.now(zoneId)
+            )
 
-        val request = PeriodicWorkRequestBuilder<DailySchedulerWorker>(24, TimeUnit.HOURS)
-            // 通过初始延迟把首次运行时间对齐到下一次 06:00（本地时间）
-            // 注意：这只能“尽量对齐”，系统仍可能因省电策略/资源约束推迟执行
-            .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
-            .build()
+            val request = PeriodicWorkRequestBuilder<DailySchedulerWorker>(24, TimeUnit.HOURS)
+                // 通过初始延迟把首次运行时间对齐到下一次 06:00（本地时间）
+                // 注意：这只能“尽量对齐”，系统仍可能因省电策略/资源约束推迟执行
+                .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+                .build()
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            WORK_NAME,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request
-        )
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                request
+            )
+        }.onFailure {
+            Log.w(TAG, "scheduleDailyWork failed", it)
+        }
     }
 
     fun triggerImmediateWork(context: Context) {
-        val request = OneTimeWorkRequestBuilder<DailySchedulerWorker>()
-            .build()
-        WorkManager.getInstance(context).enqueue(request)
+        runCatching {
+            val request = OneTimeWorkRequestBuilder<DailySchedulerWorker>()
+                .build()
+            WorkManager.getInstance(context).enqueue(request)
+        }.onFailure {
+            Log.w(TAG, "triggerImmediateWork failed", it)
+        }
     }
 
     /**
      * 取消调度任务
      */
     fun cancelWork(context: Context) {
-        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        runCatching {
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+        }.onFailure {
+            Log.w(TAG, "cancelWork failed", it)
+        }
     }
 
     /**

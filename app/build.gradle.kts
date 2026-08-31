@@ -113,6 +113,8 @@ dependencies {
     implementation(libs.ui.graphics)
     implementation(libs.ui.tooling.preview)
     implementation(libs.material3)
+    // CrashReportDialog 使用 Icons.Rounded.Warning / ContentCopy，二者属于扩展图标集
+    implementation(libs.material.icons.extended)
 
     implementation(libs.activity.compose)
     implementation(libs.navigation.compose)
