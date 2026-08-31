@@ -75,6 +75,19 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        // 16 KB 内存页对齐（部分 2024 年后发布的设备，如高通骁龙 8 Elite Gen 5 机型，
+        // 已切换为 16 KB page size；未按 16 KB 对齐的 .so 会在 dlopen 时抛
+        // UnsatisfiedLinkError）。
+        //
+        // 注意：这里显式声明 useLegacyPackaging = false 只是保证 AGP 不压缩、
+        // 页对齐地打包 .so 文件本身，是必要条件，不是充分条件——
+        // .so 内部 ELF LOAD 段的实际对齐方式取决于编译该 .so 时使用的 NDK 版本
+        // （需 NDK r28+，或 r26/r27 显式加对齐链接参数）。
+        // 当前 AGP 版本 (8.3.1) 也早于官方完整支持 16 KB 对齐的 8.5.1，
+        // 完整生效需配合 Phase 3 的 AGP 升级一并验证。
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 
     lint {

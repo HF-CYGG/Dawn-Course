@@ -107,7 +107,7 @@
 - **架构**：MVVM + Clean Architecture（App / Domain / Data / UI 分层）
 - **依赖注入**：Hilt 2.51
 - **异步**：Coroutines + Flow
-- **数据库**：Room 2.6.1（可选 SQLCipher 加密）
+- **数据库**：Room 2.6.1
 - **网络**：Retrofit + OkHttp
 - **图片加载**：Coil
 - **导航**：Navigation Compose
