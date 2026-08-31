@@ -1,13 +1,14 @@
 plugins {
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.kotlinAndroid)
+    // kotlinAndroid 插件已移除：AGP 9.0+ 内置 Kotlin 支持
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.composeCompiler)
 }
 
 android {
     namespace = "com.dawncourse.feature.settings"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26
@@ -27,15 +28,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
+    // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
+    // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.11"
-    }
+    // composeOptions.kotlinCompilerExtensionVersion 已移除：
+    // Compose 编译器版本现在由 composeCompiler 插件（版本随 Kotlin 一同发布）管理
 }
 
 dependencies {
