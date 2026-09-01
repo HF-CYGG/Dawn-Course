@@ -84,6 +84,10 @@ for (const [name, ctx] of scopes) {
     eq(parseWeeks('(1-16周)'), range(1, 16), name + ' parseWeeks("(1-16周)") 括号包裹');
     eq(parseWeeks('（9周）'), [9], name + ' parseWeeks("（9周）") 全角括号包裹');
     eq(parseWeeks('1-4周(1-2节),6-8周'), [1, 2, 3, 4, 6, 7, 8], name + ' parseWeeks 区间+节次括号+区间');
+    // 方括号形式的节次后缀：Kingosoft 列表周次格常见写法（Codex PR #112 P1）。
+    // 之前只清圆括号，方括号会与周次数字粘连（"5周[1-2节]" -> "51-2" -> 误判成第 2-51 周）。
+    eq(parseWeeks('5周[1-2节]'), [5], name + ' parseWeeks("5周[1-2节]") 方括号节次粘连');
+    eq(parseWeeks('1-16周[03-04节]'), range(1, 16), name + ' parseWeeks("1-16周[03-04节]") 区间+方括号节次粘连');
 
     // ---- extractWeeksStr ----
     eq(extractWeeksStr('周次:5'), '5', name + ' extractWeeksStr("周次:5") 无 周 字');
@@ -115,6 +119,9 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('1-16周 双创楼'), '1-16周', name + ' extractWeeksStr("...双创楼") 不误判"双"');
     eq(extractWeeksStr('1-16周 单元楼101'), '1-16周', name + ' extractWeeksStr("...单元楼") 不误判"单"');
     eq(extractWeeksStr('1-16周单周'), '1-16周(单)', name + ' extractWeeksStr("...单周") 无分隔符但成词仍识别');
+    // 包裹符内部带 "周" 的前置单双周标记：(单周)/（双周）（Codex PR #112 P1 三次）
+    eq(extractWeeksStr('周数：(单周)1-16周'), '1-16周(单)', name + ' extractWeeksStr("周数：(单周)1-16周") 括号内带周');
+    eq(extractWeeksStr('（双周）2-16周'), '2-16周(双)', name + ' extractWeeksStr("（双周）2-16周") 无标签+括号内带周');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
