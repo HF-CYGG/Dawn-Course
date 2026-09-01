@@ -1,15 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Self-hosted app services prefer HTTPS, but current deployments may expose HTTP on custom ports. -->
-    <base-config cleartextTrafficPermitted="false" />
-
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">yyh163.xyz</domain>
-        <domain includeSubdomains="false">47.105.76.193</domain>
-    </domain-config>
-
-    <!-- Some school educational systems still expose WebView pages over HTTP. -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">edu.cn</domain>
-    </domain-config>
+    <!--
+      Jiaowu import (WebView) and WebDAV sync accept arbitrary user-supplied hosts,
+      many of which are campus intranets or self-hosted servers without TLS. A static
+      per-domain allowlist can't cover those, so cleartext stays permitted by default;
+      the app-side URL normalizers default new input to https:// and only fall back to
+      http:// when the user explicitly types it.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

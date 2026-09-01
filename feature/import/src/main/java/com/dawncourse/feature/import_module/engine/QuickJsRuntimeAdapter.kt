@@ -1,7 +1,21 @@
 package com.dawncourse.feature.import_module.engine
 
+import android.os.Build
 import com.whl.quickjs.android.QuickJSLoader
 import com.whl.quickjs.wrapper.QuickJSContext
+
+/**
+ * `Thread.getId()` 在 JDK 19 起被 `Thread.threadId()` 取代，但后者在 Android 35 以下
+ * 不存在（minSdk 26 覆盖到该版本以前），直接切换会在旧设备上 NoSuchMethodError。
+ * 这里按系统版本二选一，新系统用新 API，旧系统保留旧 API 并显式抑制过时警告。
+ */
+private fun currentThreadId(): Long =
+    if (Build.VERSION.SDK_INT >= 35) {
+        Thread.currentThread().threadId()
+    } else {
+        @Suppress("DEPRECATION")
+        Thread.currentThread().id
+    }
 
 /**
  * QuickJS 求值的最小、供应商无关结果类型。
@@ -49,7 +63,7 @@ internal fun interface QuickJsRuntimeFactory {
  */
 internal class ThreadConfinedQuickJsRuntimeAdapter(
     private val delegate: QuickJsRuntimeAdapter,
-    private val ownerThreadId: Long = Thread.currentThread().id
+    private val ownerThreadId: Long = currentThreadId()
 ) : QuickJsRuntimeAdapter {
     private var closed: Boolean = false
 
@@ -68,7 +82,7 @@ internal class ThreadConfinedQuickJsRuntimeAdapter(
 
     /** 验证 Context 的所有 native 调用均发生在同一条服务线程。 */
     private fun checkOwnerThread() {
-        check(Thread.currentThread().id == ownerThreadId) {
+        check(currentThreadId() == ownerThreadId) {
             "QuickJS runtime accessed from a different thread"
         }
     }

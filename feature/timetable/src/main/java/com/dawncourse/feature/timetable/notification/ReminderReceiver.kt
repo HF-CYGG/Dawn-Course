@@ -29,6 +29,9 @@ class ReminderReceiver : BroadcastReceiver() {
         /** 新提醒 PendingIntent 的唯一 action。 */
         const val ACTION_REMINDER = "com.dawncourse.action.REMINDER"
         private const val TAG = "ReminderReceiver"
+
+        /** goAsync 窗口内可等待数据库就绪的上限；避免进程刚被拉起时因 STARTING 直接丢弃闹钟。 */
+        private const val DATABASE_READY_AWAIT_TIMEOUT_MS = 8_000L
     }
 
     /** Receiver 在应用单例组件中需要的领域依赖。 */
@@ -71,7 +74,9 @@ class ReminderReceiver : BroadcastReceiver() {
             context.applicationContext,
             ReceiverEntryPoint::class.java
         )
-        if (entryPoint.operationalDataGate().readiness() != OperationalDataReadiness.READY) return
+        val readiness = entryPoint.operationalDataGate()
+            .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
+        if (readiness != OperationalDataReadiness.READY) return
         val candidate = entryPoint.courseRepository().getCourseById(key.courseId) ?: return
         entryPoint.activeTimetableActionGate().executeIfActive(
             profileId = key.profileId,

@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.dawncourse.core.data.repository.ActiveProfileSelectionStore
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
+import com.dawncourse.core.data.repository.settingsDataStore
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.LocalBackupData
@@ -116,7 +118,8 @@ class DatabaseStartupRuntimeInstrumentedTest {
 
     private fun newRuntime(): DatabaseStartupRuntime = DatabaseStartupRuntime(
         context = context,
-        settingsRepository = SettingsRepositoryImpl(context)
+        settingsRepository = SettingsRepositoryImpl(context),
+        activeProfileSelectionStore = ActiveProfileSelectionStore(context.settingsDataStore)
     )
 
     private suspend fun awaitTerminal(runtime: DatabaseStartupRuntime): DatabaseRuntimeState =

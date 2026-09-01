@@ -162,6 +162,8 @@ object PersistentNotificationRefreshScheduler {
         val intent = Intent(context, PersistentNotificationRefreshReceiver::class.java).apply {
             action = ACTION_REFRESH_COURSE_STATUS
             data = Uri.parse(REFRESH_DATA_URI)
+            // 显式锁定目标包名，避免 AlarmManager 持有的 PendingIntent 被当作隐式 Intent 解析。
+            setPackage(context.packageName)
         }
         return PendingIntent.getBroadcast(
             context,

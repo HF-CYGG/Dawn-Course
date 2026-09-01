@@ -30,14 +30,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 /** 数据库启动、恢复 UI 与 DataModule 共用的进程级唯一 Runtime。 */
 @Singleton
 class DatabaseStartupRuntime @Inject constructor(
     @ApplicationContext private val context: Context,
-    settingsRepository: SettingsRepository
+    settingsRepository: SettingsRepository,
+    activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore
 ) : OperationalDataGate {
     private val databaseFile = context.getDatabasePath(DATABASE_NAME)
     private val migrationFiles = AtomicDatabaseMigrationFiles(databaseFile)
@@ -51,6 +54,7 @@ class DatabaseStartupRuntime @Inject constructor(
     private val recoveryBootstrap = DatabaseRecoveryBootstrapCoordinator(
         context = context,
         settingsRepository = settingsRepository,
+        activeProfileSelectionStore = activeProfileSelectionStore,
         criticalSection = startupCriticalSection,
         recoveryFiles = recoveryFiles,
         installer = DatabaseRecoveryBootstrapInstaller(
@@ -75,6 +79,14 @@ class DatabaseStartupRuntime @Inject constructor(
 
     /** Worker/Widget/Receiver 的无阻塞启动守卫。 */
     override fun readiness(): OperationalDataReadiness = controller.readiness()
+
+    /** 一次性广播（AlarmManager）用的有限等待；超时后回落到彼时的即时状态。 */
+    override suspend fun awaitReadiness(timeoutMillis: Long): OperationalDataReadiness {
+        withTimeoutOrNull(timeoutMillis) {
+            state.first { current -> current !is DatabaseRuntimeState.Starting }
+        }
+        return readiness()
+    }
 
     /** 从 SAF canonical 备份恢复；不会解析原 AppDatabase。 */
     suspend fun restoreFromLocalBackup(uri: Uri): DatabaseRecoveryActionResult =
@@ -134,15 +146,34 @@ class DatabaseStartupRuntime @Inject constructor(
     private fun migrateOpenAndPublish(
         passphrase: SqlCipherPassphrase
     ): DatabaseStartupInitialization<AppDatabase> {
-        val migration = PlaintextToSqlCipherMigrator(
+        val migrator = PlaintextToSqlCipherMigrator(
             files = migrationFiles,
             backend = AndroidPlaintextToSqlCipherMigrationBackend()
-        ).migrate(passphrase)
-        return when (migration) {
-            is PlaintextToSqlCipherMigrationResult.Success -> openAndPublish(
-                passphrase = passphrase,
-                migratedPlaintextThisRun = true
-            )
+        )
+        return when (val migration = migrator.migrate(passphrase)) {
+            is PlaintextToSqlCipherMigrationResult.Success -> {
+                // migrate() 只把 journal 推进到 SWAPPED_NOT_VERIFIED；只有 Room 也完整打开
+                // （含 v5->v6 schema 迁移）成功后，才提交 COMPLETE。Room 这一步失败时，
+                // journal 仍未 COMPLETE，明文 pre-image 依然可以物理回滚，
+                // 不能让用户仍然完好的旧数据被锁死在一个未经验证的加密库里。
+                when (val opened = openAndPublish(passphrase = passphrase, migratedPlaintextThisRun = true)) {
+                    is DatabaseStartupInitialization.Ready -> {
+                        if (migrator.confirmComplete(migration.attempt)) {
+                            opened
+                        } else {
+                            opened.handle.close()
+                            enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+                        }
+                    }
+                    is DatabaseStartupInitialization.RecoveryRequired -> {
+                        if (migrator.abandonAfterOpenFailure(migration.attempt)) {
+                            enterRecovery(DatabaseRecoveryReason.MigrationFailed)
+                        } else {
+                            opened
+                        }
+                    }
+                }
+            }
             is PlaintextToSqlCipherMigrationResult.RecoveryRequired -> {
                 passphrase.close()
                 enterRecovery(DatabaseRecoveryReason.MigrationFailed)

@@ -66,9 +66,18 @@ enum class DatabaseMigrationFailure {
 
 /** 明文数据库原子加密迁移的稳定结果。 */
 sealed interface PlaintextToSqlCipherMigrationResult {
-    /** 加密库换入且使用相同口令重开验证成功；旧明文 pre-image 仍保留。 */
+    /**
+     * 加密库换入且使用相同口令重开验证成功；旧明文 pre-image 仍保留。
+     *
+     * journal 仍停留在 [DatabaseMigrationStage.SWAPPED_NOT_VERIFIED]，尚未标记 COMPLETE：
+     * 调用方必须在 Room 完整打开（含 schema 迁移）也成功后调用
+     * [PlaintextToSqlCipherMigrator.confirmComplete]；若 Room 打开失败，应改用
+     * [PlaintextToSqlCipherMigrator.abandonAfterOpenFailure] 物理回滚到明文 pre-image，
+     * 而不是让一个未经 Room 验证的加密库永久无法回滚。
+     */
     data class Success(
-        val retainedPlaintextPreimage: File
+        val retainedPlaintextPreimage: File,
+        val attempt: DatabaseMigrationAttempt
     ) : PlaintextToSqlCipherMigrationResult
 
     /** 必须停止启动并进入可见恢复入口。 */
@@ -213,12 +222,32 @@ class PlaintextToSqlCipherMigrator(
         if (!reopened.matchesEncrypted(source.snapshot)) {
             return failAndRollback(attempt, DatabaseMigrationFailure.ReopenValidationFailed)
         }
-        return try {
-            files.recordStage(attempt, DatabaseMigrationStage.COMPLETE)
-            PlaintextToSqlCipherMigrationResult.Success(attempt.plaintextPreimage)
-        } catch (_: Throwable) {
-            failAndRollback(attempt, DatabaseMigrationFailure.ReopenValidationFailed)
-        }
+        // 停在 SWAPPED_NOT_VERIFIED：调用方的 Room 打开/迁移还没有验证，过早标记 COMPLETE
+        // 会让这条 journal 状态从此无法回滚，即使明文 pre-image 仍然完好。
+        return PlaintextToSqlCipherMigrationResult.Success(attempt.plaintextPreimage, attempt)
+    }
+
+    /**
+     * 调用方（Room 打开/迁移）也验证成功后才提交完成状态。
+     *
+     * 只有完成本方法后，下一次冷启动才会清理明文 pre-image；提交失败时保守返回 false，
+     * 调用方应转入恢复而不是当作已完成处理。
+     */
+    fun confirmComplete(attempt: DatabaseMigrationAttempt): Boolean = try {
+        files.withExclusiveLock { files.recordStage(attempt, DatabaseMigrationStage.COMPLETE) }
+        true
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
+     * 调用方（Room 打开/迁移）失败时，journal 仍在 SWAPPED_NOT_VERIFIED，物理回滚到明文
+     * pre-image 仍然合法；不得让一个未经完整验证的加密库锁死用户仍然完好的旧数据。
+     */
+    fun abandonAfterOpenFailure(attempt: DatabaseMigrationAttempt): Boolean = try {
+        files.withExclusiveLock { files.rollbackToPlaintextPreimage(attempt) }
+    } catch (_: Throwable) {
+        false
     }
 
     /** 换入前主路径从未修改，只结束 attempt；不用 pre-image 覆盖仍可信的主库。 */

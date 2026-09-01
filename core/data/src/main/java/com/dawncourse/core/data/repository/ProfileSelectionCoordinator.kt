@@ -694,7 +694,8 @@ class ProfileSelectionCoordinator @Inject constructor(
     ): Throwable? = withContext(NonCancellable) {
         var firstFailure: Throwable? = null
         fun record(failure: Throwable) {
-            if (firstFailure == null) firstFailure = failure else firstFailure?.addSuppressed(failure)
+            val current = firstFailure
+            if (current == null) firstFailure = failure else current.addSuppressed(failure)
         }
         try {
             activeSelectionStore.restoreRawSelection(selectionPreimage)

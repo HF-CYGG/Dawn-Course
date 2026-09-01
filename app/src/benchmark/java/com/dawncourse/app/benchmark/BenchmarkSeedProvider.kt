@@ -89,8 +89,12 @@ class BenchmarkSeedProvider : ContentProvider() {
                     database.courseDao().deleteAllCourses()
                     database.semesterDao().deleteAllSemesters()
                     resetBenchmarkSequences(database)
-                    database.semesterDao().insertSemester(benchmarkSemester())
+                    val profileId = requireNotNull(database.timetableProfileDao().getFirstProfile()) {
+                        "Benchmark seed aborted: no timetable profile available."
+                    }.id
+                    database.semesterDao().insertSemester(benchmarkSemester(profileId))
                     database.courseDao().insertCourses(benchmarkCourses())
+                    database.timetableProfileDao().updateActiveSemesterId(profileId, BENCHMARK_SEMESTER_ID)
                 }
             }
             runBlocking {
@@ -193,13 +197,14 @@ class BenchmarkSeedProvider : ContentProvider() {
         )
     }
 
-    private fun benchmarkSemester(): SemesterEntity {
+    private fun benchmarkSemester(profileId: Long): SemesterEntity {
         val startDate = benchmarkSemesterStartDate()
             .atStartOfDay(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
         return SemesterEntity(
             id = BENCHMARK_SEMESTER_ID,
+            profileId = profileId,
             name = "Benchmark Semester",
             startDate = startDate,
             weekCount = BENCHMARK_WEEK_COUNT,

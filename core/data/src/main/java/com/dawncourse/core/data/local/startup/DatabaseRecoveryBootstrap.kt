@@ -189,7 +189,11 @@ internal data class RecoverySettingsPayload(
     val oldSettings: com.dawncourse.core.domain.model.AppSettings,
     val oldSelectedSemesterId: Long?,
     val targetSettings: com.dawncourse.core.domain.model.AppSettings,
-    val targetSelectedSemesterId: Long?
+    val targetSelectedSemesterId: Long?,
+    /** 写入前的原始 active_profile_id；null 表示该键原本不存在。 */
+    val oldActiveProfileId: Long? = null,
+    /** 备份声明的活动 Profile；null 表示备份未携带该字段。 */
+    val targetActiveProfileId: Long? = null
 )
 
 /** 使用 AtomicFile + 固定路径持久化恢复安装阶段和设置补偿数据。 */
@@ -205,7 +209,9 @@ internal class AndroidDatabaseRecoveryInstallJournal(
         oldSettings: com.dawncourse.core.domain.model.AppSettings,
         oldSelection: Long?,
         targetSettings: com.dawncourse.core.domain.model.AppSettings,
-        targetSelection: Long?
+        targetSelection: Long?,
+        oldActiveProfileId: Long?,
+        targetActiveProfileId: Long?
     ): DatabaseRecoveryInstallAttempt {
         current()?.let { existing ->
             require(existing.stage in TERMINAL_STAGES) { "上一次恢复安装尚未收敛" }
@@ -215,7 +221,14 @@ internal class AndroidDatabaseRecoveryInstallJournal(
         require(ATTEMPT_ID.matches(id)) { "恢复安装 attempt ID 无效" }
         writeSettings(
             id,
-            RecoverySettingsPayload(oldSettings, oldSelection, targetSettings, targetSelection)
+            RecoverySettingsPayload(
+                oldSettings = oldSettings,
+                oldSelectedSemesterId = oldSelection,
+                targetSettings = targetSettings,
+                targetSelectedSemesterId = targetSelection,
+                oldActiveProfileId = oldActiveProfileId,
+                targetActiveProfileId = targetActiveProfileId
+            )
         )
         val attempt = DatabaseRecoveryInstallAttempt(id, DatabaseRecoveryInstallStage.INITIALIZED)
         write(attempt)
@@ -543,6 +556,7 @@ private class AndroidDatabaseRecoveryKeyMaterial(
 internal class DatabaseRecoveryBootstrapCoordinator(
     private val context: Context,
     private val settingsRepository: SettingsRepository,
+    private val activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore,
     private val criticalSection: DatabaseStartupCriticalSection,
     private val recoveryFiles: AndroidDatabaseRecoveryFiles,
     private val installer: DatabaseRecoveryBootstrapInstaller,
@@ -614,13 +628,16 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         }
         val oldSettings = settingsRepository.settings.first()
         val oldSelection = settingsRepository.selectedSemesterId.first()
+        val oldActiveProfileId = activeProfileSelectionStore.rawActiveProfileId.first()
         var succeeded = false
         criticalSection.run {
             val attempt = journal.begin(
                 oldSettings = oldSettings,
                 oldSelection = oldSelection,
                 targetSettings = validated.settings,
-                targetSelection = validated.selectedSemesterId
+                targetSelection = validated.selectedSemesterId,
+                oldActiveProfileId = oldActiveProfileId,
+                targetActiveProfileId = validated.activeProfileId
             )
             succeeded = runCatching {
                 installer.install(
@@ -636,6 +653,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                         validated.settings,
                         validated.selectedSemesterId
                     )
+                    applyActiveProfileSelection(validated.activeProfileId)
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
                 recoveryFiles.clearMarkerAfterExplicitDecision()
@@ -649,6 +667,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                             payload.oldSettings,
                             payload.oldSelectedSemesterId
                         )
+                        activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
                     }
                 }
                 val rolledBack = installer.rollbackNewReplacement(attempt)
@@ -663,6 +682,15 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         }
     }
 
+    /** 与常规恢复入口一致的写入语义：备份未声明活动 Profile 时显式清空，而非保留旧值。 */
+    private suspend fun applyActiveProfileSelection(activeProfileId: Long?) {
+        if (activeProfileId == null) {
+            activeProfileSelectionStore.clearSelection()
+        } else {
+            activeProfileSelectionStore.selectProfile(activeProfileId)
+        }
+    }
+
     private fun finishOrRollback(attempt: DatabaseRecoveryInstallAttempt): DatabaseRecoveryInstallRecovery {
         val finished = runCatching {
             val payload = journal.readSettings(attempt)
@@ -671,6 +699,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                     payload.targetSettings,
                     payload.targetSelectedSemesterId
                 )
+                applyActiveProfileSelection(payload.targetActiveProfileId)
             }
             if (attempt.stage == DatabaseRecoveryInstallStage.MAIN_SWAPPED) {
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
@@ -690,6 +719,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                     payload.oldSettings,
                     payload.oldSelectedSemesterId
                 )
+                activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
             }
         }.isSuccess
         val filesRestored = installer.rollbackNewReplacement(attempt)

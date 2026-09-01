@@ -32,6 +32,9 @@ class SilenceReceiver : BroadcastReceiver() {
         /** 课程结束安全恢复 action。 */
         const val ACTION_UNMUTE = "com.dawncourse.action.UNMUTE"
         private const val TAG = "SilenceReceiver"
+
+        /** goAsync 窗口内可等待数据库就绪的上限；避免进程刚被拉起时因 STARTING 直接丢弃自动静音。 */
+        private const val DATABASE_READY_AWAIT_TIMEOUT_MS = 8_000L
     }
 
     /** MUTE 二次校验所需领域依赖。 */
@@ -83,7 +86,9 @@ class SilenceReceiver : BroadcastReceiver() {
                 } else if (key != null) {
                     when (key.kind) {
                         TriggerKind.MUTE -> {
-                            if (entryPoint.operationalDataGate().readiness() == OperationalDataReadiness.READY) {
+                            val readiness = entryPoint.operationalDataGate()
+                                .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
+                            if (readiness == OperationalDataReadiness.READY) {
                                 muteIfStillValid(context, key, entryPoint)
                             }
                         }

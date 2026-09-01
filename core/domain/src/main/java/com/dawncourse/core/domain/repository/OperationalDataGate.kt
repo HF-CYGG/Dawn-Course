@@ -21,4 +21,13 @@ enum class OperationalDataReadiness {
 interface OperationalDataGate {
     /** 返回当前瞬时状态；本方法不阻塞线程，也不会触发数据库创建。 */
     fun readiness(): OperationalDataReadiness
+
+    /**
+     * 在有限窗口内等待启动跳出 [OperationalDataReadiness.STARTING]。
+     *
+     * 一次性系统广播（如 AlarmManager 触发的提醒/静音）无法像 WorkManager 那样自行重试，
+     * 若在启动窗口内直接读取 [readiness] 就返回会永久丢事件；调用方应改用本方法等待，
+     * 超时后返回彼时的即时状态，本方法不会抛出异常也不会无限阻塞。
+     */
+    suspend fun awaitReadiness(timeoutMillis: Long): OperationalDataReadiness
 }

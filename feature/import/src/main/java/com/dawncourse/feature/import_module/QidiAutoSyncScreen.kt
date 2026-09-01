@@ -1104,7 +1104,7 @@ fun QidiAutoSyncScreen(
             showNoSemesterDialog = true
             return
         }
-        val currentSemesterId = semesterId ?: return
+        val currentSemesterId = semesterId
         val existing = viewModel.getCoursesBySemester(currentSemesterId)
         if (existing.isEmpty()) {
             loading = false
@@ -2121,6 +2121,8 @@ private fun CaptchaImage(
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                // 仅展示远程验证码图片，禁止访问 content:// 避免恶意页面链接读取本地内容。
+                settings.allowContentAccess = false
                 if (!userAgent.isNullOrBlank()) {
                     settings.userAgentString = userAgent
                 }
@@ -2335,6 +2337,8 @@ private fun WebViewBox(
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.javaScriptCanOpenWindowsAutomatically = true
+            // 仅加载教务系统远程页面，禁止访问 content:// 避免恶意链接读取本地内容。
+            settings.allowContentAccess = false
             if (provider == SyncProviderType.ZF) {
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 settings.userAgentString = settings.userAgentString.replace("wv", "")

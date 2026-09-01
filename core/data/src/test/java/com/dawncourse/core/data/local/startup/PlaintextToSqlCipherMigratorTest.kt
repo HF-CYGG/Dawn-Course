@@ -8,7 +8,7 @@ import org.junit.Test
 /** 明文数据库原子加密换入协调器的纯 JVM 契约测试。 */
 class PlaintextToSqlCipherMigratorTest {
     @Test
-    fun matchingExportIsSwappedReopenedAndCommittedInOrder() {
+    fun matchingExportIsSwappedReopenedAndLeftSwappedNotVerifiedUntilCallerConfirms() {
         val events = mutableListOf<String>()
         val files = FakeMigrationFiles(events)
         val snapshot = sampleSnapshot()
@@ -19,14 +19,50 @@ class PlaintextToSqlCipherMigratorTest {
         val result = migrator.migrate(passphrase)
 
         assertTrue(result is PlaintextToSqlCipherMigrationResult.Success)
+        // migrate() 本身不再标记 COMPLETE：调用方（Room 打开/迁移）还没有验证，
+        // 过早提交会让明文 pre-image 从此无法回滚。
         assertEquals(
             listOf(
                 "lock", "recover", "begin", "checkpoint", "preimage", "stage:PREIMAGE_READY",
                 "inspect-plaintext", "export", "stage:ENCRYPTED_TEMP_READY", "stage:SWAP_PENDING",
-                "swap", "stage:SWAPPED_NOT_VERIFIED", "inspect-encrypted", "stage:COMPLETE", "unlock"
+                "swap", "stage:SWAPPED_NOT_VERIFIED", "inspect-encrypted", "unlock"
             ),
             events
         )
+        passphrase.close()
+    }
+
+    @Test
+    fun confirmCompleteRecordsCompleteUnderItsOwnLock() {
+        val events = mutableListOf<String>()
+        val files = FakeMigrationFiles(events)
+        val snapshot = sampleSnapshot()
+        val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
+        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val success = migrator.migrate(passphrase) as PlaintextToSqlCipherMigrationResult.Success
+        events.clear()
+
+        val confirmed = migrator.confirmComplete(success.attempt)
+
+        assertTrue("调用方验证成功后必须能提交完成状态", confirmed)
+        assertEquals(listOf("lock", "stage:COMPLETE", "unlock"), events)
+        passphrase.close()
+    }
+
+    @Test
+    fun abandonAfterOpenFailureRollsBackSwappedNotVerifiedAttempt() {
+        val events = mutableListOf<String>()
+        val files = FakeMigrationFiles(events)
+        val snapshot = sampleSnapshot()
+        val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
+        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val success = migrator.migrate(passphrase) as PlaintextToSqlCipherMigrationResult.Success
+        events.clear()
+
+        val abandoned = migrator.abandonAfterOpenFailure(success.attempt)
+
+        assertTrue("SWAPPED_NOT_VERIFIED 阶段必须仍能物理回滚到明文 pre-image", abandoned)
+        assertEquals(listOf("lock", "rollback", "unlock"), events)
         passphrase.close()
     }
 

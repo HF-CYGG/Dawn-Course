@@ -745,7 +745,7 @@ private fun WebViewStep(
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
             trimmed
         } else {
-            "http://$trimmed"
+            "https://$trimmed"
         }
         val parsed = Uri.parse(withScheme)
         val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
