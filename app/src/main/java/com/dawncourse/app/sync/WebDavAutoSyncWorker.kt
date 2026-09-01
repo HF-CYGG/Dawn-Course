@@ -1,6 +1,7 @@
 package com.dawncourse.app.sync
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -74,26 +75,36 @@ class WebDavAutoSyncWorker(
  * 根据用户配置选择一次性或周期任务。
  */
 object WebDavAutoSyncScheduler {
+    private const val TAG = "WebDavAutoSyncScheduler"
     private const val WORK_NAME = "WebDavAutoSyncWork"
 
     /**
      * 调度自动同步任务
      *
      * 开关关闭时会自动取消任务。
+     *
+     * 兜底原因：调用方（MainActivity 的 LaunchedEffect）已有兜底，
+     * 但本方法也可能从其它入口调用，这里再加一层，保证任何调用方式都不会崩溃。
+     * WorkManager.getInstance() 在未初始化时抛 IllegalStateException，
+     * enqueue 在部分 OEM ROM 的 JobScheduler 配额超限时也可能抛异常。
      */
     fun schedule(context: Context, settings: AppSettings) {
-        if (!settings.enableWebDavAutoSync) {
-            cancel(context)
-            return
-        }
+        runCatching {
+            if (!settings.enableWebDavAutoSync) {
+                cancelInternal(context)
+                return@runCatching
+            }
 
-        // 先清理旧任务，避免重复调度
-        val workManager = WorkManager.getInstance(context)
-        workManager.cancelUniqueWork(WORK_NAME)
+            // 先清理旧任务，避免重复调度
+            val workManager = WorkManager.getInstance(context)
+            workManager.cancelUniqueWork(WORK_NAME)
 
-        when (settings.webDavAutoSyncMode) {
-            WebDavAutoSyncMode.FIXED_TIME -> scheduleFixedTime(context, settings.webDavAutoSyncFixedAt)
-            WebDavAutoSyncMode.INTERVAL -> scheduleInterval(context, settings.webDavAutoSyncIntervalValue, settings.webDavAutoSyncIntervalUnit)
+            when (settings.webDavAutoSyncMode) {
+                WebDavAutoSyncMode.FIXED_TIME -> scheduleFixedTime(context, settings.webDavAutoSyncFixedAt)
+                WebDavAutoSyncMode.INTERVAL -> scheduleInterval(context, settings.webDavAutoSyncIntervalValue, settings.webDavAutoSyncIntervalUnit)
+            }
+        }.onFailure {
+            Log.w(TAG, "schedule failed", it)
         }
     }
 
@@ -101,6 +112,12 @@ object WebDavAutoSyncScheduler {
      * 取消自动同步任务
      */
     fun cancel(context: Context) {
+        runCatching { cancelInternal(context) }.onFailure {
+            Log.w(TAG, "cancel failed", it)
+        }
+    }
+
+    private fun cancelInternal(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
     }
 

@@ -1,5 +1,30 @@
 <resources>
+    <!--
+      启动主题（Launcher Activity 专用）
+
+      MainActivity 调用了 androidx.core.splashscreen 的 installSplashScreen()，
+      该库要求启动主题必须继承 Theme.SplashScreen，并通过 postSplashScreenTheme
+      指定启动结束后切换的正式主题。
+
+      此前 MainActivity 直接使用 Theme.DawnCourse（继承自 android:Theme.Material.Light），
+      既不是 Theme.SplashScreen 的后代、也没有 postSplashScreenTheme，
+      导致 installSplashScreen() 无法接管启动窗口，
+      用户在 Compose 首帧绘制前看到的是 Material.Light 的白色 windowBackground
+      （深色模式下同样是白色），即“启动白屏”。
+    -->
+    <style name="Theme.DawnCourse.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.DawnCourse</item>
+    </style>
+
+    <!-- 正式主题：Compose 接管全部绘制，这里只负责窗口级属性 -->
     <style name="Theme.DawnCourse" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <!--
+          显式指定窗口背景，随深浅模式切换。
+          Compose 首帧绘制前、以及 Activity 重建期间都会露出该颜色。
+        -->
+        <item name="android:windowBackground">@color/splash_background</item>
     </style>
 </resources>

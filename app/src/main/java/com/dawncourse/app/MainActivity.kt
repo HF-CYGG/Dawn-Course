@@ -11,6 +11,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
@@ -47,7 +50,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import com.dawncourse.app.crash.CrashReportDialog
+import com.dawncourse.app.crash.CrashReporter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * 应用程序主 Activity
@@ -78,13 +85,35 @@ class MainActivity : ComponentActivity() {
             viewModel.uiState.value is MainUiState.Loading
         }
 
+        // 获取当前应用版本号
+        //
+        // 必须在 onCreate 中取一次并复用：getPackageInfo 是一次同步 Binder IPC，
+        // 若写在 setContent 的 composable 作用域内，会随每次重组在主线程重复发起 IPC，
+        // 在冷启动阶段 system_server 繁忙时可能显著拖慢首帧。
+        val currentVersionCode = runCatching {
+            val packageInfo = applicationContext.packageManager
+                .getPackageInfo(applicationContext.packageName, 0)
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
+        }.getOrDefault(0L)
+
         // 设置 Compose 内容视图
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            
+
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
             val updateUiState by updateViewModel.uiState.collectAsState()
+
+            // 读取上一次启动时捕获的崩溃报告（如果有）
+            //
+            // 读取即清除文件（见 CrashReporter.readAndClear），保证同一份崩溃报告只弹一次。
+            // 文件 IO 放到 Dispatchers.IO 执行，避免阻塞首帧渲染。
+            var crashReport by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                crashReport = withContext(Dispatchers.IO) {
+                    runCatching { CrashReporter.readAndClear(applicationContext) }.getOrNull()
+                }
+            }
 
             // 监听更新事件 (Toast)
             LaunchedEffect(Unit) {
@@ -96,10 +125,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-
-            // 获取当前应用版本号
-            val packageInfo = applicationContext.packageManager.getPackageInfo(applicationContext.packageName, 0)
-            val currentVersionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
 
             // Auto check for update on launch (silent)
             LaunchedEffect(Unit) {
@@ -130,12 +155,19 @@ class MainActivity : ComponentActivity() {
                     settings.startDateTimestamp,
                     sectionTimesHash
                 ) {
-                    val shouldScheduleDailyWorker = settings.enableClassReminder || settings.enableAutoMute
-                    if (shouldScheduleDailyWorker) {
-                        ReminderScheduler.scheduleDailyWork(applicationContext)
-                        ReminderScheduler.triggerImmediateWork(applicationContext)
-                    } else {
-                        ReminderScheduler.cancelWork(applicationContext)
+                    // LaunchedEffect 体内的未捕获异常会冒泡到 Recomposer，直接崩溃整个 App。
+                    // 这里只是“调度一次后台任务”，属于尽力而为的操作，
+                    // WorkManager 未初始化 / JobScheduler 配额超限等失败不应影响 UI 正常渲染。
+                    runCatching {
+                        val shouldScheduleDailyWorker = settings.enableClassReminder || settings.enableAutoMute
+                        if (shouldScheduleDailyWorker) {
+                            ReminderScheduler.scheduleDailyWork(applicationContext)
+                            ReminderScheduler.triggerImmediateWork(applicationContext)
+                        } else {
+                            ReminderScheduler.cancelWork(applicationContext)
+                        }
+                    }.onFailure {
+                        android.util.Log.w("MainActivity", "schedule daily reminder work failed", it)
                     }
                 }
 
@@ -147,20 +179,33 @@ class MainActivity : ComponentActivity() {
                     settings.webDavAutoSyncIntervalValue,
                     settings.webDavAutoSyncIntervalUnit
                 ) {
-                    WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                    // 同上：调度失败只应放弃本次 WebDAV 自动同步，不应崩溃 App
+                    runCatching {
+                        WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                    }.onFailure {
+                        android.util.Log.w("MainActivity", "schedule WebDAV auto sync failed", it)
+                    }
                 }
 
                 // 监听设置变化，启动/停止常驻通知服务
                 LaunchedEffect(settings.enablePersistentNotification) {
-                    val intent = Intent(applicationContext, PersistentNotificationService::class.java)
-                    if (settings.enablePersistentNotification) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            applicationContext.startForegroundService(intent)
+                    // startForegroundService/stopService 在部分 ROM（后台管理拦截）或
+                    // Android 12+ 后台启动限制下可能抛出 SecurityException /
+                    // ForegroundServiceStartNotAllowedException，常驻通知属于增强功能，
+                    // 失败不应影响 App 正常使用。
+                    runCatching {
+                        val intent = Intent(applicationContext, PersistentNotificationService::class.java)
+                        if (settings.enablePersistentNotification) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                applicationContext.startForegroundService(intent)
+                            } else {
+                                applicationContext.startService(intent)
+                            }
                         } else {
-                            applicationContext.startService(intent)
+                            applicationContext.stopService(intent)
                         }
-                    } else {
-                        applicationContext.stopService(intent)
+                    }.onFailure {
+                        android.util.Log.w("MainActivity", "toggle persistent notification service failed", it)
                     }
                 }
 
@@ -317,6 +362,15 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             else -> {}
+                        }
+
+                        // 上次启动崩溃报告弹窗
+                        // 关闭后 crashReport 置空，避免同一次 Composition 内重复弹出
+                        crashReport?.let { report ->
+                            CrashReportDialog(
+                                report = report,
+                                onDismiss = { crashReport = null }
+                            )
                         }
                     }
                 }

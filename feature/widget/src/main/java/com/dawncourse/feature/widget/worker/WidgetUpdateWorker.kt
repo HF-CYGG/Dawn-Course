@@ -3,6 +3,8 @@ package com.dawncourse.feature.widget.worker
 import android.content.Context
 import android.app.AlarmManager
 import android.app.PendingIntent
+import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -15,8 +17,10 @@ import java.util.concurrent.TimeUnit
 
 import android.content.Intent
 import android.content.IntentFilter
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import com.dawncourse.feature.widget.MidnightUpdateReceiver
 import com.dawncourse.feature.widget.DawnWidgetReceiver
@@ -40,6 +44,7 @@ class WidgetUpdateWorker(
 }
 
 object WidgetSyncManager {
+    private const val TAG = "WidgetSyncManager"
     private const val UNIQUE_WORK_NAME = "DawnWidgetUpdateWork"
     private const val NEXT_UPDATE_REQUEST_CODE = 10001
     private const val ACTION_FORCE_UPDATE = "com.dawncourse.widget.FORCE_UPDATE"
@@ -50,19 +55,31 @@ object WidgetSyncManager {
      * WorkManager 主要负责系统杀后台后的存活保底
      */
     fun scheduleUpdate(context: Context) {
-        val request = PeriodicWorkRequestBuilder<WidgetUpdateWorker>(
-            4, TimeUnit.HOURS
-        ).build()
+        // 兜底原因：本方法会在冷启动的 App Startup 阶段被调用。
+        // WorkManager.getInstance() 在未初始化时会抛 IllegalStateException，
+        // 部分 OEM ROM 的 JobScheduler 也可能在 enqueue 时抛异常。
+        // 小组件刷新属于增强功能，任何失败都不应影响 App 启动。
+        runCatching {
+            val request = PeriodicWorkRequestBuilder<WidgetUpdateWorker>(
+                4, TimeUnit.HOURS
+            ).build()
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            UNIQUE_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP, // 如果已存在则保持，避免重复调度
-            request
-        )
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                UNIQUE_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP, // 如果已存在则保持，避免重复调度
+                request
+            )
+        }.onFailure {
+            Log.w(TAG, "scheduleUpdate failed", it)
+        }
     }
 
     fun cancelUpdate(context: Context) {
-        WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+        runCatching {
+            WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
+        }.onFailure {
+            Log.w(TAG, "cancelUpdate failed", it)
+        }
     }
 
     /**
@@ -136,7 +153,24 @@ object WidgetSyncManager {
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
         }
         // 注册到 Application Context (跟随应用生命周期)
-        context.applicationContext.registerReceiver(receiver, filter)
+        //
+        // 必须使用 ContextCompat.registerReceiver 并显式指定导出标记：
+        // targetSdk 34 (Android 14) 起，未显式声明 RECEIVER_EXPORTED / RECEIVER_NOT_EXPORTED
+        // 的动态注册会抛 SecurityException。这里只监听系统广播，不需要对外暴露。
+        //
+        // 同时整体兜底：本方法在冷启动的 App Startup 阶段被调用，
+        // 部分 OEM ROM 会对启动早期的 registerReceiver 施加额外限制，
+        // 抛出异常不应导致进程被杀。
+        runCatching {
+            ContextCompat.registerReceiver(
+                context.applicationContext,
+                receiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }.onFailure {
+            Log.w(TAG, "registerTimeChangeReceiver failed", it)
+        }
     }
 
     /**
@@ -144,12 +178,30 @@ object WidgetSyncManager {
      * 适用于需要立即响应的交互场景，如：App 回到前台、时间变更广播等。
      */
     fun updateWidgetNow(context: Context) {
-        CoroutineScope(Dispatchers.IO).launch {
+        // 本方法在 MainActivity.onStart() 中被无条件调用，位于每次启动的关键路径上。
+        //
+        // 必须捕获 Throwable 而不是 Exception：
+        // Glance / RemoteViews 在新版本 Android 上可能抛出 LinkageError 系列错误
+        // （NoSuchMethodError / NoClassDefFoundError / AbstractMethodError 等），
+        // 这些是 Error 而非 Exception，catch (e: Exception) 无法拦截。
+        // 由于这里是没有 CoroutineExceptionHandler 的裸协程作用域，
+        // 漏网的 Throwable 会冒泡到默认 Thread.UncaughtExceptionHandler 并杀死整个进程，
+        // 在启动阶段表现为“白屏后闪退”。
+        CoroutineScope(SupervisorJob() + Dispatchers.IO + widgetExceptionHandler).launch {
             try {
                 DawnWidget().updateAll(context)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            } catch (t: Throwable) {
+                Log.w(TAG, "updateWidgetNow failed", t)
             }
         }
+    }
+
+    /**
+     * 小组件后台任务统一异常兜底
+     *
+     * 小组件刷新属于“尽力而为”的增强功能，任何失败都不应升级为进程崩溃。
+     */
+    internal val widgetExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Log.w(TAG, "Widget coroutine failed", throwable)
     }
 }

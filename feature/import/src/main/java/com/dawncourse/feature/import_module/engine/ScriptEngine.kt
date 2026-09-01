@@ -35,8 +35,15 @@ class ScriptEngine @Inject constructor() {
      * @return 解析后的 JSON 字符串（后续可反序列化为 Course 列表）
      */
     fun parseHtml(script: String, html: String): String {
-        val quickJs = QuickJs.create()
+        // 注意：QuickJs.create() 本身也纳入 try 范围。
+        // 该调用会 dlopen 原生 .so，在部分较新硬件（16 KB 内存页设备）上，
+        // 若原生库未按 16 KB 对齐，这里会抛出 UnsatisfiedLinkError（Error 而非 Exception）。
+        // 调用方（ImportViewModel）目前已有 catch (Throwable) 兜底，不会崩溃，
+        // 但仍统一转换为 ScriptExecutionException，保持“解析失败”的语义一致，
+        // 并避免把底层 Error 类型泄露给上层。
+        var quickJs: QuickJs? = null
         return try {
+            quickJs = QuickJs.create()
             setupRuntime(quickJs)
             quickJs.evaluate(script)
             executeScript(quickJs, html)
@@ -49,7 +56,7 @@ class ScriptEngine @Inject constructor() {
             if (e is ScriptExecutionException) throw e
             throw ScriptExecutionException("解析器执行失败", e)
         } finally {
-            quickJs.close()
+            quickJs?.close()
         }
     }
 
