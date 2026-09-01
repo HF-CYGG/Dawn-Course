@@ -107,6 +107,10 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('周数：(单)1-16周'), '1-16周(单)', name + ' extractWeeksStr("周数：(单)1-16周") 前置单周标记');
     eq(extractWeeksStr('周数：(双)2-16周'), '2-16周(双)', name + ' extractWeeksStr("周数：(双)2-16周") 前置双周标记');
     eq(extractWeeksStr('(单) 1-16周'), '1-16周(单)', name + ' extractWeeksStr("(单) 1-16周") 无标签前置单周标记');
+    // 分隔符包裹的单/双标记（Codex PR #112 P1）
+    eq(extractWeeksStr('周数:1-16周|单周'), '1-16周(单)', name + ' extractWeeksStr("...|单周") 竖线分隔');
+    eq(extractWeeksStr('1-16周/双周'), '1-16周(双)', name + ' extractWeeksStr(".../双周") 斜杠分隔');
+    eq(extractWeeksStr('1-16周[单]'), '1-16周(单)', name + ' extractWeeksStr("...[单]") 方括号');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
