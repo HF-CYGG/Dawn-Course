@@ -137,7 +137,13 @@ function parseQiangZhi(html) {
                         weeks: weeks,
                         sections: sections
                     });
+                } else if (weeks.length === 0) {
+                    reportDropped("no_weeks");
+                } else {
+                    reportDropped("no_sections");
                 }
+            } else if (name && !weeksStr) {
+                reportDropped("no_weeks");
             }
         }
     }
@@ -193,7 +199,15 @@ function parseQiangZhi(html) {
                     weeks: listWeeks,
                     sections: listSections
                 });
+            } else if (listDay <= 0) {
+                reportDropped("no_day");
+            } else if (listWeeks.length === 0) {
+                reportDropped("no_weeks");
+            } else {
+                reportDropped("no_sections");
             }
+        } else if (listName && !listWeeksStr) {
+            reportDropped("no_weeks");
         }
     }
 

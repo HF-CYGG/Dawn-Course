@@ -78,16 +78,34 @@ function parseMyUniversity(html) {
 | `weeks` | Array&lt;Number&gt; | 上课周次列表 | `[1, 2, 3, 5, 7]` |
 | `sections` | Array&lt;Number&gt; | 上课节次列表 | `[1, 2]` |
 
+> **只上一周的课程**（如"形势与政策"）也必须正常输出，`weeks` 就是单元素数组，例如 `[9]`。
+> Kotlin 侧会把它拆成 `startWeek == endWeek` 的区间，无需特殊处理。
+>
+> **`weeks` 或 `sections` 为空数组的课程会被静默丢弃。** 如果你在某个分支里因为
+> 解析不出周次/节次而不 push 这门课，请调用 `reportDropped("no_weeks")`（见下），
+> 让导入页能提示用户"有 N 条记录被跳过"，而不是让课程凭空消失、无从排查。
+
 ## 4. 可用工具函数 (common_parser_utils.js)
 
 无需引入，直接调用即可：
 
 *   `stripTags(html)`: 移除 HTML 标签并解码实体，返回纯文本。
 *   `decodeHtmlEntities(text)`: 解码 HTML 实体 (支持 `&nbsp;`, `&#x...;` 等)。
-*   `parseWeeks(str)`: 解析周次字符串 (如 `"1-16周(单)"` -> `[1, 3, ..., 15]`)。
+*   `parseWeeks(str)`: 解析周次字符串。已加固，可处理：区间 `"1-16周"`、单双周 `"1-16周(单)"`、
+    逗号列表 `"1,3,5周"`、**单周 `"9周"` / `"9"` / `"第9周"`**、**节次粘连 `"9周(1-2节)"`**、写反的区间 `"16-9周"`。
+*   `extractWeeksStr(str)`: 从一段文本里提取"周次子串"再交给 `parseWeeks`。已加固，支持 `"周次:5"`（无"周"字）、独立单周 `"9周"` 等。
 *   `parseSections(str)`: 解析节次字符串 (如 `"1-2节"` -> `[1, 2]`)。
 *   `dedupeCourses(courses)`: 对课程数组进行去重。
 *   `extractTextByTitle(html, title)`: 根据 `title` 属性提取文本。
+*   `reportDropped(reason)`: 记录一条被跳过的候选课程行，`reason` 只能是固定短码
+    `"no_weeks"` / `"no_sections"` / `"no_day"`（**不要传入课程名等页面内容**）。
+
+### JS 解析器测试
+
+`feature/import/src/test/js/parse_weeks.test.cjs` 是纯 Node、零依赖的周次解析回归测试。
+本地运行 `node feature/import/src/test/js/parse_weeks.test.cjs`；CI 通过 Gradle 任务
+`:feature:import:jsParserTest`（挂在 `testDebugUnitTest` / `check` 上）自动执行。新增或修改
+`parseWeeks` / `extractWeeksStr` 时请补充对应用例。
 
 ## 5. 开发建议
 

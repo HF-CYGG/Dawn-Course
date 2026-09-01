@@ -63,10 +63,12 @@ object TimetableLayoutEngine {
 
         courseGroups.forEach { (_, group) ->
             // 冲突解决逻辑：
-            // 1. 优先显示本周课程
-            // 2. 如果没有本周课程，且未开启"隐藏非本周"，则显示非本周课程
-            // 3. 如果有多个非本周课程，显示 ID 最大的（通常是最新添加的）
-            val currentWeekCourse = group.find { course ->
+            // 1. 优先显示本周所有有效课程（不再只取第一门 —— issue #109：
+            //    只上一周的课若与另一门整学期课占同一 (星期, 起始节次)，
+            //    原来的 group.find 只会吐出排在前面的那门，单周课即使在它上课那一周也不显示。
+            //    后续 generateLayoutItems 的"重叠簇"分栏逻辑会把它们并排放好。）
+            // 2. 如果没有本周课程，且未开启"隐藏非本周"，则显示非本周课程（取 ID 最大的一个作为代表）
+            val currentWeekCourses = group.filter { course ->
                 // 判断逻辑：当前周在课程的起始周和结束周之间，且符合单双周规则
                 currentWeek in course.startWeek..course.endWeek && when (course.weekType) {
                     Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
@@ -75,10 +77,9 @@ object TimetableLayoutEngine {
                 }
             }
 
-            if (currentWeekCourse != null) {
-                list.add(currentWeekCourse to true)
+            if (currentWeekCourses.isNotEmpty()) {
+                currentWeekCourses.forEach { list.add(it to true) }
             } else if (!hideNonThisWeek) {
-                // 显示非本周课程（取 ID 最大的一个作为代表）
                 group.maxByOrNull { it.id }?.let { list.add(it to false) }
             }
         }

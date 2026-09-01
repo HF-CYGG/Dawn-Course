@@ -62,4 +62,29 @@ dependencies {
 
     // HTML 解析 (Jsoup)
     implementation(libs.jsoup)
+
+    // 单元测试（纯 JVM）
+    testImplementation(libs.junit)
+    // 提供真实的 org.json 实现，替换掉 Android SDK 里只会抛异常的桩，
+    // 使 ImportModels / QiangZhiApiEngine 相关逻辑可在 JVM 单测中运行
+    testImplementation("org.json:json:20240303")
+}
+
+// ---------------- JS 解析器单元测试（Node）----------------
+// feature/import/src/test/js/parse_weeks.test.cjs 用纯 Node（零依赖）加载
+// common_parser_utils.js / zhengfang.js 并断言周次解析行为（issue #109 回归）。
+// CI 的 ubuntu runner 自带 node；本地需自行安装 node。
+val jsParserTest = tasks.register<Exec>("jsParserTest") {
+    group = "verification"
+    description = "运行 JS 解析器周次解析单元测试 (Node)"
+    workingDir = projectDir
+    commandLine("node", "src/test/js/parse_weeks.test.cjs")
+}
+
+// 让 CI 实际会跑的 testDebugUnitTest 以及标准的 check 都带上 jsParserTest
+tasks.matching { it.name == "testDebugUnitTest" || it.name == "test" }.configureEach {
+    dependsOn(jsParserTest)
+}
+tasks.named("check") {
+    dependsOn(jsParserTest)
 }

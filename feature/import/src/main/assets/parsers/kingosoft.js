@@ -217,14 +217,24 @@ function parseCell(cellContent, day) {
         if (!sectionsStr) sectionsStr = extractSectionsStr(stripTags(remaining));
 
         if (name && weeksStr && sectionsStr) {
-            results.push({
-                name: name,
-                teacher: teacher,
-                position: location,
-                day: day,
-                weeks: parseWeeks(weeksStr), // 使用通用 parseWeeks
-                sections: parseSections(sectionsStr) // 使用通用 parseSections
-            });
+            var kWeeks = parseWeeks(weeksStr); // 使用通用 parseWeeks
+            var kSections = parseSections(sectionsStr); // 使用通用 parseSections
+            if (kWeeks.length > 0 && kSections.length > 0) {
+                results.push({
+                    name: name,
+                    teacher: teacher,
+                    position: location,
+                    day: day,
+                    weeks: kWeeks,
+                    sections: kSections
+                });
+            } else if (kWeeks.length === 0) {
+                reportDropped("no_weeks");
+            } else {
+                reportDropped("no_sections");
+            }
+        } else if (name && !weeksStr) {
+            reportDropped("no_weeks");
         }
     }
     return results;
@@ -305,7 +315,13 @@ function parseZhengfangStyleCell(cellContent, day) {
                     weeks: weeks,
                     sections: sections
                 });
+            } else if (weeks.length === 0) {
+                reportDropped("no_weeks");
+            } else {
+                reportDropped("no_sections");
             }
+        } else if (name && !weeksStr) {
+            reportDropped("no_weeks");
         }
     }
     return courses;
@@ -354,11 +370,14 @@ function parseListTable(cleanHtml) {
         if (!sectionsText) sectionsText = extractSectionsStr(rowText);
         var day = parseDayFromText(dayText || rowText);
 
-        if (!day || !weeksText || !sectionsText) continue;
+        if (!day) { if (nameText) reportDropped("no_day"); continue; }
+        if (!weeksText) { reportDropped("no_weeks"); continue; }
+        if (!sectionsText) { reportDropped("no_sections"); continue; }
 
         var weeks = parseWeeks(weeksText);
         var sections = parseSections(sectionsText);
-        if (weeks.length === 0 || sections.length === 0) continue;
+        if (weeks.length === 0) { reportDropped("no_weeks"); continue; }
+        if (sections.length === 0) { reportDropped("no_sections"); continue; }
 
         courses.push({
             name: nameText,

@@ -1,5 +1,6 @@
 package com.dawncourse.feature.import_module.model
 
+import androidx.annotation.VisibleForTesting
 import java.time.DayOfWeek
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -389,7 +390,8 @@ private fun parseSectionsArray(array: org.json.JSONArray?): List<Int> {
  *
  * 支持全周、单周、双周三种模式。
  */
-private fun splitWeeks(weeks: List<Int>): List<WeekRange> {
+@VisibleForTesting
+internal fun splitWeeks(weeks: List<Int>): List<WeekRange> {
     if (weeks.isEmpty()) return emptyList()
     val sorted = weeks.distinct().sorted()
     val ranges = mutableListOf<WeekRange>()
@@ -421,7 +423,8 @@ private fun splitWeeks(weeks: List<Int>): List<WeekRange> {
  *
  * step=2 时自动按奇偶周计算 weekType。
  */
-private fun buildWeekRange(start: Int, end: Int, step: Int): WeekRange {
+@VisibleForTesting
+internal fun buildWeekRange(start: Int, end: Int, step: Int): WeekRange {
     val weekType = if (step == 2) {
         if (start % 2 == 1) 1 else 2
     } else {

@@ -86,52 +86,103 @@ function normalizeText(html) {
 // ---------------- 周次与节次解析 ----------------
 
 /**
+ * 记录一条被丢弃的候选课程行的原因（不含页面内容，仅固定短码）
+ *
+ * ScriptEngine 会在脚本执行后读取 globalThis.__dc_diag，
+ * 由 ImportViewModel 汇总成 "N 条记录被跳过" 的提示，便于用户反馈。
+ * 允许短码：no_weeks / no_sections / no_day
+ */
+function reportDropped(reason) {
+    try {
+        if (!globalThis.__dc_diag) globalThis.__dc_diag = [];
+        globalThis.__dc_diag.push(String(reason));
+    } catch (e) {}
+}
+
+/**
+ * 剥离周次字符串里的一切非周次信息
+ *
+ * 关键点：必须在按 '-' 拆区间之前做，否则像 "9周(1-2节)" 会被拼成 "91-2节"，
+ * 再按 '-' 拆成 91..2 的空区间，导致单周课被静默丢弃（issue #109）。
+ */
+function stripWeekNoise(str) {
+    return String(str)
+        .replace(/[（(][^）)]*[）)]/g, '')      // 去掉括号内容（常是节次/校区/单双）
+        .replace(/第/g, '')                      // "第9周" -> "9周"
+        .replace(/周\s*[数次]\s*[:：]?/g, '')     // 去掉 "周数:" / "周次:" 标签
+        .replace(/共\s*\d+\s*[周次节]/g, '')      // 去掉 "共16周" / "共32次"
+        .replace(/[至~～—–－]/g, '-')            // 各种破折号统一为 '-'
+        .replace(/[\s　]+/g, '')             // 去空白（含全角空格）
+        .replace(/[^0-9,，、;\-]/g, '');          // 只保留数字/分隔符/短横线（顺带去掉 周/单/双 等）
+}
+
+/**
+ * 把一个周次按单双周规则和合理范围加入结果数组
+ */
+function pushWeek(arr, w, type) {
+    if (isNaN(w) || w < 1 || w > 53) return; // 合理性钳制：一学期不会超过 53 周
+    if (type === 0 || (type === 1 && w % 2 === 1) || (type === 2 && w % 2 === 0)) {
+        arr.push(w);
+    }
+}
+
+/**
+ * 去重并升序排序
+ */
+function dedupeSortWeeks(arr) {
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+        if (!seen[arr[i]]) {
+            seen[arr[i]] = 1;
+            out.push(arr[i]);
+        }
+    }
+    out.sort(function (a, b) { return a - b; });
+    return out;
+}
+
+/**
  * 解析周次字符串
  * 支持格式：
- * - "1-16周"
+ * - "1-16周" / "1-16"
  * - "1-8,10-16周"
  * - "1-16周(单)"
  * - "1,3,5周"
- * 来源: zhengfang.js (支持单双周)
+ * - "9周" / "9" / "9-9周" / "第9周"（单周，issue #109）
+ * - "9周(1-2节)"（节次粘连，issue #109）
+ * - "16-9周"（写反的区间，容错）
+ * 来源: zhengfang.js (支持单双周) + issue #109 加固
  */
 function parseWeeks(str) {
     var weeks = [];
     if (!str) return weeks;
 
     var type = 0; // 0:全, 1:单, 2:双
-    if (str.indexOf("单") > -1) type = 1;
-    if (str.indexOf("双") > -1) type = 2;
+    if (str.indexOf('单') > -1) type = 1;
+    if (str.indexOf('双') > -1) type = 2;
 
-    str = str.replace(/周数[:：]/g, '');
-    str = str.replace(/共\d+周|共\d+次|共\d+节/g, '');
-    str = str.replace(/[至~～—－]/g, '-');
-    str = str.replace(/周|单|双|\(|\)|（|）/g, '');
-    
-    var parts = str.split(/[,，;、]/); 
+    var cleaned = stripWeekNoise(str);
+    var parts = cleaned.split(/[,，、;]/);
 
     for (var i = 0; i < parts.length; i++) {
         var part = parts[i].trim();
-        if (part.indexOf('-') > -1) {
-            var range = part.split('-');
-            var start = parseInt(range[0]);
-            var end = parseInt(range[1]);
-            if (!isNaN(start) && !isNaN(end)) {
-                for (var w = start; w <= end; w++) {
-                    if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) {
-                        weeks.push(w);
-                    }
-                }
+        if (!part) continue;
+        var m = /^(\d+)-(\d+)$/.exec(part);
+        if (m) {
+            var start = parseInt(m[1], 10);
+            var end = parseInt(m[2], 10);
+            if (isNaN(start) || isNaN(end)) continue;
+            if (end < start) { var t = start; start = end; end = t; } // 容错：区间写反了
+            for (var w = start; w <= end; w++) {
+                pushWeek(weeks, w, type);
             }
-        } else if (part !== '') {
-            var week = parseInt(part);
-            if (!isNaN(week)) {
-                 if (type === 0 || (type === 1 && week % 2 !== 0) || (type === 2 && week % 2 === 0)) {
-                    weeks.push(week);
-                }
-            }
+        } else {
+            // 单周，或 "9-" / "-9" 这类残缺输入 —— 取其中的整数当单周
+            pushWeek(weeks, parseInt(part, 10), type);
         }
     }
-    return weeks;
+    return dedupeSortWeeks(weeks);
 }
 
 /**
@@ -203,13 +254,38 @@ function extractName(blockHtml) {
     return "";
 }
 
+/**
+ * 从一段文本里提取"周次子串"，交给 parseWeeks 进一步解析。
+ *
+ * 加固点（issue #109）：
+ * - 周数上限约束为 [0-9]{1,2}，去掉原来贪婪的 [^\s]*，节次文本不会再被捕获进来。
+ * - 新增"带标签但不带 周 字"的分支（如 "周次:5"）。
+ * - 新增独立的单周分支（"9周"），不再要求必须是区间。
+ */
 function extractWeeksStr(text) {
-    var weeksMatch = /周数\s*[:：]?\s*([^教师节次校区]+?周[^教师节次校区]*)/i.exec(text);
-    if (weeksMatch) return weeksMatch[1].trim();
-    var rangeMatch = /(\d+\s*[-至~～—－]\s*\d+\s*周[^\s]*)/i.exec(text);
-    if (rangeMatch) return rangeMatch[1].trim();
-    var singleMatch = /(\d+\s*周[^\s]*)/i.exec(text);
-    if (singleMatch) return singleMatch[1].trim();
+    if (!text) return "";
+    var t = String(text);
+    var dash = "[-至~～—–－]";
+    var num = "[0-9]{1,2}";
+    var parity = "(?:\\s*[（(]?\\s*[单双]\\s*[)）]?)?";
+    var list = num + "(?:\\s*" + dash + "\\s*" + num + ")?" +
+        "(?:\\s*[,，、;]\\s*" + num + "(?:\\s*" + dash + "\\s*" + num + ")?)*";
+
+    // 1) 带 "周数:" / "周次:" 标签，后跟数字列表/区间（不要求结尾有 "周"）
+    var labeled = new RegExp("周\\s*[数次]\\s*[:：]\\s*(" + list + ")\\s*周?" + parity, "i").exec(t);
+    if (labeled) {
+        var suffix = /单/.test(labeled[0]) ? "(单)" : (/双/.test(labeled[0]) ? "(双)" : "");
+        return labeled[1].replace(/\s+/g, "") + suffix;
+    }
+    // 2) "a-b周" 区间（可带单双）
+    var range = new RegExp("(" + num + "\\s*" + dash + "\\s*" + num + "\\s*周" + parity + ")", "i").exec(t);
+    if (range) return range[1].replace(/\s+/g, "");
+    // 3) 单周 "N周"（可带单双）—— issue #109
+    var single = new RegExp("(" + num + "\\s*周" + parity + ")", "i").exec(t);
+    if (single) return single[1].replace(/\s+/g, "");
+    // 4) 兜底：紧挨 "周次"/"周数" 标签的裸数字（前面分支已覆盖带冒号的情况，这里处理无冒号）
+    var bareLabeled = new RegExp("周\\s*[数次]\\s*(" + num + "(?:\\s*" + dash + "\\s*" + num + ")?)", "i").exec(t);
+    if (bareLabeled) return bareLabeled[1].replace(/\s+/g, "");
     return "";
 }
 
@@ -245,4 +321,17 @@ function dedupeCourses(courses) {
         }
     }
     return result;
+}
+
+// ---------------- 测试导出（仅 Node 环境生效，App 内 QuickJS 下 module 为 undefined，此段为死代码） ----------------
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        parseWeeks: parseWeeks,
+        extractWeeksStr: extractWeeksStr,
+        parseSections: parseSections,
+        extractSectionsStr: extractSectionsStr,
+        stripTags: stripTags,
+        stripWeekNoise: stripWeekNoise,
+        dedupeCourses: dedupeCourses
+    };
 }
