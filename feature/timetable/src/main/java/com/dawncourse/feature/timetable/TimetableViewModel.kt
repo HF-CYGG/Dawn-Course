@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialsRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import com.dawncourse.core.domain.usecase.RunTimetableSyncUseCase
 import com.dawncourse.core.domain.model.TimetableSyncResult
@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -65,18 +66,20 @@ sealed interface TimetableUiState {
  * 负责管理课表界面的 UI 状态、处理用户交互（如切换周次、删除课程、撤销操作）以及数据流的聚合。
  *
  * @property repository 课程数据仓库
- * @property semesterRepository 学期数据仓库
+ * @property timetableProfileRepository 活动课表与学期上下文仓库
  * @property calculateWeekUseCase 计算当前周次的用例
  */
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimetableViewModel @Inject constructor(
     private val repository: CourseRepository,
-    private val semesterRepository: SemesterRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val calculateWeekUseCase: CalculateWeekUseCase,
     private val runTimetableSyncUseCase: RunTimetableSyncUseCase,
     private val credentialsRepository: CredentialsRepository
 ) : ViewModel() {
+
+    private var lastActiveScope: Pair<Long?, Long?>? = null
 
     /**
      * 标记是否已自动滚动到当前周
@@ -117,20 +120,29 @@ class TimetableViewModel @Inject constructor(
      */
     private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
         combine(
-            semesterRepository.getCurrentSemester(),
+            timetableProfileRepository.observeActiveContext(),
             timeTicker
-        ) { semester: com.dawncourse.core.domain.model.Semester?, _: Unit ->
-            semester
+        ) { context, _: Unit ->
+            context
         }
-            .onEach { semester ->
+            .onEach { context ->
+                val scope = context?.profile?.id to context?.semester?.id
+                if (scope != lastActiveScope) {
+                    lastActiveScope = scope
+                    hasScrolledToCurrentWeek = false
+                }
+                val semester = context?.semester
                 if (semester != null) {
                     // 根据学期开始日期计算当前周次
                     val week = calculateWeekUseCase(semester.startDate)
                     // 允许开学前显示 0 周，避免把“未开学”误判为第 1 周
                     val validWeek = week.coerceAtLeast(0)
                     _currentWeek.value = validWeek
+                } else {
+                    _currentWeek.value = 0
                 }
             }
+            .map { context -> context?.semester }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),
@@ -169,7 +181,10 @@ class TimetableViewModel @Inject constructor(
             initialValue = TimetableUiState.Loading
         )
 
-    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+    val boundProvider: StateFlow<SyncProviderType?> = timetableProfileRepository.observeActiveContext()
+        .flatMapLatest { context ->
+            context?.profile?.id?.let(credentialsRepository::observeBoundProvider) ?: flowOf(null)
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),

@@ -5,7 +5,7 @@
 
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">yyh163.xyz</domain>
-        <domain>47.105.76.193</domain>
+        <domain includeSubdomains="false">47.105.76.193</domain>
     </domain-config>
 
     <!-- Some school educational systems still expose WebView pages over HTTP. -->

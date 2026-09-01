@@ -55,10 +55,9 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
             .put(
                 "session",
                 JSONObject()
-                    .put("parseSessionId", session.parseSessionId)
+                    .put("importSessionId", session.importSessionId)
                     .put("appVersionCode", session.appVersionCode)
                     .put("appVersionName", session.appVersionName)
-                    .put("installBucketIdHash", session.installBucketIdHash)
                     .put("importSource", session.importSource.name)
                     .put("schoolId", session.schoolId ?: "")
                     .put("schoolName", session.schoolName ?: "")
@@ -73,8 +72,8 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
             .put("failureStage", failureStage ?: "")
             .put("repairDomain", repairDomain ?: "")
             .put("targetType", targetType ?: "")
-            .put("sourceUrl", sourceUrl ?: "")
-            .put("classificationHint", JSONObject(classificationHint))
+            .put("sourceUrl", DiagnosticUrlPolicy.originOnly(sourceUrl))
+            .put("classificationHint", JSONObject(DiagnosticReportMetadataPolicy.filterClassificationHints(classificationHint)))
             .put("consentAt", consentAt ?: JSONObject.NULL)
             .put("sanitizedSample", sanitizedSample?.toJson())
     }
@@ -117,4 +116,22 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
             .put("contentSha256", contentSha256)
             .put("content", content ?: "")
     }
+}
+
+/** 诊断报告元数据白名单；禁止任意 map 键把原文或本地身份夹带出应用。 */
+object DiagnosticReportMetadataPolicy {
+    /** 只保留解析器分类所需的有限字段与无控制字符的短值。 */
+    fun filterClassificationHints(input: Map<String, String>): Map<String, String> {
+        return input.asSequence()
+            .filter { (key, _) -> key in ALLOWED_CLASSIFICATION_KEYS }
+            .mapNotNull { (key, value) ->
+                value.takeIf { it.length <= MAX_CLASSIFICATION_VALUE_LENGTH && SAFE_VALUE_PATTERN.matches(it) }
+                    ?.let { safeValue -> key to safeValue }
+            }
+            .toMap(linkedMapOf())
+    }
+
+    private val ALLOWED_CLASSIFICATION_KEYS = setOf("scriptName", "schoolSystemType", "failureType")
+    private val SAFE_VALUE_PATTERN = Regex("[A-Za-z0-9._-]*")
+    private const val MAX_CLASSIFICATION_VALUE_LENGTH = 128
 }

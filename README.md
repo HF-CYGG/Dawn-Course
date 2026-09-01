@@ -59,7 +59,7 @@
 1. 克隆仓库：
 
    ```bash
-   git clone https://github.com/HF-CYGG/DawnCourse.git
+   git clone https://github.com/HF-CYGG/Dawn-Course.git
    ```
 
 2. 用 Android Studio 打开项目根目录，等待 Gradle Sync 完成
@@ -100,9 +100,14 @@ DawnCourse/
 │   ├── data/           # 数据层：Repository 实现 / DB / DataStore / Sync
 │   ├── domain/         # 领域层：UseCase / Model（纯 Kotlin，可测试）
 │   └── ui/             # 通用 UI：主题 / 组件
-├── feature/            # 功能层：导入/课表/设置/小组件/更新等（相互解耦）
-└── server/             # 静态资源服务（用于提供云端脚本下载等）
+└── feature/            # 功能层：导入/课表/设置/小组件/更新等（相互解耦）
 ```
+
+服务端不属于本仓库，独立维护在
+[HF-CYGG/DawnCourse-server](https://github.com/HF-CYGG/DawnCourse-server)。本地若存在被忽略的
+`server/` 目录，它只是独立仓库的工作副本，不会由 Dawn Course 的 GitHub Actions 自动同步。
+涉及 App 与服务端协议的发布必须分别更新、验证并提交两个仓库，并在发布概要中记录双方 commit hash；
+不得恢复已删除的常驻跨仓库同步 Token。
 
 ### 分层依赖（强制）
 
@@ -116,7 +121,7 @@ DawnCourse/
 导入与自动更新依赖一组可独立演进的 JavaScript 脚本，用于 WebView 交互与 HTML 提取/解析：
 
 - 内置脚本（兜底）：`app/src/main/assets/js/`
-- 云端脚本（可更新）：`server/html/scripts/js/`
+- 云端脚本（可更新）：独立 `DawnCourse-server` 仓库中的 `html/scripts/js/`
 - 获取策略：云端 → 本地缓存 → Assets 兜底（保证离线可用与可控升级）
 
 如需贡献新的教务系统脚本，请参考：
@@ -130,13 +135,14 @@ DawnCourse/
 ### 运行方式
 
 ```bash
-cd server
+git clone https://github.com/HF-CYGG/DawnCourse-server.git
+cd DawnCourse-server
 docker-compose up -d --build
 ```
 
 ### 配置方式（环境变量）
 
-在 `server/docker-compose.yml` 中配置以下环境变量即可切换模型与策略（解析默认复用模型 1）：
+在独立服务端仓库的 `docker-compose.yml` 中配置以下环境变量即可切换模型与策略（解析默认复用模型 1）：
 
 - 模型 1（低成本总结 + 解析）
   - LLM_SUMMARY_PROVIDER / LLM_SUMMARY_API_KEY / LLM_SUMMARY_MODEL / LLM_SUMMARY_BASE_URL

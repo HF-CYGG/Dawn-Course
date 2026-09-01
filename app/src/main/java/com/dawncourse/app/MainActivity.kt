@@ -1,8 +1,10 @@
 package com.dawncourse.app
 
 import android.content.Intent
-import android.os.Build
+import android.app.NotificationManager
 import android.os.Bundle
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -11,10 +13,12 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -22,9 +26,9 @@ import com.dawncourse.core.domain.model.AppThemeMode
 import com.dawncourse.core.ui.theme.DawnTheme
 import com.dawncourse.feature.import_module.ImportScreen
 import com.dawncourse.feature.settings.SettingsScreen
+import com.dawncourse.feature.settings.ProfileManagementScreen
 import com.dawncourse.feature.import_module.QidiAutoSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
-import com.dawncourse.feature.timetable.notification.PersistentNotificationService
 import android.net.Uri
 import android.widget.Toast
 import com.dawncourse.feature.update.UpdateDialog
@@ -48,6 +52,10 @@ import androidx.compose.material3.TextButton
 
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import kotlinx.coroutines.delay
+import javax.inject.Inject
+import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
+import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.core.domain.repository.OperationalDataReadiness
 
 /**
  * 应用程序主 Activity
@@ -57,10 +65,23 @@ import kotlinx.coroutines.delay
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val isBenchmarkMode: Boolean by lazy { BenchmarkMode.isEnabled(applicationContext) }
+
+    /** Activity 注入 Runtime 本身不会解析 AppDatabase。 */
+    @Inject
+    lateinit var databaseStartupRuntime: DatabaseStartupRuntime
+
+    /** 只有数据库 Ready 后才允许创建，RecoveryRequired 时始终为 null。 */
+    private var mainViewModel: MainViewModel? = null
+
     override fun onStart() {
         super.onStart()
         // 每次回到前台时，强制刷新 Widget，以防系统时间变更或其他状态变化未及时同步
-        WidgetSyncManager.updateWidgetNow(this)
+        if (!isBenchmarkMode &&
+            databaseStartupRuntime.readiness() == OperationalDataReadiness.READY
+        ) {
+            WidgetSyncManager.updateWidgetNow(this)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,28 +91,44 @@ class MainActivity : ComponentActivity() {
         // 开启 Edge-to-Edge 沉浸式模式
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // 获取 ViewModel 用于控制启动画面
-        val viewModel = ViewModelProvider(this)[MainViewModel::class.java]
-
-        // 保持启动画面直到设置加载完成（避免主题闪烁）
+        // 数据库仍在 IO 检查时保持 Splash；恢复状态必须释放 Splash 展示可见入口。
         splashScreen.setKeepOnScreenCondition {
-            viewModel.uiState.value is MainUiState.Loading
+            databaseStartupRuntime.state.value is DatabaseRuntimeState.Starting ||
+                mainViewModel?.uiState?.value is MainUiState.Loading
         }
 
         // 设置 Compose 内容视图
         setContent {
+            val databaseState by databaseStartupRuntime.state.collectAsState()
+            when (val startupState = databaseState) {
+                DatabaseRuntimeState.Starting -> Box(modifier = Modifier.fillMaxSize())
+                is DatabaseRuntimeState.RecoveryRequired -> DatabaseRecoveryScreen(
+                    reason = startupState.reason,
+                    runtime = databaseStartupRuntime,
+                    onRestartRequired = { ControlledProcessRestarter.restart(this@MainActivity) }
+                )
+                DatabaseRuntimeState.StartupBlocked -> DatabaseStartupBlockedScreen()
+                DatabaseRuntimeState.Ready -> {
+            val viewModel = remember {
+                ViewModelProvider(this@MainActivity)[MainViewModel::class.java].also {
+                    mainViewModel = it
+                }
+            }
             val uiState by viewModel.uiState.collectAsState()
+            val exhaustedMuteRecoveries by viewModel.exhaustedMuteRecoveries.collectAsState()
             
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
             val updateUiState by updateViewModel.uiState.collectAsState()
 
             // 监听更新事件 (Toast)
-            LaunchedEffect(Unit) {
-                updateViewModel.eventFlow.collect { event ->
-                    when (event) {
-                        is com.dawncourse.feature.update.UpdateEvent.ShowToast -> {
-                            android.widget.Toast.makeText(this@MainActivity, event.message, android.widget.Toast.LENGTH_SHORT).show()
+            if (!isBenchmarkMode) {
+                LaunchedEffect(Unit) {
+                    updateViewModel.eventFlow.collect { event ->
+                        when (event) {
+                            is com.dawncourse.feature.update.UpdateEvent.ShowToast -> {
+                                android.widget.Toast.makeText(this@MainActivity, event.message, android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
                 }
@@ -102,14 +139,18 @@ class MainActivity : ComponentActivity() {
             val currentVersionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
 
             // Auto check for update on launch (silent)
-            LaunchedEffect(Unit) {
-                delay(1200)
-                updateViewModel.checkUpdate(isManual = false, currentVersionCode = currentVersionCode)
+            if (!isBenchmarkMode) {
+                LaunchedEffect(Unit) {
+                    delay(1200)
+                    updateViewModel.checkUpdate(isManual = false, currentVersionCode = currentVersionCode)
+                }
             }
 
             // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
             if (uiState is MainUiState.Success) {
-                val settings = (uiState as MainUiState.Success).settings
+                val successState = uiState as MainUiState.Success
+                val settings = successState.settings
+                val scheduleRevision = successState.scheduleRevision
 
                 // 监听设置变化，调度每日闹钟计算任务（WorkManager）
                 //
@@ -118,49 +159,33 @@ class MainActivity : ComponentActivity() {
                 // - 它同时承担两类闹钟的计算与下发：
                 //   1) 上课提醒（通知）
                 //   2) 自动静音/取消静音
+                //   3) 课程状态通知及其下一边界刷新
                 //
                 // 因此 WorkManager 的调度条件必须与上述“任一功能开关”一致：
-                // - 只要【上课提醒】或【自动静音】任一开启，就需要定期运行 Worker 以保证闹钟更新
-                // - 两者都关闭时，应取消 Worker，避免无意义的后台开销
-                val sectionTimesHash = settings.sectionTimes.hashCode()
-                LaunchedEffect(
-                    settings.enableClassReminder,
-                    settings.enableAutoMute,
-                    settings.reminderMinutes,
-                    settings.startDateTimestamp,
-                    sectionTimesHash
-                ) {
-                    val shouldScheduleDailyWorker = settings.enableClassReminder || settings.enableAutoMute
-                    if (shouldScheduleDailyWorker) {
-                        ReminderScheduler.scheduleDailyWork(applicationContext)
-                        ReminderScheduler.triggerImmediateWork(applicationContext)
-                    } else {
-                        ReminderScheduler.cancelWork(applicationContext)
-                    }
-                }
-
-                // 监听 WebDAV 自动同步配置变化，统一调度 WorkManager 任务
-                LaunchedEffect(
-                    settings.enableWebDavAutoSync,
-                    settings.webDavAutoSyncMode,
-                    settings.webDavAutoSyncFixedAt,
-                    settings.webDavAutoSyncIntervalValue,
-                    settings.webDavAutoSyncIntervalUnit
-                ) {
-                    WebDavAutoSyncScheduler.schedule(applicationContext, settings)
-                }
-
-                // 监听设置变化，启动/停止常驻通知服务
-                LaunchedEffect(settings.enablePersistentNotification) {
-                    val intent = Intent(applicationContext, PersistentNotificationService::class.java)
-                    if (settings.enablePersistentNotification) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            applicationContext.startForegroundService(intent)
+                // - 只要【上课提醒】、【自动静音】或【课程状态通知】任一开启，就需要周期保底
+                // - 三者都关闭时，仍先执行一次即时对账以清理旧 Alarm/通知，再取消周期保底任务
+                // - revision 同时包含当前学期和课程字段，编辑、导入、还原后都会触发即时收敛
+                if (!isBenchmarkMode) {
+                    LaunchedEffect(scheduleRevision) {
+                        ReminderScheduler.triggerImmediateWork(applicationContext, forceReplay = false)
+                        // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
+                        WidgetSyncManager.updateWidgetNow(applicationContext)
+                        if (scheduleRevision.hasEnabledSystemSchedule) {
+                            ReminderScheduler.scheduleDailyWork(applicationContext)
                         } else {
-                            applicationContext.startService(intent)
+                            ReminderScheduler.cancelWork(applicationContext)
                         }
-                    } else {
-                        applicationContext.stopService(intent)
+                    }
+
+                    // 监听 WebDAV 自动同步配置变化，统一调度 WorkManager 任务
+                    LaunchedEffect(
+                        settings.enableWebDavAutoSync,
+                        settings.webDavAutoSyncMode,
+                        settings.webDavAutoSyncFixedAt,
+                        settings.webDavAutoSyncIntervalValue,
+                        settings.webDavAutoSyncIntervalUnit
+                    ) {
+                        WebDavAutoSyncScheduler.schedule(applicationContext, settings)
                     }
                 }
 
@@ -227,7 +252,35 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onCheckUpdate = {
                                         updateViewModel.checkUpdate(isManual = true, currentVersionCode = currentVersionCode)
+                                    },
+                                    onOpenProfileManager = {
+                                        navController.navigate("profile_manager")
                                     }
+                                )
+                            }
+
+                            // 独立多课表管理页面，feature 仅接收导航回调。
+                            composable("profile_manager") {
+                                ProfileManagementScreen(
+                                    onBackClick = { navController.popBackStack() },
+                                    onImport = { profileId ->
+                                        navController.navigate("profile_import?targetProfileId=$profileId")
+                                    },
+                                )
+                            }
+
+                            // 从课表管理进入时显式携带目标 Profile；导入 ViewModel 会在页面进入时冻结该落点。
+                            composable(
+                                route = "profile_import?targetProfileId={targetProfileId}",
+                                arguments = listOf(navArgument("targetProfileId") {
+                                    type = NavType.LongType
+                                }),
+                            ) { backStackEntry ->
+                                ImportScreen(
+                                    targetProfileId = backStackEntry.arguments?.getLong("targetProfileId") ?: 0L,
+                                    onImportSuccess = {
+                                        navController.popBackStack("timetable", inclusive = false)
+                                    },
                                 )
                             }
                             
@@ -255,6 +308,8 @@ class MainActivity : ComponentActivity() {
                                 val courseEditorViewModel: CourseEditorViewModel = hiltViewModel()
                                 val course by courseEditorViewModel.course.collectAsState()
                                 val currentSemesterId by courseEditorViewModel.currentSemesterId.collectAsState()
+                                val currentSemesterWeekCount by courseEditorViewModel.currentSemesterWeekCount.collectAsState()
+                                val hasValidTargetSemester by courseEditorViewModel.hasValidTargetSemester.collectAsState()
                                 
                                 // 如果是编辑模式且课程数据尚未加载完成，显示 Loading
                                 val isEditing = courseId != null && courseId != "0"
@@ -266,6 +321,8 @@ class MainActivity : ComponentActivity() {
                                     CourseEditorScreen(
                                         course = course,
                                         currentSemesterId = currentSemesterId,
+                                        currentSemesterWeekCount = currentSemesterWeekCount,
+                                        hasValidSemester = hasValidTargetSemester,
                                         onBackClick = { navController.popBackStack() },
                                         onSaveClick = { newCourses ->
                                             courseEditorViewModel.saveCourses(
@@ -281,48 +338,86 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        // 全局更新弹窗
-                        when (val state = updateUiState) {
-                            is UpdateUiState.Available -> {
-                                UpdateDialog(
-                                    info = state.updateInfo,
-                                    onDismiss = { updateViewModel.dismissDialog() },
-                                    onUpdate = {
-                                        val url = state.updateInfo.downloadUrl
-                                        try {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            startActivity(intent)
-                                        } catch (e: Exception) {
-                                            android.widget.Toast.makeText(this@MainActivity, "未找到浏览器，无法下载", android.widget.Toast.LENGTH_SHORT).show()
+                        // 恢复责任需要用户立即决策时，不与普通版本更新弹窗叠加。
+                        if (!isBenchmarkMode && exhaustedMuteRecoveries.isEmpty()) {
+                            when (val state = updateUiState) {
+                                is UpdateUiState.Available -> {
+                                    UpdateDialog(
+                                        info = state.updateInfo,
+                                        onDismiss = { updateViewModel.dismissDialog() },
+                                        onUpdate = {
+                                            val url = state.updateInfo.downloadUrl
+                                            try {
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                startActivity(intent)
+                                            } catch (e: Exception) {
+                                                android.widget.Toast.makeText(this@MainActivity, "未找到浏览器，无法下载", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) },
+                                        isUpdate = true
+                                    )
+                                }
+                                is UpdateUiState.VersionInfo -> {
+                                    UpdateDialog(
+                                        info = state.updateInfo,
+                                        onDismiss = { updateViewModel.dismissDialog() },
+                                        onUpdate = {},
+                                        onIgnore = {},
+                                        isUpdate = false
+                                    )
+                                }
+                                is UpdateUiState.Error -> {
+                                    UpdateErrorDialog(
+                                        message = state.message,
+                                        onDismiss = { updateViewModel.dismissDialog() }
+                                    )
+                                }
+                                else -> {}
+                            }
+                        }
+
+                        // 静音恢复责任来自持久 Store；即使通知权限关闭，前台仍必须可见且不可静默消失。
+                        exhaustedMuteRecoveries.firstOrNull()?.let { recovery ->
+                            AlertDialog(
+                                onDismissRequest = {},
+                                title = { Text(stringResource(R.string.mute_recovery_dialog_title)) },
+                                text = { Text(stringResource(R.string.mute_recovery_dialog_content)) },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            val manager = getSystemService(NotificationManager::class.java)
+                                            val hasAccess = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                                                manager.isNotificationPolicyAccessGranted
+                                            if (hasAccess) {
+                                                viewModel.retryMuteRecovery(recovery.key)
+                                            } else {
+                                                runCatching {
+                                                    startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                                                }
+                                            }
                                         }
-                                    },
-                                    onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) },
-                                    isUpdate = true
-                                )
-                            }
-                            is UpdateUiState.VersionInfo -> {
-                                UpdateDialog(
-                                    info = state.updateInfo,
-                                    onDismiss = { updateViewModel.dismissDialog() },
-                                    onUpdate = {},
-                                    onIgnore = {},
-                                    isUpdate = false
-                                )
-                            }
-                            is UpdateUiState.Error -> {
-                                UpdateErrorDialog(
-                                    message = state.message,
-                                    onDismiss = { updateViewModel.dismissDialog() }
-                                )
-                            }
-                            else -> {}
+                                    ) {
+                                        Text(stringResource(R.string.mute_recovery_retry))
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(
+                                        onClick = { viewModel.releaseMuteRecovery(recovery.key) }
+                                    ) {
+                                        Text(stringResource(R.string.mute_recovery_release))
+                                    }
+                                }
+                            )
                         }
                     }
                 }
             } else {
                 // 加载中，显示空白（被 Splash Screen 遮挡）
                 Box(modifier = Modifier.fillMaxSize())
+            }
+                }
             }
         }
     }

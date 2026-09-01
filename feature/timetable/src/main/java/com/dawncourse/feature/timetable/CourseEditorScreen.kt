@@ -102,7 +102,9 @@ import kotlin.math.roundToInt
 @Composable
 fun CourseEditorScreen(
     course: Course? = null,
-    currentSemesterId: Long = 1L,
+    currentSemesterId: Long = 0L,
+    currentSemesterWeekCount: Int = 20,
+    hasValidSemester: Boolean = false,
     onBackClick: () -> Unit,
     onSaveClick: (List<Course>) -> Unit
 ) {
@@ -112,7 +114,8 @@ fun CourseEditorScreen(
 
     val settings = LocalAppSettings.current
     val defaultDuration = settings.defaultCourseDuration
-    val totalWeeks = settings.totalWeeks.coerceAtLeast(20)
+    val totalWeeks = currentSemesterWeekCount.coerceAtLeast(1)
+    val targetSemesterId = course?.semesterId ?: currentSemesterId
 
     // 初始状态：如果是在编辑现有课程，则加载其时间段；如果是新建，则创建默认时间段
     val initialSlot = remember(course, defaultDuration, totalWeeks) {
@@ -149,13 +152,12 @@ fun CourseEditorScreen(
                 actions = {
                     Button(
                         onClick = {
-                            val semesterId = course?.semesterId ?: currentSemesterId
                             val coursesToSave = timeSlots.flatMapIndexed { slotIndex, slot ->
                                 val segments = convertWeeksToSegments(slot.selectedWeeks)
                                 segments.mapIndexed { segmentIndex, segment ->
                                     Course(
                                         id = if (course != null && slotIndex == 0 && segmentIndex == 0) course.id else 0L,
-                                        semesterId = semesterId,
+                                        semesterId = targetSemesterId,
                                         name = name.trim(),
                                         location = location.trim(),
                                         teacher = teacher.trim(),
@@ -171,7 +173,7 @@ fun CourseEditorScreen(
                             }
                             onSaveClick(coursesToSave)
                         },
-                        enabled = name.isNotBlank(),
+                        enabled = name.isNotBlank() && hasValidSemester,
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -195,6 +197,14 @@ fun CourseEditorScreen(
                 .padding(horizontal = 16.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
+            if (!hasValidSemester) {
+                Text(
+                    text = "请先在设置中选择当前学期，才能保存课程",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
             // Basic Info
             BasicInfoSection(
                 name = name,

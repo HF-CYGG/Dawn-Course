@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="database_recovery_title">Timetable data recovery required</string>
+    <string name="database_recovery_explanation">No new database was created and the existing database was not overwritten. Restore from an app backup or WebDAV; discard the old data only if you are certain it is no longer needed.</string>
+    <string name="database_recovery_reason_key">This device cannot use the original database key. After changing devices or if the Keystore key becomes invalid, restore from a backup created by the app.</string>
+    <string name="database_recovery_reason_data">The database could not be opened securely or failed integrity verification. Access has stopped and the original files have been preserved.</string>
+    <string name="database_recovery_local_backup">Restore from app backup</string>
+    <string name="database_recovery_webdav_title">Connect to WebDAV manually</string>
+    <string name="database_recovery_webdav_server">Server address</string>
+    <string name="database_recovery_webdav_username">Username</string>
+    <string name="database_recovery_webdav_password">Password</string>
+    <string name="database_recovery_webdav_restore">Download and restore</string>
+    <string name="database_recovery_abandon">Discard inaccessible data</string>
+    <string name="database_recovery_abandon_confirm_title">Discard the old data?</string>
+    <string name="database_recovery_abandon_confirm_message">The old database will no longer be used at startup. After this operation completes and the app restarts, recovery will only be possible from an external backup that you still have.</string>
+    <string name="database_recovery_abandon_confirm">Discard data</string>
+    <string name="database_recovery_cancel">Cancel</string>
+    <string name="database_recovery_failure_state">The recovery state has changed. Restart the app and try again.</string>
+    <string name="database_recovery_failure_unreadable">The backup file could not be read.</string>
+    <string name="database_recovery_failure_too_large">The backup file exceeds the safe size limit.</string>
+    <string name="database_recovery_failure_invalid">The backup contents or version failed validation.</string>
+    <string name="database_recovery_failure_webdav_address">The WebDAV address is invalid.</string>
+    <string name="database_recovery_failure_webdav_auth">The WebDAV username or password is incorrect.</string>
+    <string name="database_recovery_failure_webdav_unavailable">The backup could not be downloaded from WebDAV.</string>
+    <string name="database_recovery_failure_internal">Recovery could not be completed safely. The original data is still preserved; try again or select another backup.</string>
+    <string name="database_startup_blocked_title">The database cannot start safely yet</string>
+    <string name="database_startup_blocked_message">The app could not acquire the database startup lock and did not create a recovery transaction. Fully exit the app and try again; the original database was not overwritten.</string>
+    <string name="app_name">Dawn Course</string>
+    <string name="mute_recovery_dialog_title">Automatic mute recovery failed</string>
+    <string name="mute_recovery_dialog_content">Dawn Course could not restore the ringer automatically. Check Do Not Disturb access and retry, or release this recovery responsibility if you restored it manually.</string>
+    <string name="mute_recovery_retry">Retry recovery</string>
+    <string name="mute_recovery_release">Restored manually / release responsibility</string>
+    <string name="profile_import_title">Import to timetable</string>
+    <string name="profile_import_back">Back</string>
+    <string name="profile_import_unavailable_title">Targeted import is being completed</string>
+    <string name="profile_import_unavailable_message">Timetable #%1$d is preserved. The legacy whole-database replacement import will not run from this entry.</string>
+</resources>

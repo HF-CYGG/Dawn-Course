@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 仅由同一 debug 签名的 benchmark 测试 APK 持有。 -->
+    <permission
+        android:name="${applicationId}.permission.BENCHMARK_SEED"
+        android:protectionLevel="signature" />
+
+    <application>
+        <!-- 仅性能测试变体跳过网络更新与后台调度，避免它们污染测量窗口。 -->
+        <meta-data
+            android:name="com.dawncourse.app.BENCHMARK_MODE"
+            android:value="true" />
+
+        <!-- 仅 benchmark 变体对 shell 开放性能采样，生产 release 不合入此节点。 -->
+        <profileable
+            android:shell="true"
+            tools:targetApi="q" />
+
+        <!-- 仅 debug 签名 benchmark 变体注册；用于跨进程构造可重复测试数据。 -->
+        <provider
+            android:name=".benchmark.BenchmarkSeedProvider"
+            android:authorities="${applicationId}.benchmark"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:permission="${applicationId}.permission.BENCHMARK_SEED" />
+    </application>
+</manifest>

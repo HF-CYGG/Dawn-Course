@@ -51,6 +51,8 @@ google-services.json
 
 # Trae/AI related
 .trae/
+.codex_tmp/
+.kotlin/
 logs/
 hs_err_pid*.log
 replay_pid*.log

@@ -20,6 +20,30 @@ interface SettingsRepository {
     val settings: Flow<AppSettings>
 
     /**
+     * 当前选中的学期 ID。
+     *
+     * DataStore 内部以 0 表示用户明确未选择，对外统一映射为 null。
+     */
+    val selectedSemesterId: Flow<Long?>
+
+    /**
+     * 选择一个已存在的学期。
+     *
+     * @param id 正数形式的学期 ID
+     */
+    suspend fun selectSemester(id: Long)
+
+    /** 明确清除当前学期选择。 */
+    suspend fun clearSelectedSemester()
+
+    /**
+     * 仅当选择键尚不存在时，用旧 Room 标记完成一次性桥接。
+     *
+     * @param legacyId 旧 Room 中稳定选出的学期 ID；null 表示没有旧选择
+     */
+    suspend fun initializeSelectedSemesterIfUnset(legacyId: Long?)
+
+    /**
      * 设置是否启用动态取色
      *
      * @param enabled 是否启用
@@ -200,27 +224,6 @@ interface SettingsRepository {
     suspend fun setShowDateInHeader(show: Boolean)
 
     /**
-     * 设置当前学期名称（缓存）
-     *
-     * @param name 学期名称
-     */
-    suspend fun setCurrentSemesterName(name: String)
-
-    /**
-     * 设置当前学期总周数（缓存）
-     *
-     * @param weeks 总周数
-     */
-    suspend fun setTotalWeeks(weeks: Int)
-
-    /**
-     * 设置当前学期开始时间戳（缓存）
-     *
-     * @param timestamp 时间戳
-     */
-    suspend fun setStartDateTimestamp(timestamp: Long)
-
-    /**
      * 设置是否启用上课提醒
      *
      * @param enable 是否启用
@@ -312,4 +315,11 @@ interface SettingsRepository {
      * @param settings 完整的设置对象
      */
     suspend fun setAllSettings(settings: AppSettings)
+
+    /**
+     * 在单次 DataStore edit 中原子恢复完整设置与当前学期选择。
+     *
+     * @param selectedSemesterId 正数表示选择，null 表示显式无选择
+     */
+    suspend fun restoreAllSettingsAndSelection(settings: AppSettings, selectedSemesterId: Long?)
 }

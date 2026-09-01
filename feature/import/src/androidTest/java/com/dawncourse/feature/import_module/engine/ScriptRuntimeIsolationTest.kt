@@ -5,9 +5,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class ScriptRuntimeIsolationTest {
@@ -15,14 +17,15 @@ class ScriptRuntimeIsolationTest {
     fun synchronousInfiniteLoopKillsRuntimeAndNextParseSucceeds() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val engine = ScriptEngine(context)
-        val timeout = runCatching {
+        val timeoutAttempt = runCatching {
             engine.parseHtml(
                 script = "function parse(){ while(true){} }",
                 html = "<html></html>",
                 harnessSource = TEST_HARNESS,
                 timeoutMillis = 700
             )
-        }.exceptionOrNull() as? ScriptEngine.ScriptExecutionException
+        }
+        val timeout = timeoutAttempt.exceptionOrNull() as? ScriptEngine.ScriptExecutionException
 
         assertTrue(timeout?.errorCode == ScriptEngine.ERROR_TIMEOUT)
         val terminatedPid = engine.lastTerminatedRuntimeProcessId
@@ -38,6 +41,108 @@ class ScriptRuntimeIsolationTest {
         assertTrue(result.ok)
         assertTrue(engine.lastRuntimeProcessId > 0)
         assertNotEquals(terminatedPid, engine.lastRuntimeProcessId)
+        assertEquals(terminatedPid, engine.lastTerminatedRuntimeProcessId)
+    }
+
+    @Test
+    fun successfulRequestsCompleteWithoutForceKillingRuntime() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val engine = ScriptEngine(context)
+
+        val first = engine.parseHtml(
+            script = "function parse(){ return [{name:'First'}]; }",
+            html = "<html></html>",
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = 2_000
+        )
+        val firstProcessId = engine.lastRuntimeProcessId
+        val second = engine.parseHtml(
+            script = "function parse(){ return [{name:'Second'}]; }",
+            html = "<html></html>",
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = 2_000
+        )
+
+        assertTrue(first.ok)
+        assertTrue(second.ok)
+        assertTrue(firstProcessId > 0)
+        assertTrue(engine.lastRuntimeProcessId > 0)
+        assertEquals(0, engine.lastTerminatedRuntimeProcessId)
+    }
+
+    @Test
+    fun mutatingGlobalFormatCannotContaminateNextRequest() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val engine = ScriptEngine(context)
+
+        val first = engine.parseHtml(
+            script = """
+                globalThis.format = function(){ return 'poisoned'; };
+                delete globalThis.format;
+                function parse(){ return [{name:'Mutated'}]; }
+            """.trimIndent(),
+            html = "<html></html>",
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = 2_000
+        )
+        val firstProcessId = engine.lastRuntimeProcessId
+        val second = engine.parseHtml(
+            script = "function parse(){ return [{name:'Clean'}]; }",
+            html = "<html></html>",
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = 2_000
+        )
+
+        assertTrue(first.ok)
+        assertTrue(second.ok)
+        assertTrue(firstProcessId > 0)
+        assertTrue(engine.lastRuntimeProcessId > 0)
+        assertEquals(0, engine.lastTerminatedRuntimeProcessId)
+    }
+
+    @Test
+    fun scriptRequestAndResponseAreNeverPersistedToCache() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val runtimeDirectory = File(context.cacheDir, "script_runtime")
+        runtimeDirectory.listFiles()
+            ?.filter { it.name.startsWith("request-") || it.name.startsWith("response-") }
+            ?.forEach { it.delete() }
+        val engine = ScriptEngine(context)
+
+        val result = engine.parseHtml(
+            script = "function parse(){ return [{name:'Memory only'}]; }",
+            html = "<html>raw-sensitive-content</html>",
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = 2_000
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            runtimeDirectory.listFiles()
+                ?.none { it.name.startsWith("request-") || it.name.startsWith("response-") }
+                ?: true
+        )
+    }
+
+    @Test
+    fun largeRequestAndResponseCrossPipesWithoutDeadlock() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val engine = ScriptEngine(context)
+        val largestAcceptedHtml = "x".repeat(ScriptRuntimeLimits.MAX_HTML_BYTES)
+
+        val result = engine.parseHtml(
+            script = """
+                function parse(){
+                  return [{name: new Array(800001).join('x')}];
+                }
+            """.trimIndent(),
+            html = largestAcceptedHtml,
+            harnessSource = TEST_HARNESS,
+            timeoutMillis = ScriptEngine.DEFAULT_TIMEOUT_MS
+        )
+
+        assertTrue(result.ok)
+        assertTrue(result.raw.length > 700_000)
     }
 
     private companion object {

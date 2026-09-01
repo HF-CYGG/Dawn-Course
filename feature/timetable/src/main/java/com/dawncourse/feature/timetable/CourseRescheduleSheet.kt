@@ -32,7 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.ui.theme.LocalAppSettings
 
@@ -422,7 +422,7 @@ private fun WeekSelectionStep(
 
         // Week Grid
         WeekGridSelector(
-            availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+            availableWeeks = (1..uiState.semesterWeekCount.coerceAtLeast(1)).toSet(),
             enabledWeeks = uiState.availableWeeks, // Only original weeks are enabled for selection
             selectedWeeks = uiState.selectedWeeks,
             hintWeek = initialWeek,
@@ -459,6 +459,7 @@ private fun TimeLocationStep(
         TargetWeekPickerDialog(
             requiredCount = uiState.selectedWeeks.size,
             initialSelection = uiState.targetWeeks,
+            semesterWeekCount = uiState.semesterWeekCount,
             onDismiss = { showWeekPicker = false },
             onConfirm = { 
                 onTargetWeeksChange(it)
@@ -842,6 +843,7 @@ private fun RescheduleInfoCard(
 private fun TargetWeekPickerDialog(
     requiredCount: Int,
     initialSelection: Set<Int>,
+    semesterWeekCount: Int,
     onDismiss: () -> Unit,
     onConfirm: (Set<Int>) -> Unit
 ) {
@@ -871,8 +873,8 @@ private fun TargetWeekPickerDialog(
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 WeekGridSelector(
-                    availableWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
-                    enabledWeeks = (1..LocalAppSettings.current.totalWeeks.coerceAtLeast(20)).toSet(),
+                    availableWeeks = (1..semesterWeekCount.coerceAtLeast(1)).toSet(),
+                    enabledWeeks = (1..semesterWeekCount.coerceAtLeast(1)).toSet(),
                     selectedWeeks = currentSelection,
                     onToggleWeek = { week ->
                         currentSelection = if (currentSelection.contains(week)) {

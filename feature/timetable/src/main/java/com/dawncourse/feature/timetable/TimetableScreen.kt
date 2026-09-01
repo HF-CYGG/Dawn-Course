@@ -23,9 +23,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.activity.compose.ReportDrawnWhen
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.ui.theme.LocalAppSettings
@@ -109,7 +114,11 @@ fun TimetableRoute(
  * @param onConfirmDelete 确认删除回调
  * @param onUndoDelete 撤销删除回调
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalComposeUiApi::class
+)
 @Composable
 internal fun TimetableScreen(
     uiState: TimetableUiState,
@@ -147,6 +156,10 @@ internal fun TimetableScreen(
         if (isWallpaperLight) Color(0xFF1A1A1A) else Color.White
     }
 
+    // 只在 Repository 驱动的真实 Success 已进入可渲染课表分支时上报 fully drawn。
+    // Macrobenchmark 对应等待的 testTag 同样只附着在该分支，避免误等加载期周次按钮。
+    ReportDrawnWhen { TimetableBenchmarkContract.isContentReady(uiState) }
+
     // 显示 Snackbar
     LaunchedEffect(userMessage) {
         if (userMessage != null) {
@@ -171,8 +184,11 @@ internal fun TimetableScreen(
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
     val semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
     val isBeforeSemesterStart = semesterStartDate != null && LocalDate.now().isBefore(semesterStartDate)
-    // 绑定总周数到设置
-    val maxWeeks = settings.totalWeeks
+    // 学期总周数由 Room 驱动的 UiState 提供，禁止回退到 AppSettings 的旧缓存。
+    val maxWeeks = when (uiState) {
+        is TimetableUiState.Success -> uiState.totalWeeks
+        else -> 20
+    }
     // 允许 Pager 扩展到当前真实周次（如果超过总周数）
     val basePageCount = maxOf(maxWeeks, realCurrentWeek.coerceAtLeast(1))
     val hasHolidayPage = isBeforeSemesterStart
@@ -261,7 +277,7 @@ internal fun TimetableScreen(
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.weight(1f),
-                    beyondBoundsPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
+                    beyondViewportPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
                 ) { page ->
                     val week = if (hasHolidayPage) page else page + 1
                     
@@ -301,7 +317,11 @@ internal fun TimetableScreen(
                                     TimetableGrid(
                                         courses = uiState.courses,
                                         currentWeek = week,
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            // 仅导出 resource-id 供 UiAutomator 等待，不写入无障碍文案。
+                                            .semantics { testTagsAsResourceId = true }
+                                            .testTag(TimetableBenchmarkContract.READY_TEST_TAG),
                                         onCourseClick = { course -> selectedCourse = course }
                                     )
                                 } else {

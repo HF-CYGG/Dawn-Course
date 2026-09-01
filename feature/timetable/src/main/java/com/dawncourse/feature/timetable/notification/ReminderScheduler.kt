@@ -1,10 +1,13 @@
 package com.dawncourse.feature.timetable.notification
 
 import android.content.Context
+import androidx.work.ExistingWorkPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import java.time.Duration
 import java.time.LocalTime
 import java.time.ZoneId
@@ -23,6 +26,19 @@ import java.util.concurrent.TimeUnit
  */
 object ReminderScheduler {
     private const val WORK_NAME = "DailyReminderWorker"
+    /**
+     * 系统事件触发的即时对账任务唯一名称。
+     *
+     * 与每日周期任务分离，避免系统时间变化时影响下一次 06:00 的保底调度。
+     */
+    internal const val IMMEDIATE_WORK_NAME = "DailyReminderImmediateReconcile"
+    /** 系统事件要求忽略注册表 keep 状态并重放全部 Desired。 */
+    internal const val INPUT_FORCE_REPLAY = "force_replay"
+
+    /**
+     * 系统事件进入唯一串行链，最终闹钟状态由后续任务收敛。
+     */
+    internal val IMMEDIATE_WORK_POLICY: ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
     private val TARGET_LOCAL_TIME: LocalTime = LocalTime.of(6, 0)
 
     /**
@@ -42,6 +58,7 @@ object ReminderScheduler {
             // 通过初始延迟把首次运行时间对齐到下一次 06:00（本地时间）
             // 注意：这只能“尽量对齐”，系统仍可能因省电策略/资源约束推迟执行
             .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
+            .setInputData(createPeriodicWorkData())
             .build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -51,11 +68,26 @@ object ReminderScheduler {
         )
     }
 
-    fun triggerImmediateWork(context: Context) {
+    fun triggerImmediateWork(context: Context, forceReplay: Boolean = false) {
         val request = OneTimeWorkRequestBuilder<DailySchedulerWorker>()
+            .setInputData(createImmediateWorkData(forceReplay))
             .build()
-        WorkManager.getInstance(context).enqueue(request)
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            IMMEDIATE_WORK_NAME,
+            IMMEDIATE_WORK_POLICY,
+            request
+        )
     }
+
+    /** 构建可单元测试的即时对账输入。 */
+    internal fun createImmediateWorkData(forceReplay: Boolean): Data = workDataOf(
+        INPUT_FORCE_REPLAY to forceReplay
+    )
+
+    /** 每日保底任务必须重放 Desired，以修复系统 Alarm 与本地注册表的不一致。 */
+    internal fun createPeriodicWorkData(): Data = workDataOf(
+        INPUT_FORCE_REPLAY to true
+    )
 
     /**
      * 取消调度任务

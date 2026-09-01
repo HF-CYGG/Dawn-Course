@@ -7,9 +7,6 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
     <application>
         <receiver android:name=".notification.ReminderReceiver"
             android:enabled="true"
@@ -24,10 +21,9 @@
                 <action android:name="com.dawncourse.action.UNMUTE" />
             </intent-filter>
         </receiver>
-        
-        <service android:name=".notification.PersistentNotificationService"
+
+        <receiver android:name=".notification.PersistentNotificationRefreshReceiver"
             android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:exported="false" />
     </application>
 </manifest>

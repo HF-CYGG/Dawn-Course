@@ -1,16 +1,11 @@
 package com.dawncourse.core.data.repository
 
-import com.dawncourse.core.data.local.AppDatabase
-import androidx.room.withTransaction
-import com.dawncourse.core.data.local.entity.toDomain
-import com.dawncourse.core.data.local.entity.toEntity
 import com.dawncourse.core.domain.model.LastSyncInfo
 import com.dawncourse.core.domain.model.SyncErrorCode
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.WebDavBackup
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
-import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
 import com.dawncourse.core.domain.repository.WebDavSyncRepository
@@ -35,9 +30,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * 3. 处理冲突与同步状态记录
  */
 @Singleton
-class WebDavSyncRepositoryImpl @Inject constructor(
-    private val database: AppDatabase,
-    private val settingsRepository: SettingsRepository,
+class WebDavSyncRepositoryImpl @Inject internal constructor(
+    private val backupSnapshotBuilder: BackupSnapshotBuilder,
+    private val backupRestoreCoordinator: BackupRestoreCoordinator,
     private val webDavCredentialsRepository: WebDavCredentialsRepository,
     private val syncStateRepository: SyncStateRepository
 ) : WebDavSyncRepository {
@@ -177,7 +172,20 @@ class WebDavSyncRepositoryImpl @Inject constructor(
         val backup = parseBackup(response.body)
             ?: return WebDavSyncResult(false, "云端数据解析失败", SyncErrorCode.PARSE_ERROR)
 
-        applyBackup(backup)
+        applyBackup(backup).getOrElse { error ->
+            if (error is BackupRecoveryRequiredException) {
+                return WebDavSyncResult(
+                    false,
+                    "数据补偿恢复失败，需要进入恢复流程",
+                    SyncErrorCode.RECOVERY_REQUIRED
+                )
+            }
+            return WebDavSyncResult(
+                false,
+                error.message ?: "云端备份校验或恢复失败",
+                SyncErrorCode.PARSE_ERROR
+            )
+        }
         syncStateRepository.setLastSyncInfo(
             LastSyncInfo(
                 timestamp = System.currentTimeMillis(),
@@ -195,15 +203,17 @@ class WebDavSyncRepositoryImpl @Inject constructor(
      * 包含设置、学期、课程三部分，并写入 lastModified 时间戳。
      */
     private suspend fun buildLocalBackup(): WebDavBackup {
-        val settings = settingsRepository.settings.first()
-        val semesters = database.semesterDao().getAllSemestersOnce().map { it.toDomain() }
-        val courses = database.courseDao().getAllCoursesOnce().map { it.toDomain() }
+        val snapshot = backupSnapshotBuilder.build()
         return WebDavBackup(
-            version = 1,
+            version = WebDavBackup.CURRENT_VERSION,
             lastModified = System.currentTimeMillis(),
-            settings = settings,
-            semesters = semesters,
-            courses = courses
+            settings = snapshot.settings,
+            semesters = snapshot.semesters,
+            courses = snapshot.courses,
+            selectedSemesterId = null,
+            profiles = snapshot.profiles,
+            sourceBindings = snapshot.sourceBindings,
+            activeProfileId = snapshot.activeProfileId,
         )
     }
 
@@ -212,16 +222,12 @@ class WebDavSyncRepositoryImpl @Inject constructor(
      *
      * 通过数据库事务保证课程/学期的替换原子性，避免中途失败造成数据不一致。
      */
-    private suspend fun applyBackup(backup: WebDavBackup) {
-        withContext(Dispatchers.IO) {
-            database.withTransaction {
-                database.courseDao().deleteAllCourses()
-                database.semesterDao().deleteAllSemesters()
-                backup.semesters.forEach { database.semesterDao().insertSemester(it.toEntity()) }
-                backup.courses.forEach { database.courseDao().insertCourse(it.toEntity()) }
-            }
-        }
-        settingsRepository.setAllSettings(backup.settings)
+    private suspend fun applyBackup(backup: WebDavBackup): Result<Unit> {
+        BackupRestoreGate.validateThenCommit(backup.toRestorePayload()) { snapshot ->
+            backupRestoreCoordinator.restore(snapshot).getOrThrow()
+        }.getOrElse { return Result.failure(it) }
+
+        return Result.success(Unit)
     }
 
     /**

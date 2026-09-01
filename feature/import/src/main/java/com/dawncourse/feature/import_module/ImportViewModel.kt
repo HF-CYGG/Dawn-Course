@@ -10,12 +10,18 @@ import com.dawncourse.core.domain.model.ParseReportPayload
 import com.dawncourse.core.domain.model.ParseSessionContext
 import com.dawncourse.core.domain.model.ParserAttemptReport
 import com.dawncourse.core.domain.model.SanitizedSample
+import com.dawncourse.core.domain.model.SanitizedDiagnosticSample
 import com.dawncourse.core.domain.model.SchoolSystemType
-import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.ImportCommitImpact
+import com.dawncourse.core.domain.model.ImportCommitRequest
+import com.dawncourse.core.domain.model.ImportCommitResult
+import com.dawncourse.core.domain.model.ImportDestination
+import com.dawncourse.core.domain.model.NewSemesterSpec
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.model.ScriptSchoolContext
-import com.dawncourse.core.domain.repository.CourseRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.DiagnosticSampleRepository
+import com.dawncourse.core.domain.repository.ImportCommitRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import com.dawncourse.core.domain.usecase.FetchLlmParseStatusUseCase
@@ -134,7 +140,30 @@ data class ImportUiState(
     val llmConsentLength: Int = 0,
     val llmConsentChecked: Boolean = false,
     val llmConsentSourceUrl: String = "",
-    val llmConsentSchoolName: String = ""
+    val llmConsentSchoolName: String = "",
+    /** 页面进入时捕获的默认 Profile，解析期间切换课表不会改变该值。 */
+    val capturedProfileId: Long? = null,
+    /** 当前提交落点；课程写入时由 ImportCommitRepository 再次强制校验。 */
+    val destination: ImportDestination? = null,
+    /** 可选 Profile/学期列表仅用于前台选择，不保存任何凭据。 */
+    val profileTargets: List<ImportProfileTarget> = emptyList(),
+    /** 新建 Profile 时的展示名称。 */
+    val newProfileName: String = "",
+    /** 覆盖导入在提交前必须展示此量化影响。 */
+    val pendingOverwriteImpact: ImportCommitImpact? = null,
+)
+
+/** 导入预览可选择的既有 Profile 与其学期，禁止 UI 直接访问 DAO。 */
+data class ImportProfileTarget(
+    val profileId: Long,
+    val profileName: String,
+    val semesters: List<ImportSemesterTarget>,
+)
+
+/** 明确覆盖目标需要同时携带 Profile 与 Semester，避免仅凭学期 ID 猜测归属。 */
+data class ImportSemesterTarget(
+    val semesterId: Long,
+    val semesterName: String,
 )
 
 private data class LlmRepairContext(
@@ -170,8 +199,9 @@ class ImportViewModel @Inject constructor(
     private val application: Application,
     private val scriptEngine: ScriptEngine,
     private val qiangZhiApiEngine: QiangZhiApiEngine,
-    private val courseRepository: CourseRepository,
-    private val semesterRepository: SemesterRepository,
+    private val diagnosticSampleRepository: DiagnosticSampleRepository,
+    private val importCommitRepository: ImportCommitRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val settingsRepository: SettingsRepository,
     private val scriptSyncRepository: ScriptSyncRepository,
     private val submitLlmParseTaskUseCase: SubmitLlmParseTaskUseCase,
@@ -208,6 +238,9 @@ class ImportViewModel @Inject constructor(
                 _uiState.update { it.copy(webUrl = lastImportUrl) }
             }
         }
+        viewModelScope.launch(Dispatchers.IO) {
+            diagnosticSampleRepository.cleanupExpired()
+        }
     }
 
     /**
@@ -216,7 +249,13 @@ class ImportViewModel @Inject constructor(
      * 切换步骤时会重置部分临时状态，如解析结果和错误信息，确保流程清晰。
      */
     fun setStep(step: ImportStep) {
+        val leavingSessionId = currentParseSessionId.takeIf { it.isNotBlank() }
         currentParseSessionId = ""
+        if (leavingSessionId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                diagnosticSampleRepository.clearRawForSession(leavingSessionId)
+            }
+        }
         _uiState.update { 
             it.copy(
                 step = step,
@@ -752,20 +791,25 @@ class ImportViewModel @Inject constructor(
         repairContext: LlmRepairContext
     ): LlmFallbackResult {
         if (content.isBlank()) return LlmFallbackResult(failureReason = "content_blank")
+        val importSessionId = currentParseSessionId.takeIf { it.isNotBlank() }
+            ?: return LlmFallbackResult(failureReason = "import_session_missing")
         val submitResult = submitLlmParseTaskUseCase(
-            content = content,
+            sample = SanitizedDiagnosticSample(
+                importSessionId = importSessionId,
+                sanitizerVersion = DiagnosticHtmlSanitizer.VERSION,
+                contentSha256 = hashSha256(content),
+                content = content
+            ),
             schoolId = schoolId,
             schoolName = schoolName,
             schoolSystemType = schoolSystemType,
-            sourceUrl = sourceUrl,
+            sourceUrl = extractSourceOrigin(sourceUrl),
             scriptName = repairContext.scriptName,
             scriptVersion = repairContext.scriptVersion.takeIf { it > 0 },
             scriptSource = repairContext.scriptSource,
             failureType = repairContext.failureType,
             clientVersion = clientVersion,
-            parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() },
             attemptedParsers = repairContext.attemptedParsers,
-            consent = true,
             consentAt = System.currentTimeMillis()
         )
         val taskId = submitResult.taskId
@@ -881,7 +925,7 @@ class ImportViewModel @Inject constructor(
                 if (allowDiagnosticsUpload) {
                     reportParseResultUseCase(
                         buildParseReportPayload(
-                            parseSessionId = parseSessionId,
+                            importSessionId = parseSessionId,
                             scriptName = scriptName,
                             success = success,
                             failureType = failureType,
@@ -912,13 +956,20 @@ class ImportViewModel @Inject constructor(
         if (scriptName.isBlank()) return
         val sample = SanitizedSample(
             hasUserConsent = true,
-            sanitizerVersion = 1,
+            sanitizerVersion = DiagnosticHtmlSanitizer.VERSION,
             contentSha256 = hashSha256(content),
             content = content
         )
+        val localDiagnosticSample = SanitizedDiagnosticSample(
+            importSessionId = parseSessionId,
+            sanitizerVersion = DiagnosticHtmlSanitizer.VERSION,
+            contentSha256 = hashSha256(content),
+            content = content
+        )
+        diagnosticSampleRepository.saveSanitized(localDiagnosticSample)
         reportParseResultUseCase(
             buildParseReportPayload(
-                parseSessionId = parseSessionId,
+                importSessionId = parseSessionId,
                 scriptName = scriptName,
                 success = false,
                 failureType = repairContext.failureType,
@@ -934,7 +985,7 @@ class ImportViewModel @Inject constructor(
     }
 
     private suspend fun buildParseReportPayload(
-        parseSessionId: String,
+        importSessionId: String,
         scriptName: String,
         success: Boolean,
         failureType: String?,
@@ -973,10 +1024,9 @@ class ImportViewModel @Inject constructor(
         }
         return ParseReportPayload(
             session = ParseSessionContext(
-                parseSessionId = parseSessionId,
+                importSessionId = importSessionId,
                 appVersionCode = getAppVersionCode(),
                 appVersionName = getAppVersionName(),
-                installBucketIdHash = getInstallBucketIdHash(),
                 importSource = ImportSourceType.WEBVIEW,
                 schoolId = schoolId,
                 schoolName = schoolName,
@@ -991,7 +1041,7 @@ class ImportViewModel @Inject constructor(
             failureStage = failureStage,
             repairDomain = repairDomain,
             targetType = targetType,
-            sourceUrl = sourceUrl,
+            sourceUrl = extractSourceOrigin(sourceUrl),
             classificationHint = buildMap {
                 put("scriptName", scriptName)
                 put("schoolSystemType", schoolSystemType)
@@ -1075,7 +1125,16 @@ class ImportViewModel @Inject constructor(
      */
     private fun requestLlmConsent(raw: String, repairContext: LlmRepairContext): Boolean {
         val sourceUrl = _uiState.value.webUrl
-        val sanitized = sanitizeHtmlForLlm(raw)
+        val sanitized = runCatching { sanitizeHtmlForLlm(raw) }.getOrElse {
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    parsePipelineStage = ParsePipelineStage.CLOUD_FAILED,
+                    resultText = "页面内容超过安全处理上限，未保存或上传诊断内容。"
+                )
+            }
+            return false
+        }
         if (sanitized.isBlank()) return false
         pendingLlmContent = sanitized
         pendingLlmRepairContext = repairContext
@@ -1259,8 +1318,14 @@ class ImportViewModel @Inject constructor(
      * 用户取消云端解析上传
      */
     fun cancelLlmConsent() {
+        val leavingSessionId = currentParseSessionId.takeIf { it.isNotBlank() }
         pendingLlmContent = ""
         pendingLlmRepairContext = LlmRepairContext()
+        if (leavingSessionId != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                diagnosticSampleRepository.clearRawForSession(leavingSessionId)
+            }
+        }
         _uiState.update {
             it.copy(
                 showLlmConsentDialog = false,
@@ -1354,6 +1419,110 @@ class ImportViewModel @Inject constructor(
         return runCatching { URI(sourceUrl).host }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * 捕获本次导入默认落点。该函数由页面首次进入调用，之后 Profile 切换不会重定向已开始的导入。
+     */
+    fun beginImport(targetProfileId: Long? = null) {
+        if (_uiState.value.destination != null) return
+        viewModelScope.launch {
+            val active = timetableProfileRepository.observeActiveContext().first()
+                ?: run {
+                    _uiState.update { it.copy(resultText = "无法确定导入目标课表") }
+                    return@launch
+                }
+            val profiles = timetableProfileRepository.observeProfiles().first()
+            val capturedProfile = targetProfileId?.let { requestedId ->
+                profiles.firstOrNull { it.id == requestedId }
+            } ?: active.profile
+            if (targetProfileId != null && capturedProfile.id != targetProfileId) {
+                _uiState.update { it.copy(resultText = "指定课表不存在，无法导入") }
+                return@launch
+            }
+            val targets = profiles.map { profile ->
+                ImportProfileTarget(
+                    profileId = profile.id,
+                    profileName = profile.name,
+                    semesters = timetableProfileRepository.observeSemesters(profile.id).first().map { semester ->
+                        ImportSemesterTarget(semester.id, semester.name)
+                    },
+                )
+            }
+            _uiState.update {
+                it.copy(
+                    capturedProfileId = capturedProfile.id,
+                    destination = ImportDestination.NewSemester(capturedProfile.id),
+                    profileTargets = targets,
+                )
+            }
+        }
+    }
+
+    /** 选择“在指定课表中新建学期”；此处仅变更暂存目标。 */
+    fun selectNewSemesterDestination(profileId: Long) {
+        if (_uiState.value.profileTargets.none { it.profileId == profileId }) return
+        _uiState.update { it.copy(destination = ImportDestination.NewSemester(profileId), pendingOverwriteImpact = null) }
+    }
+
+    /** 选择“新建独立课表”。 */
+    fun selectNewProfileDestination() {
+        _uiState.update { it.copy(destination = ImportDestination.NewProfile, pendingOverwriteImpact = null) }
+    }
+
+    /** 更新新建课表名称；名称校验由领域提交入口兜底。 */
+    fun updateNewProfileName(name: String) {
+        _uiState.update { it.copy(newProfileName = name) }
+    }
+
+    /** 选择明确的覆盖目标；跨 Profile 组合会在 UI 和 data 两层同时拒绝。 */
+    fun selectOverwriteDestination(profileId: Long, semesterId: Long) {
+        val semesterBelongsToProfile = _uiState.value.profileTargets
+            .firstOrNull { it.profileId == profileId }
+            ?.semesters
+            ?.any { it.semesterId == semesterId }
+            ?: false
+        if (!semesterBelongsToProfile) return
+        _uiState.update {
+            it.copy(
+                destination = ImportDestination.OverwriteSemester(profileId, semesterId),
+                pendingOverwriteImpact = null,
+            )
+        }
+    }
+
+    /** 点击导入时仅覆盖目标需要先展示量化影响并获得第二次确认。 */
+    fun requestImportConfirmation() {
+        viewModelScope.launch {
+            val request = buildCommitRequest() ?: return@launch
+            if (request.destination !is ImportDestination.OverwriteSemester) {
+                confirmImport()
+                return@launch
+            }
+            val impact = importCommitRepository.preview(request).getOrElse { error ->
+                _uiState.update { it.copy(resultText = "无法读取覆盖影响：${error.message.orEmpty()}") }
+                return@launch
+            }
+            _uiState.update { it.copy(pendingOverwriteImpact = impact) }
+        }
+    }
+
+    /** 取消覆盖确认，不会改变解析结果或已捕获导入目标。 */
+    fun dismissOverwriteConfirmation() {
+        _uiState.update { it.copy(pendingOverwriteImpact = null) }
+    }
+
+    /** 诊断上传仅保留来源 origin，移除可能含账号或 token 的路径与查询参数。 */
+    private fun extractSourceOrigin(sourceUrl: String): String? {
+        return runCatching {
+            val uri = URI(sourceUrl)
+            val scheme = uri.scheme?.lowercase().orEmpty()
+            val host = uri.host?.lowercase().orEmpty()
+            require((scheme == "http" || scheme == "https") && host.isNotBlank())
+            val isDefaultPort = (scheme == "https" && uri.port == 443) || (scheme == "http" && uri.port == 80)
+            val port = uri.port.takeIf { value -> value > 0 && !isDefaultPort }?.let { value -> ":$value" }.orEmpty()
+            "$scheme://$host$port"
+        }.getOrNull()
+    }
+
     private fun extractPathPattern(sourceUrl: String): String? {
         return runCatching {
             URI(sourceUrl).path
@@ -1417,19 +1586,6 @@ class ImportViewModel @Inject constructor(
         }
     }
 
-    private fun getInstallBucketIdHash(): String {
-        val preferences = application.getSharedPreferences("script_runtime", android.content.Context.MODE_PRIVATE)
-        val existing = preferences.getString("install_bucket_id", null)
-        val bucketId = if (!existing.isNullOrBlank()) {
-            existing
-        } else {
-            UUID.randomUUID().toString().also { created ->
-                preferences.edit().putString("install_bucket_id", created).apply()
-            }
-        }
-        return hashSha256(bucketId)
-    }
-
     private fun hashSha256(content: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
@@ -1440,45 +1596,11 @@ class ImportViewModel @Inject constructor(
      *
      * 规则：
      * 1. 替换学号、姓名、手机号、身份证、邮箱等字段
-     * 2. 优先抽取纯文本以减少隐私暴露范围
+     * 2. 保留解析器诊断所需的页面与表格结构
      * 3. 不截断内容，确保用户同意后可完整上传
      */
     private fun sanitizeHtmlForLlm(raw: String): String {
-        var text = raw
-        text = text.replace(Regex("(?is)<script\\b[^>]*>(.*?)</script>"), "<script>***</script>")
-        text = text.replace(Regex("(?is)<style\\b[^>]*>(.*?)</style>"), "<style>***</style>")
-        text = text.replace(Regex("(?i)(password|passwd|pwd|mm|hidMm|token|csrf|session(id)?)\\s*=\\s*['\"][^'\"]{1,}['\"]"), "$1=\"***\"")
-        text = text.replace(Regex("(?i)(token|csrf|session(id)?)\\s*[:=]\\s*['\"]?[A-Za-z0-9_\\-\\.]{6,}['\"]?"), "$1=***")
-        text = text.replace(Regex("(?i)(学号|学籍号|账号|用户名|用户号)\\s*[:：]?\\s*\\w{4,}"), "\$1:***")
-        text = text.replace(Regex("(?i)(姓名)\\s*[:：]?\\s*[\\u4e00-\\u9fa5A-Za-z·\\s]{2,}"), "\$1:***")
-        text = text.replace(Regex("\\b\\d{17}[0-9Xx]\\b"), "******************")
-        text = text.replace(Regex("\\b1[3-9]\\d{9}\\b"), "***********")
-        text = text.replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "***@***")
-        val structuralSummary = buildTimetableStructureSummary(raw)
-        return if (structuralSummary.isBlank()) text else "$text\n\n$structuralSummary"
-    }
-
-    private fun buildTimetableStructureSummary(raw: String): String {
-        val tableMatches = Regex("(?is)<table\\b[^>]*>(.*?)</table>").findAll(raw).toList()
-        if (tableMatches.isEmpty()) return ""
-        val lines = mutableListOf<String>()
-        lines.add("[TIMETABLE_STRUCTURE]")
-        tableMatches.take(4).forEachIndexed { index, match ->
-            val tableHtml = match.groupValues.getOrNull(1).orEmpty()
-            val rowCount = Regex("(?is)<tr\\b").findAll(tableHtml).count()
-            val headerCells = Regex("(?is)<th\\b[^>]*>(.*?)</th>")
-                .findAll(tableHtml)
-                .mapNotNull { it.groupValues.getOrNull(1) }
-                .map { it.replace(Regex("(?is)<[^>]+>"), "").replace(Regex("\\s+"), " ").trim() }
-                .filter { it.isNotBlank() }
-                .take(12)
-                .toList()
-            lines.add("table_${index + 1}: rows=$rowCount")
-            if (headerCells.isNotEmpty()) {
-                lines.add("table_${index + 1}_headers=${headerCells.joinToString("|")}")
-            }
-        }
-        return lines.joinToString("\n")
+        return DiagnosticHtmlSanitizer.sanitize(raw).content
     }
 
     /**
@@ -1596,68 +1718,103 @@ class ImportViewModel @Inject constructor(
      * 将解析后的课程数据、学期设置和时间表设置保存到数据库。
      * 核心逻辑：
      * 1. 根据设置更新全局时间配置 (MaxDailySections, SectionTimes)
-     * 2. 创建并保存新学期 (Room DB)
-     * 3. 同步更新 AppSettings (DataStore)，确保设置页面数据一致性
-     * 4. 保存所有课程数据
-     * 5. 发送广播通知 Widget 更新
+     * 2. 通过 ImportCommitRepository 在单个 Room transaction 中写入目标 Profile、学期与课程
+     * 3. 提交成功后再保存全局作息时间设置
+     * 4. 发送广播通知 Widget 更新
      */
     fun confirmImport() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
                 val state = _uiState.value
-                
-                // 1. 更新全局时间设置
-                settingsRepository.setMaxDailySections(state.detectedMaxSection)
-                
-                // 1.1 使用当前状态中的作息时间表（如果为空则重新生成默认值作为兜底）
-                val finalTimes = if (state.sectionTimes.isNotEmpty()) {
-                    state.sectionTimes
-                } else {
-                    generateDefaultSectionTimes(state, state.detectedMaxSection)
+                val request = buildCommitRequest() ?: run {
+                    _uiState.update { it.copy(isLoading = false) }
+                    return@launch
                 }
-                settingsRepository.setSectionTimes(finalTimes)
-                
-                // 1.2 设置默认课程时长 (取解析结果中的众数，增强智能性)
-                val mostFrequentDuration = state.parsedCourses
-                    .groupingBy { it.duration }
-                    .eachCount()
-                    .maxByOrNull { it.value }
-                    ?.key
-                    ?: 2
-                val safeDefaultDuration = mostFrequentDuration.coerceIn(1, 4)
-                settingsRepository.setDefaultCourseDuration(safeDefaultDuration)
-                
-                courseRepository.deleteAllCourses()
-                semesterRepository.deleteAllSemesters()
+                val commit = importCommitRepository.commit(request)
+                when (commit) {
+                    is ImportCommitResult.Rejected -> {
+                        _uiState.update { it.copy(isLoading = false, resultText = "导入失败：${commit.reason}") }
+                        return@launch
+                    }
 
-                val newSemester = Semester(
-                    name = "导入学期 ${LocalDate.now()}",
-                    startDate = state.semesterStartDate,
-                    weekCount = state.weekCount,
-                    isCurrent = true
-                )
-                val semesterId = semesterRepository.insertSemester(newSemester)
-                
-                settingsRepository.setCurrentSemesterName(newSemester.name)
-                settingsRepository.setStartDateTimestamp(newSemester.startDate)
-                settingsRepository.setTotalWeeks(newSemester.weekCount)
-                
-                val domainCourses = state.parsedCourses.map { parsed ->
-                    parsed.toDomainCourse().copy(semesterId = semesterId)
+                    is ImportCommitResult.Inconsistent -> {
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                resultText = "导入状态不一致：${commit.reason}。请从备份或 WebDAV 恢复后再继续。",
+                            )
+                        }
+                        return@launch
+                    }
+
+                    is ImportCommitResult.Success -> Unit
                 }
-                courseRepository.insertCourses(domainCourses)
+
+                // 课表已先原子写入；全局作息设置若失败必须明确告知，不能伪装成整次失败。
+                try {
+                    applyGlobalImportSettings(state)
+                } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                    throw cancellation
+                } catch (settingsFailure: Throwable) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            pendingOverwriteImpact = null,
+                            resultText = "课程已导入，但全局作息设置未完全保存：${settingsFailure.message.orEmpty()}",
+                        )
+                    }
+                    return@launch
+                }
                 
                 val intent = android.content.Intent("com.dawncourse.widget.FORCE_UPDATE")
                 intent.setPackage(application.packageName)
                 application.sendBroadcast(intent)
                 
-                _uiState.update { it.copy(isLoading = false, resultText = "导入成功！") }
+                _uiState.update { it.copy(isLoading = false, pendingOverwriteImpact = null, resultText = "导入成功！") }
                 _events.emit(ImportEvent.Success)
+            } catch (cancellation: kotlinx.coroutines.CancellationException) {
+                throw cancellation
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, resultText = "导入失败: ${e.message}") }
             }
         }
+    }
+
+    /** 构建提交时再次从 state 读取已捕获落点，不查询“当前活动 Profile”。 */
+    private fun buildCommitRequest(): ImportCommitRequest? {
+        val state = _uiState.value
+        val destination = state.destination ?: run {
+            _uiState.update { it.copy(resultText = "导入目标尚未准备完成") }
+            return null
+        }
+        return ImportCommitRequest(
+            destination = destination,
+            semester = NewSemesterSpec(
+                name = "导入学期 ${LocalDate.now()}",
+                startDate = state.semesterStartDate,
+                weekCount = state.weekCount,
+            ),
+            courses = state.parsedCourses.map { it.toDomainCourse() },
+            newProfileName = state.newProfileName,
+        )
+    }
+
+    /** 仅在 Room 提交成功后写入全局节次设置。 */
+    private suspend fun applyGlobalImportSettings(state: ImportUiState) {
+        settingsRepository.setMaxDailySections(state.detectedMaxSection)
+        val finalTimes = state.sectionTimes.ifEmpty {
+            generateDefaultSectionTimes(state, state.detectedMaxSection)
+        }
+        settingsRepository.setSectionTimes(finalTimes)
+        val defaultDuration = state.parsedCourses
+            .groupingBy { it.duration }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            ?.coerceIn(1, 4)
+            ?: 2
+        settingsRepository.setDefaultCourseDuration(defaultDuration)
     }
 
     // 保留旧版入口以供手动文本测试

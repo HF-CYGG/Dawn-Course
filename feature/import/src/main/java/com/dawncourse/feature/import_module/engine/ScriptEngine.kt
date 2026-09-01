@@ -9,13 +9,17 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import java.io.File
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -56,6 +60,8 @@ class ScriptEngine @Inject constructor(
         )
 
         private const val SERVICE_BIND_TIMEOUT_MS: Long = 5_000L
+        private const val SERVICE_TERMINATION_TIMEOUT_MS: Long = 1_000L
+        private const val DEFAULT_PIPE_BUFFER_BYTES: Int = 8 * 1024
 
         internal fun failureResult(errorCode: String, message: String) = ScriptExecutionResult(
             raw = "",
@@ -67,6 +73,10 @@ class ScriptEngine @Inject constructor(
             entryUsed = "",
             contractVersion = SUPPORTED_CONTRACT_VERSION
         )
+
+        /** 未知 Binder/IPC 故障统一映射，避免协议泄露供应商异常类名、堆栈或脚本内容。 */
+        internal fun unexpectedRuntimeFailureResult(): ScriptExecutionResult =
+            failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime failed")
     }
 
     data class ScriptExecutionResult(
@@ -88,6 +98,11 @@ class ScriptEngine @Inject constructor(
 
     private val appContext = context.applicationContext
     private val executionMutex = Mutex()
+
+    init {
+        // 仅删除旧版本精确命名的 raw IPC 文件；新实现全程仅使用匿名 Pipe。
+        LegacyScriptRuntimeFileCleanup.clear(appContext.cacheDir)
+    }
 
     @Volatile
     internal var lastRuntimeProcessId: Int = 0
@@ -144,17 +159,36 @@ class ScriptEngine @Inject constructor(
 
     private suspend fun executeRemote(
         request: ScriptRuntimeRequest
-    ): ScriptExecutionResult {
-        val runtimeDir = File(appContext.cacheDir, "script_runtime").apply { mkdirs() }
-        val requestFile = File.createTempFile("request-", ".json", runtimeDir)
-        val responseFile = File.createTempFile("response-", ".json", runtimeDir)
-        requestFile.writeText(request.toJson(), Charsets.UTF_8)
-
+    ): ScriptExecutionResult = coroutineScope {
+        val requestPipe = ParcelFileDescriptor.createPipe()
+        val responsePipe = ParcelFileDescriptor.createPipe()
+        val requestRead = requestPipe[0]
+        val requestWrite = requestPipe[1]
+        val responseRead = responsePipe[0]
+        val responseWrite = responsePipe[1]
+        val requestBytes = request.toJson().toByteArray(Charsets.UTF_8)
         val completion = CompletableDeferred<Unit>()
         val connected = CompletableDeferred<Int>()
+        val runtimeDied = CompletableDeferred<Unit>()
+        val gate = ScriptRuntimeExecutionGate()
         var bound = false
-        var executionStarted = false
         val remoteProcessId = AtomicInteger(0)
+        val requestWriter = async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            runCatching {
+                ParcelFileDescriptor.AutoCloseOutputStream(requestWrite).use { output ->
+                    output.write(requestBytes)
+                    output.flush()
+                }
+            }.fold(
+                onSuccess = { PipeWriteResult.Complete },
+                onFailure = { PipeWriteResult.Failed }
+            )
+        }
+        val responseReader = async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            runCatching {
+                readPipeAtMost(responseRead, ScriptRuntimeLimits.MAX_RESULT_BYTES)
+            }.getOrElse { PipeReadResult.Failed }
+        }
         val callback = object : IScriptRuntimeCallback.Stub() {
             override fun onComplete() {
                 completion.complete(Unit)
@@ -164,24 +198,31 @@ class ScriptEngine @Inject constructor(
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 runCatching {
                     val runtime = IScriptRuntime.Stub.asInterface(binder)
-                    remoteProcessId.set(runtime.processId)
-                    lastRuntimeProcessId = remoteProcessId.get()
-                    connected.complete(remoteProcessId.get())
+                    val processId = runtime.processId
+                    remoteProcessId.set(processId)
+                    lastRuntimeProcessId = processId
                     binder?.linkToDeath(
-                        { completion.completeExceptionally(IllegalStateException("script runtime died")) },
+                        {
+                            runtimeDied.complete(Unit)
+                            completion.completeExceptionally(IllegalStateException("script runtime died"))
+                        },
                         0
                     )
-                    ParcelFileDescriptor.open(
-                        requestFile,
-                        ParcelFileDescriptor.MODE_READ_ONLY
-                    ).use { requestDescriptor ->
-                        ParcelFileDescriptor.open(
-                            responseFile,
-                            ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_TRUNCATE
-                        ).use { responseDescriptor ->
-                            runtime.execute(requestDescriptor, responseDescriptor, callback)
+                    val decision = gate.onConnected(processId)
+                    if (decision.shouldSubmit && !gate.isCancelled()) {
+                        responseReader.start()
+                        requestWriter.start()
+                        try {
+                            runtime.execute(requestRead, responseWrite, callback)
+                        } finally {
+                            // Binder 已复制 descriptor；本地端必须关闭，才能把 Pipe EOF 交给服务端。
+                            runCatching { requestRead.close() }
+                            runCatching { responseWrite.close() }
                         }
+                    } else {
+                        killRuntimeProcess(decision.processIdToReclaim)
                     }
+                    connected.complete(processId)
                 }.onFailure { error ->
                     connected.completeExceptionally(error)
                     completion.completeExceptionally(error)
@@ -189,12 +230,14 @@ class ScriptEngine @Inject constructor(
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
+                runtimeDied.complete(Unit)
                 val error = IllegalStateException("script runtime disconnected")
                 connected.completeExceptionally(error)
                 completion.completeExceptionally(error)
             }
 
             override fun onBindingDied(name: ComponentName?) {
+                runtimeDied.complete(Unit)
                 val error = IllegalStateException("script runtime binding died")
                 connected.completeExceptionally(error)
                 completion.completeExceptionally(error)
@@ -207,39 +250,103 @@ class ScriptEngine @Inject constructor(
             }
         }
 
-        return try {
+        fun unbindIfNeeded() {
+            if (bound) {
+                bound = false
+                runCatching { appContext.unbindService(connection) }
+            }
+        }
+
+        try {
             bound = appContext.bindService(
                 Intent(appContext, ScriptRuntimeService::class.java),
                 connection,
                 Context.BIND_AUTO_CREATE
             )
             if (!bound) {
-                return failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding failed")
-            }
-            withTimeout(SERVICE_BIND_TIMEOUT_MS) { connected.await() }
-            executionStarted = true
-            withTimeout(request.timeoutMillis) { completion.await() }
-            val responseSize = responseFile.length().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            if (!ScriptRuntimeLimits.isResultSizeValid(responseSize)) {
-                failureResult(ERROR_RESULT_TOO_LARGE, "script result exceeds limit")
+                failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding failed")
             } else {
-                scriptExecutionResultFromJson(responseFile.readText(Charsets.UTF_8))
+                withTimeout(SERVICE_BIND_TIMEOUT_MS) { connected.await() }
+                val result = withTimeout(request.timeoutMillis) {
+                    completion.await()
+                    when (requestWriter.await()) {
+                        PipeWriteResult.Failed -> failureResult(
+                            ERROR_SCRIPT_EXCEPTION,
+                            "script runtime request pipe failed"
+                        )
+                        PipeWriteResult.Complete -> when (val response = responseReader.await()) {
+                            is PipeReadResult.Complete -> scriptExecutionResultFromJson(response.text)
+                            PipeReadResult.TooLarge -> failureResult(
+                                ERROR_RESULT_TOO_LARGE,
+                                "script result exceeds limit"
+                            )
+                            PipeReadResult.Failed -> failureResult(
+                                ERROR_SCRIPT_EXCEPTION,
+                                "script runtime response pipe failed"
+                            )
+                        }
+                    }
+                }
+                result
             }
         } catch (_: TimeoutCancellationException) {
-            if (executionStarted) {
-                killRuntimeProcess(remoteProcessId.get())
+            val processId = gate.cancelAndGetProcessId()
+            killRuntimeProcess(processId)
+            unbindIfNeeded()
+            awaitRuntimeTermination(runtimeDied, processId)
+            if (processId > 0 || remoteProcessId.get() > 0) {
                 failureResult(ERROR_TIMEOUT, "script execution exceeded process budget")
             } else {
                 failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding timed out")
             }
-        } catch (error: Throwable) {
-            failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime failed: ${error.javaClass.simpleName}")
+        } catch (_: Throwable) {
+            val processId = gate.cancelAndGetProcessId()
+            killRuntimeProcess(processId)
+            unbindIfNeeded()
+            awaitRuntimeTermination(runtimeDied, processId)
+            unexpectedRuntimeFailureResult()
         } finally {
-            if (bound) {
-                runCatching { appContext.unbindService(connection) }
+            unbindIfNeeded()
+            requestWriter.cancel()
+            responseReader.cancel()
+            runCatching { requestRead.close() }
+            runCatching { requestWrite.close() }
+            runCatching { responseRead.close() }
+            runCatching { responseWrite.close() }
+        }
+    }
+
+    /** 强杀只负责发信号；等待 Binder death 后再允许下一次绑定，规避 OEM 进程回收竞态。 */
+    private suspend fun awaitRuntimeTermination(
+        runtimeDied: CompletableDeferred<Unit>,
+        processId: Int
+    ) {
+        if (processId <= 0) return
+        withTimeoutOrNull(SERVICE_TERMINATION_TIMEOUT_MS) {
+            runtimeDied.await()
+        }
+    }
+
+    /** 限制匿名响应 Pipe 的总字节数，超限时关闭读端让远端写入尽快失败。 */
+    private fun readPipeAtMost(
+        descriptor: ParcelFileDescriptor,
+        maxBytes: Int
+    ): PipeReadResult {
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(DEFAULT_PIPE_BUFFER_BYTES)
+            while (true) {
+                val remaining = maxBytes - output.size()
+                val readLimit = (remaining + 1).coerceAtMost(buffer.size)
+                val count = input.read(buffer, 0, readLimit)
+                if (count < 0) {
+                    return PipeReadResult.Complete(output.toString(Charsets.UTF_8.name()))
+                }
+                if (count > remaining) {
+                    return PipeReadResult.TooLarge
+                }
+                output.write(buffer, 0, count)
             }
-            requestFile.delete()
-            responseFile.delete()
         }
     }
 
@@ -249,4 +356,17 @@ class ScriptEngine @Inject constructor(
             Process.killProcess(processId)
         }
     }
+
+    private sealed interface PipeReadResult {
+        data class Complete(val text: String) : PipeReadResult
+        data object TooLarge : PipeReadResult
+        data object Failed : PipeReadResult
+    }
+
+    /** Pipe 写端错误由主流程统一映射，避免 async 子任务取消整个超时控制协程。 */
+    private sealed interface PipeWriteResult {
+        data object Complete : PipeWriteResult
+        data object Failed : PipeWriteResult
+    }
+
 }

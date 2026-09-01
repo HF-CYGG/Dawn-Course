@@ -4,13 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -25,8 +27,10 @@ import javax.inject.Inject
  * 4. 执行调课（课程分裂与新记录插入）
  */
 @HiltViewModel
+@OptIn(ExperimentalCoroutinesApi::class)
 class CourseRescheduleViewModel @Inject constructor(
-    private val repository: CourseRepository
+    private val repository: CourseRepository,
+    private val timetableProfileRepository: TimetableProfileRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RescheduleUiState())
@@ -36,7 +40,24 @@ class CourseRescheduleViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            repository.getAllCourses().collect { courses ->
+            timetableProfileRepository.observeActiveContext().collect { context ->
+                _uiState.update { state ->
+                    val isCapturedScopeStillActive = state.capturedProfileId == null ||
+                        (context?.profile?.id == state.capturedProfileId &&
+                            context?.semester?.id == state.capturedSemesterId)
+                    state.copy(
+                        semesterWeekCount = context?.semester?.weekCount ?: DEFAULT_SEMESTER_WEEK_COUNT,
+                        scopeInvalidated = !isCapturedScopeStillActive
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            timetableProfileRepository.observeActiveContext().flatMapLatest { context ->
+                context?.semester?.let { semester ->
+                    repository.getCoursesBySemester(semester.id)
+                } ?: flowOf(emptyList())
+            }.collect { courses ->
                 allCourses = courses
                 recalculateConflicts()
             }
@@ -45,8 +66,11 @@ class CourseRescheduleViewModel @Inject constructor(
 
     fun loadCourse(courseId: Long) {
         viewModelScope.launch {
+            val activeContext = timetableProfileRepository.observeActiveContext().first()
+            val activeProfileId = activeContext?.profile?.id
+            val activeSemester = activeContext?.semester
             val course = repository.getCourseById(courseId)
-            if (course != null) {
+            if (course != null && activeProfileId != null && activeSemester?.id == course.semesterId) {
                 // 计算当前课程的所有周次
                 val allWeeks = calculateWeeks(course)
                 _uiState.update { 
@@ -57,7 +81,10 @@ class CourseRescheduleViewModel @Inject constructor(
                         selectedWeeks = emptySet(),
                         newDay = course.dayOfWeek,
                         newStartNode = course.startSection,
-                        newLocation = course.location
+                        newLocation = course.location,
+                        capturedProfileId = activeProfileId,
+                        capturedSemesterId = activeSemester.id,
+                        scopeInvalidated = false
                     )
                 }
             }
@@ -322,6 +349,11 @@ class CourseRescheduleViewModel @Inject constructor(
         if (selected.isEmpty() || target.isEmpty()) return
         
         viewModelScope.launch {
+            if (state.scopeInvalidated || !isCapturedScopeStillActive(state)) {
+                // 调课面板属于旧课表时直接关闭，避免用户误以为改动会落到当前新课表。
+                onComplete()
+                return@launch
+            }
             // 1. 计算原课程剩余的周次 (Total - Selected)
             val remainingWeeks = state.availableWeeks - selected
             
@@ -348,30 +380,41 @@ class CourseRescheduleViewModel @Inject constructor(
                 )
             }
 
-            // 5. 执行数据库更新事务
-            // 删除旧记录
-            repository.deleteCourse(original)
-            
-            // 插入剩余的旧周次片段
-            remainingSegments.forEach { (start, end, type) ->
-                repository.insertCourse(
-                    original.copy(
-                        id = 0,
-                        startWeek = start,
-                        endWeek = end,
-                        weekType = type,
-                        originId = originId
-                    )
+            val remainingCourses = remainingSegments.map { (start, end, type) ->
+                original.copy(
+                    id = 0,
+                    startWeek = start,
+                    endWeek = end,
+                    weekType = type,
+                    originId = originId
                 )
             }
-            
-            // 插入新的调课记录
-            newSegments.forEach {
-                repository.insertCourse(it)
+
+            // 5. 最后一刻复核范围，并用已有原子保存接口一次性替换旧课程。
+            if (!isCapturedScopeStillActive(state)) {
+                onComplete()
+                return@launch
             }
-            
-            onComplete()
+            val capturedProfileId = state.capturedProfileId ?: return@launch onComplete()
+            val capturedSemesterId = state.capturedSemesterId ?: return@launch onComplete()
+            when (repository.saveCoursesIfScopeActive(
+                profileId = capturedProfileId,
+                semesterId = capturedSemesterId,
+                courses = remainingCourses + newSegments,
+                editingCourseId = original.id,
+            )) {
+                CourseRepository.AtomicSaveResult.Success -> onComplete()
+                is CourseRepository.AtomicSaveResult.Rejected -> onComplete()
+            }
         }
+    }
+
+    /** 调课会话只能提交到打开面板时捕获的活动 Profile 与 Semester。 */
+    private suspend fun isCapturedScopeStillActive(state: RescheduleUiState): Boolean {
+        val profileId = state.capturedProfileId ?: return false
+        val semesterId = state.capturedSemesterId ?: return false
+        val activeContext = timetableProfileRepository.observeActiveContext().first() ?: return false
+        return activeContext.profile.id == profileId && activeContext.semester?.id == semesterId
     }
     
     /**
@@ -428,6 +471,11 @@ class CourseRescheduleViewModel @Inject constructor(
         }
         return segments.sortedBy { it.first }
     }
+
+    companion object {
+        /** 当前学期尚未加载时的安全展示周数。 */
+        private const val DEFAULT_SEMESTER_WEEK_COUNT = 20
+    }
 }
 
 /**
@@ -444,6 +492,8 @@ class CourseRescheduleViewModel @Inject constructor(
  * @property conflictWeeks 与其他课程存在时间冲突的周次集合
  */
 data class RescheduleUiState(
+    /** Room 当前学期的总周数。 */
+    val semesterWeekCount: Int = 20,
     val originalCourse: Course? = null,
     val availableWeeks: Set<Int> = emptySet(),
     val selectedWeeks: Set<Int> = emptySet(),
@@ -452,6 +502,10 @@ data class RescheduleUiState(
     val newStartNode: Int = 1,
     val newLocation: String = "",
     val note: String = "",
+    /** 打开调课面板时冻结的作用域，切换课表后本次编辑必须失效。 */
+    val capturedProfileId: Long? = null,
+    val capturedSemesterId: Long? = null,
+    val scopeInvalidated: Boolean = false,
     val conflictInfo: ConflictInfo = ConflictInfo()
 )
 

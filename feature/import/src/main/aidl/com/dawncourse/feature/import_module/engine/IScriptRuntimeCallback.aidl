@@ -1,5 +1,5 @@
 package com.dawncourse.feature.import_module.engine;
 
-oneway interface IScriptRuntimeCallback {
+interface IScriptRuntimeCallback {
     void onComplete();
 }

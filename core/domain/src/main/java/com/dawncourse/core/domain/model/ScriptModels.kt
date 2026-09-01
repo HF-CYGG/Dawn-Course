@@ -1,17 +1,6 @@
 package com.dawncourse.core.domain.model
 
 /**
- * Cloud script manifest returned by the script registry.
- */
-data class ScriptManifest(
-    val manifestVersion: Int,
-    val generatedAt: Long,
-    val minClientVersionCode: Long,
-    val scripts: List<RemoteScriptDescriptor>,
-    val signature: String
-)
-
-/**
  * Descriptor for one remotely published script.
  */
 data class RemoteScriptDescriptor(

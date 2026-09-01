@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.edit
@@ -37,7 +38,8 @@ import javax.inject.Singleton
  *
  * 统一使用 Preferences DataStore 存储简单配置。
  */
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+/** 全部设置与运行时选择共用同一个 DataStore 实例，避免同一文件被重复打开。 */
+internal val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 /**
  * 设置数据仓库的实现类
@@ -50,7 +52,7 @@ class SettingsRepositoryImpl @Inject constructor(
 ) : SettingsRepository {
 
     /** DataStore 实例 */
-    private val dataStore = context.dataStore
+    private val dataStore = context.settingsDataStore
 
     /**
      * DataStore Key 集合
@@ -103,12 +105,6 @@ class SettingsRepositoryImpl @Inject constructor(
         val HIDE_NON_THIS_WEEK = booleanPreferencesKey("hide_non_this_week")
         /** 表头显示日期 */
         val SHOW_DATE_IN_HEADER = booleanPreferencesKey("show_date_in_header")
-        /** 当前学期名称（缓存） */
-        val CURRENT_SEMESTER_NAME = stringPreferencesKey("current_semester_name")
-        /** 当前学期总周数（缓存） */
-        val TOTAL_WEEKS = intPreferencesKey("total_weeks")
-        /** 当前学期开始时间戳（缓存） */
-        val START_DATE_TIMESTAMP = androidx.datastore.preferences.core.longPreferencesKey("start_date_timestamp")
         /** 是否启用上课提醒 */
         val ENABLE_CLASS_REMINDER = booleanPreferencesKey("enable_class_reminder")
         /** 提前提醒分钟数 */
@@ -137,6 +133,23 @@ class SettingsRepositoryImpl @Inject constructor(
         val BACKGROUND_BLUR = floatPreferencesKey("background_blur")
         /** 背景亮度 */
         val BACKGROUND_BRIGHTNESS = floatPreferencesKey("background_brightness")
+    }
+
+    /** 当前学期选择单键协议。 */
+    private val semesterSelectionStore = SemesterSelectionStore(dataStore)
+
+    override val selectedSemesterId: Flow<Long?> = semesterSelectionStore.selectedSemesterId
+
+    override suspend fun selectSemester(id: Long) {
+        semesterSelectionStore.selectSemester(id)
+    }
+
+    override suspend fun clearSelectedSemester() {
+        semesterSelectionStore.clearSelection()
+    }
+
+    override suspend fun initializeSelectedSemesterIfUnset(legacyId: Long?) {
+        semesterSelectionStore.initializeIfUnset(legacyId)
     }
 
     /**
@@ -200,9 +213,6 @@ class SettingsRepositoryImpl @Inject constructor(
         val showSidebarIndex = preferences[PreferencesKeys.SHOW_SIDEBAR_INDEX] ?: true
         val hideNonThisWeek = preferences[PreferencesKeys.HIDE_NON_THIS_WEEK] ?: false
         val showDateInHeader = preferences[PreferencesKeys.SHOW_DATE_IN_HEADER] ?: false
-        val currentSemesterName = preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] ?: "2025年春季学期"
-        val totalWeeks = preferences[PreferencesKeys.TOTAL_WEEKS] ?: 20
-        val startDateTimestamp = preferences[PreferencesKeys.START_DATE_TIMESTAMP] ?: 0L
         val enableClassReminder = preferences[PreferencesKeys.ENABLE_CLASS_REMINDER] ?: false
         val reminderMinutes = preferences[PreferencesKeys.REMINDER_MINUTES] ?: 10
         val enablePersistentNotification = preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] ?: false
@@ -249,9 +259,6 @@ class SettingsRepositoryImpl @Inject constructor(
             showSidebarIndex = showSidebarIndex,
             hideNonThisWeek = hideNonThisWeek,
             showDateInHeader = showDateInHeader,
-            currentSemesterName = currentSemesterName,
-            totalWeeks = totalWeeks,
-            startDateTimestamp = startDateTimestamp,
             enableClassReminder = enableClassReminder,
             reminderMinutes = reminderMinutes,
             enablePersistentNotification = enablePersistentNotification,
@@ -456,27 +463,6 @@ class SettingsRepositoryImpl @Inject constructor(
     }
 
     /**
-     * 设置当前学期名称（缓存）
-     */
-    override suspend fun setCurrentSemesterName(name: String) {
-        dataStore.edit { it[PreferencesKeys.CURRENT_SEMESTER_NAME] = name }
-    }
-
-    /**
-     * 设置当前学期总周数（缓存）
-     */
-    override suspend fun setTotalWeeks(weeks: Int) {
-        dataStore.edit { it[PreferencesKeys.TOTAL_WEEKS] = weeks }
-    }
-
-    /**
-     * 设置当前学期开始时间戳（缓存）
-     */
-    override suspend fun setStartDateTimestamp(timestamp: Long) {
-        dataStore.edit { it[PreferencesKeys.START_DATE_TIMESTAMP] = timestamp }
-    }
-
-    /**
      * 设置是否启用上课提醒
      */
     override suspend fun setEnableClassReminder(enable: Boolean) {
@@ -487,7 +473,11 @@ class SettingsRepositoryImpl @Inject constructor(
      * 清空所有设置
      */
     override suspend fun clearAllSettings() {
-        dataStore.edit { it.clear() }
+        dataStore.edit { preferences ->
+            SemesterSelectionStore.preserveSelection(preferences) {
+                clear()
+            }
+        }
     }
 
     /**
@@ -607,69 +597,73 @@ class SettingsRepositoryImpl @Inject constructor(
      * 用于云端恢复场景，一次性写入所有字段。
      */
     override suspend fun setAllSettings(settings: AppSettings) {
-        // 为跨模块属性提前解包，避免 smart cast 失效
-        val wallpaperUri = settings.wallpaperUri
-        val lastImportUrl = settings.lastImportUrl
-        val blurredWallpaperUri = settings.blurredWallpaperUri
         dataStore.edit { preferences ->
-            // 注意：一次性写入所有配置，确保恢复时不存在“部分更新”的中间态
-            preferences[PreferencesKeys.DYNAMIC_COLOR] = settings.dynamicColor
-            if (wallpaperUri == null) {
-                preferences.remove(PreferencesKeys.WALLPAPER_URI)
-            } else {
-                preferences[PreferencesKeys.WALLPAPER_URI] = wallpaperUri
+            SemesterSelectionStore.preserveSelection(preferences) {
+                writeAllSettings(settings)
             }
-            preferences[PreferencesKeys.TRANSPARENCY] = settings.transparency
-            preferences[PreferencesKeys.FONT_STYLE] = settings.fontStyle.name
-            preferences[PreferencesKeys.DIVIDER_TYPE] = settings.dividerType.name
-            preferences[PreferencesKeys.DIVIDER_WIDTH] = settings.dividerWidthDp
-            preferences[PreferencesKeys.DIVIDER_COLOR] = settings.dividerColor
-            preferences[PreferencesKeys.DIVIDER_ALPHA] = settings.dividerAlpha
-            preferences[PreferencesKeys.COURSE_ITEM_HEIGHT] = settings.courseItemHeightDp
-            preferences[PreferencesKeys.MAX_DAILY_SECTIONS] = settings.maxDailySections
-            preferences[PreferencesKeys.DEFAULT_COURSE_DURATION] = settings.defaultCourseDuration
-            val sectionTimes = settings.sectionTimes.joinToString("|") { "${it.startTime},${it.endTime}" }
-            preferences[PreferencesKeys.SECTION_TIMES] = sectionTimes
-            preferences[PreferencesKeys.CARD_CORNER_RADIUS] = settings.cardCornerRadius
-            preferences[PreferencesKeys.CARD_ALPHA] = settings.cardAlpha
-            preferences[PreferencesKeys.SHOW_COURSE_ICONS] = settings.showCourseIcons
-            preferences[PreferencesKeys.WALLPAPER_MODE] = settings.wallpaperMode.name
-            preferences[PreferencesKeys.THEME_MODE] = settings.themeMode.name
-            preferences[PreferencesKeys.SHOW_WEEKEND] = settings.showWeekend
-            preferences[PreferencesKeys.SHOW_SIDEBAR_TIME] = settings.showSidebarTime
-            preferences[PreferencesKeys.SHOW_SIDEBAR_INDEX] = settings.showSidebarIndex
-            preferences[PreferencesKeys.HIDE_NON_THIS_WEEK] = settings.hideNonThisWeek
-            preferences[PreferencesKeys.SHOW_DATE_IN_HEADER] = settings.showDateInHeader
-            preferences[PreferencesKeys.CURRENT_SEMESTER_NAME] = settings.currentSemesterName
-            preferences[PreferencesKeys.TOTAL_WEEKS] = settings.totalWeeks
-            preferences[PreferencesKeys.START_DATE_TIMESTAMP] = settings.startDateTimestamp
-            preferences[PreferencesKeys.ENABLE_CLASS_REMINDER] = settings.enableClassReminder
-            preferences[PreferencesKeys.REMINDER_MINUTES] = settings.reminderMinutes
-            preferences[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] = settings.enablePersistentNotification
-            preferences[PreferencesKeys.ENABLE_AUTO_MUTE] = settings.enableAutoMute
-            preferences[PreferencesKeys.ENABLE_WEBDAV_AUTO_SYNC] = settings.enableWebDavAutoSync
-            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_MODE] = settings.webDavAutoSyncMode.name
-            if (settings.webDavAutoSyncFixedAt <= 0L) {
-                preferences.remove(PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT)
-            } else {
-                preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT] = settings.webDavAutoSyncFixedAt
-            }
-            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_VALUE] = settings.webDavAutoSyncIntervalValue
-            preferences[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_UNIT] = settings.webDavAutoSyncIntervalUnit.name
-            preferences[PreferencesKeys.IGNORED_UPDATE_VERSION] = settings.ignoredUpdateVersion
-            if (lastImportUrl.isNullOrBlank()) {
-                preferences.remove(PreferencesKeys.LAST_IMPORT_URL)
-            } else {
-                preferences[PreferencesKeys.LAST_IMPORT_URL] = lastImportUrl
-            }
-            if (blurredWallpaperUri == null) {
-                preferences.remove(PreferencesKeys.BLURRED_WALLPAPER_URI)
-            } else {
-                preferences[PreferencesKeys.BLURRED_WALLPAPER_URI] = blurredWallpaperUri
-            }
-            preferences[PreferencesKeys.BACKGROUND_BLUR] = settings.backgroundBlur
-            preferences[PreferencesKeys.BACKGROUND_BRIGHTNESS] = settings.backgroundBrightness
         }
+    }
+
+    /** 单次 edit 同时写入设置与选择；DataStore 在 transform 成功前不会提交部分状态。 */
+    override suspend fun restoreAllSettingsAndSelection(
+        settings: AppSettings,
+        selectedSemesterId: Long?
+    ) {
+        require(selectedSemesterId == null || selectedSemesterId > 0L) {
+            "selected semester id must be positive or null"
+        }
+        dataStore.edit { preferences ->
+            preferences.writeAllSettings(settings)
+            preferences[SemesterSelectionStore.SELECTED_SEMESTER_ID_KEY] =
+                selectedSemesterId ?: SemesterSelectionStore.NO_SELECTION_ID
+        }
+    }
+
+    /** 将完整设置写入当前 MutablePreferences；调用方决定是否保留或覆盖选择键。 */
+    private fun MutablePreferences.writeAllSettings(settings: AppSettings) {
+        this[PreferencesKeys.DYNAMIC_COLOR] = settings.dynamicColor
+        settings.wallpaperUri?.let { this[PreferencesKeys.WALLPAPER_URI] = it }
+            ?: remove(PreferencesKeys.WALLPAPER_URI)
+        this[PreferencesKeys.TRANSPARENCY] = settings.transparency
+        this[PreferencesKeys.FONT_STYLE] = settings.fontStyle.name
+        this[PreferencesKeys.DIVIDER_TYPE] = settings.dividerType.name
+        this[PreferencesKeys.DIVIDER_WIDTH] = settings.dividerWidthDp
+        this[PreferencesKeys.DIVIDER_COLOR] = settings.dividerColor
+        this[PreferencesKeys.DIVIDER_ALPHA] = settings.dividerAlpha
+        this[PreferencesKeys.COURSE_ITEM_HEIGHT] = settings.courseItemHeightDp
+        this[PreferencesKeys.MAX_DAILY_SECTIONS] = settings.maxDailySections
+        this[PreferencesKeys.DEFAULT_COURSE_DURATION] = settings.defaultCourseDuration
+        this[PreferencesKeys.SECTION_TIMES] = settings.sectionTimes.joinToString("|") {
+            "${it.startTime},${it.endTime}"
+        }
+        this[PreferencesKeys.CARD_CORNER_RADIUS] = settings.cardCornerRadius
+        this[PreferencesKeys.CARD_ALPHA] = settings.cardAlpha
+        this[PreferencesKeys.SHOW_COURSE_ICONS] = settings.showCourseIcons
+        this[PreferencesKeys.WALLPAPER_MODE] = settings.wallpaperMode.name
+        this[PreferencesKeys.THEME_MODE] = settings.themeMode.name
+        this[PreferencesKeys.SHOW_WEEKEND] = settings.showWeekend
+        this[PreferencesKeys.SHOW_SIDEBAR_TIME] = settings.showSidebarTime
+        this[PreferencesKeys.SHOW_SIDEBAR_INDEX] = settings.showSidebarIndex
+        this[PreferencesKeys.HIDE_NON_THIS_WEEK] = settings.hideNonThisWeek
+        this[PreferencesKeys.SHOW_DATE_IN_HEADER] = settings.showDateInHeader
+        this[PreferencesKeys.ENABLE_CLASS_REMINDER] = settings.enableClassReminder
+        this[PreferencesKeys.REMINDER_MINUTES] = settings.reminderMinutes
+        this[PreferencesKeys.ENABLE_PERSISTENT_NOTIFICATION] = settings.enablePersistentNotification
+        this[PreferencesKeys.ENABLE_AUTO_MUTE] = settings.enableAutoMute
+        this[PreferencesKeys.ENABLE_WEBDAV_AUTO_SYNC] = settings.enableWebDavAutoSync
+        this[PreferencesKeys.WEBDAV_AUTO_SYNC_MODE] = settings.webDavAutoSyncMode.name
+        if (settings.webDavAutoSyncFixedAt <= 0L) remove(PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT)
+        else this[PreferencesKeys.WEBDAV_AUTO_SYNC_FIXED_AT] = settings.webDavAutoSyncFixedAt
+        this[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_VALUE] = settings.webDavAutoSyncIntervalValue
+        this[PreferencesKeys.WEBDAV_AUTO_SYNC_INTERVAL_UNIT] = settings.webDavAutoSyncIntervalUnit.name
+        this[PreferencesKeys.IGNORED_UPDATE_VERSION] = settings.ignoredUpdateVersion
+        settings.lastImportUrl?.takeIf { it.isNotBlank() }
+            ?.let { this[PreferencesKeys.LAST_IMPORT_URL] = it }
+            ?: remove(PreferencesKeys.LAST_IMPORT_URL)
+        settings.blurredWallpaperUri?.let { this[PreferencesKeys.BLURRED_WALLPAPER_URI] = it }
+            ?: remove(PreferencesKeys.BLURRED_WALLPAPER_URI)
+        this[PreferencesKeys.BACKGROUND_BLUR] = settings.backgroundBlur
+        this[PreferencesKeys.BACKGROUND_BRIGHTNESS] = settings.backgroundBrightness
     }
 
     /**

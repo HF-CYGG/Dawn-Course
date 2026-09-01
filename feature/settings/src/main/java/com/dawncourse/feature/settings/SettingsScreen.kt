@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.*
@@ -41,11 +42,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import coil.compose.AsyncImage
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.AppThemeMode
@@ -57,6 +61,8 @@ import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
 import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.model.WebDavSyncResult
+import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.ActiveTimetableContext
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.components.OptimizedTimePickerDialog
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -101,9 +107,12 @@ import androidx.compose.ui.graphics.PathEffect
 fun SettingsScreen(
     onBackClick: () -> Unit,
     onCheckUpdate: () -> Unit,
+    onOpenProfileManager: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val settings by viewModel.settings.collectAsState()
+    val currentSemester by viewModel.currentSemester.collectAsState()
+    val activeTimetableContext by viewModel.activeTimetableContext.collectAsState()
     val boundProvider by viewModel.boundProvider.collectAsState()
     val lastSyncDesc by viewModel.lastSyncDescription.collectAsState()
     // WebDAV 同步状态
@@ -117,6 +126,7 @@ fun SettingsScreen(
     val calendarExportState by viewModel.calendarExportState.collectAsState()
     
     val context = LocalContext.current
+    val resources = LocalResources.current
     var maxCourseWeek by remember { mutableIntStateOf(0) }
     var dialogState by remember { mutableStateOf<SettingsDialogState>(SettingsDialogState.None) }
     // WebDAV 底部弹窗显示状态
@@ -137,6 +147,18 @@ fun SettingsScreen(
         if (calendarExportState.success != null) {
             Toast.makeText(context, calendarExportState.message, Toast.LENGTH_SHORT).show()
             viewModel.resetCalendarExportState()
+        }
+    }
+
+    LaunchedEffect(viewModel, resources) {
+        viewModel.credentialBindingEvents.collect { event ->
+            val message = when (event) {
+                CredentialBindingUiEvent.Saved -> R.string.sync_credentials_saved
+                CredentialBindingUiEvent.Cleared -> R.string.sync_credentials_cleared
+                CredentialBindingUiEvent.Rejected -> R.string.sync_credentials_rejected
+                CredentialBindingUiEvent.Inconsistent -> R.string.sync_credentials_inconsistent
+            }
+            Toast.makeText(context, resources.getString(message), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -183,6 +205,7 @@ fun SettingsScreen(
 
     // Notification Permission Handling
     var pendingNotificationAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val notificationPermissionDeniedMessage = stringResource(R.string.notification_permission_denied)
     
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -190,7 +213,11 @@ fun SettingsScreen(
         if (isGranted) {
             pendingNotificationAction?.invoke()
         } else {
-            Toast.makeText(context, "开启通知失败：请授予通知权限", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                notificationPermissionDeniedMessage,
+                Toast.LENGTH_SHORT
+            ).show()
         }
         pendingNotificationAction = null
     }
@@ -212,9 +239,13 @@ fun SettingsScreen(
         }
     }
     val openSemesterDialog = {
-        viewModel.getMaxCourseWeek { max ->
-            maxCourseWeek = max
-            dialogState = SettingsDialogState.Semester
+        if (currentSemester == null) {
+            Toast.makeText(context, "请先导入或创建学期", Toast.LENGTH_SHORT).show()
+        } else {
+            viewModel.getMaxCourseWeek { max ->
+                maxCourseWeek = max
+                dialogState = SettingsDialogState.Semester
+            }
         }
     }
 
@@ -243,7 +274,10 @@ fun SettingsScreen(
         ) {
             TimetableSection(
                 settings = settings,
+                currentSemester = currentSemester,
+                activeTimetableContext = activeTimetableContext,
                 viewModel = viewModel,
+                onOpenProfileManager = onOpenProfileManager,
                 onOpenSemester = openSemesterDialog,
                 onOpenSectionTime = { dialogState = SettingsDialogState.SectionTime },
                 onOpenBatchUpdate = { dialogState = SettingsDialogState.BatchUpdateDuration }
@@ -284,11 +318,16 @@ fun SettingsScreen(
                     viewModel.resetLocalBackupState()
                 },
                 onExportCalendar = {
-                    try {
-                        val fileName = "DawnCourse_${settings.currentSemesterName}.ics"
-                        calendarExportLauncher.launch(fileName)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                    val semester = currentSemester
+                    if (semester == null) {
+                        Toast.makeText(context, "当前未选择学期，无法导出日历", Toast.LENGTH_SHORT).show()
+                    } else {
+                        try {
+                            val fileName = "DawnCourse_${semester.name}.ics"
+                            calendarExportLauncher.launch(fileName)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "无法打开文件选择器", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             )
@@ -299,13 +338,13 @@ fun SettingsScreen(
             )
 
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val versionName = remember { packageInfo.versionName }
+            val versionName = remember { packageInfo.versionName.orEmpty() }
 
             AboutBrandFooter(
                 versionName = versionName,
                 onRepoClick = {
                     try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/DawnCourse"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course"))
                         context.startActivity(intent)
                     } catch (e: Exception) {
                         Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
@@ -313,7 +352,7 @@ fun SettingsScreen(
                 },
                 onLicenseClick = {
                      try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/DawnCourse/blob/main/LICENSE"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HF-CYGG/Dawn-Course/blob/main/LICENSE"))
                         context.startActivity(intent)
                      } catch (e: Exception) {
                         Toast.makeText(context, "无法打开链接", Toast.LENGTH_SHORT).show()
@@ -325,6 +364,7 @@ fun SettingsScreen(
     SettingsDialogManager(
         dialogState = dialogState,
         settings = settings,
+        currentSemester = currentSemester,
         viewModel = viewModel,
         maxCourseWeek = maxCourseWeek,
         context = context,
@@ -395,18 +435,36 @@ private sealed class SettingsDialogState {
 @Composable
 private fun TimetableSection(
     settings: AppSettings,
+    currentSemester: Semester?,
+    activeTimetableContext: ActiveTimetableContext?,
     viewModel: SettingsViewModel,
+    onOpenProfileManager: () -> Unit,
     onOpenSemester: () -> Unit,
     onOpenSectionTime: () -> Unit,
     onOpenBatchUpdate: () -> Unit
 ) {
     PreferenceCategory(title = "课表管理") {
         SettingRow(
-            title = "当前学期",
-            description = "点击修改学期及周次设置",
-            icon = { Icon(Icons.Default.DateRange, null) },
-            onClick = onOpenSemester,
+            title = stringResource(R.string.profile_management_current_profile),
+            description = activeTimetableContext?.let { context ->
+                stringResource(
+                    R.string.profile_management_current_description,
+                    context.profile.name,
+                    context.semester?.name ?: stringResource(R.string.profile_management_no_semester),
+                )
+            } ?: stringResource(R.string.profile_management_loading),
+            icon = { Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null) },
+            onClick = onOpenProfileManager,
             showArrow = true,
+            showDivider = true,
+        )
+        SettingRow(
+            title = "当前学期",
+            description = currentSemester?.let { "${it.name} · ${it.weekCount} 周" }
+                ?: "未选择学期，请先导入或创建",
+            icon = { Icon(Icons.Default.DateRange, null) },
+            onClick = onOpenSemester.takeIf { currentSemester != null },
+            showArrow = currentSemester != null,
             showDivider = true
         )
         SliderSetting(
@@ -918,6 +976,51 @@ private fun NotificationSection(
             )
         }
         SwitchSetting(
+            title = stringResource(R.string.course_status_notification_title),
+            description = stringResource(R.string.course_status_notification_description),
+            icon = { Icon(Icons.Default.ViewAgenda, null) },
+            checked = settings.enablePersistentNotification,
+            onCheckedChange = { enabled ->
+                if (enabled) {
+                    onRequestNotificationPermission {
+                        val availability = CourseStatusNotificationAvailabilityHelper.resolve(context)
+                        when (availability) {
+                            CourseStatusNotificationAvailability.AVAILABLE -> {
+                                viewModel.setEnablePersistentNotification(true)
+                            }
+                            CourseStatusNotificationAvailability.APP_NOTIFICATIONS_DISABLED -> {
+                                viewModel.setEnablePersistentNotification(false)
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.course_status_app_notifications_disabled),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                CourseStatusNotificationAvailabilityHelper.openSettings(
+                                    context,
+                                    availability
+                                )
+                            }
+                            CourseStatusNotificationAvailability.CHANNEL_DISABLED -> {
+                                viewModel.setEnablePersistentNotification(false)
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.course_status_channel_disabled),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                CourseStatusNotificationAvailabilityHelper.openSettings(
+                                    context,
+                                    availability
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    viewModel.setEnablePersistentNotification(false)
+                }
+            },
+            showDivider = true
+        )
+        SwitchSetting(
             title = "自动静音",
             description = "上课期间自动开启免打扰模式",
             icon = { Icon(Icons.Default.DoNotDisturb, null) },
@@ -1001,7 +1104,7 @@ private fun AboutSection(
     onCheckUpdate: () -> Unit
 ) {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    val versionName = remember { packageInfo.versionName }
+    val versionName = remember { packageInfo.versionName.orEmpty() }
     PreferenceCategory(title = "关于") {
         UpdateSettingItem(
             currentVersion = versionName,
@@ -1014,6 +1117,7 @@ private fun AboutSection(
 private fun SettingsDialogManager(
     dialogState: SettingsDialogState,
     settings: AppSettings,
+    currentSemester: Semester?,
     viewModel: SettingsViewModel,
     maxCourseWeek: Int,
     context: Context,
@@ -1037,19 +1141,27 @@ private fun SettingsDialogManager(
                 )
             }
             SettingsDialogState.Semester -> {
-                SemesterSettingsDialog(
-                    initialName = settings.currentSemesterName,
-                    initialWeeks = settings.totalWeeks,
-                    initialStartDate = settings.startDateTimestamp,
-                    maxCourseWeek = maxCourseWeek,
-                    onDismissRequest = onDismiss,
-                    onConfirm = { name, weeks, date ->
-                        viewModel.setCurrentSemesterName(name)
-                        viewModel.setTotalWeeks(weeks)
-                        viewModel.setStartDateTimestamp(date)
-                        onDismiss()
-                    }
-                )
+                val semester = currentSemester
+                if (semester == null) {
+                    AlertDialog(
+                        onDismissRequest = onDismiss,
+                        title = { Text("未选择学期") },
+                        text = { Text("请先导入或创建学期，再修改学期设置。") },
+                        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
+                    )
+                } else {
+                    SemesterSettingsDialog(
+                        initialName = semester.name,
+                        initialWeeks = semester.weekCount,
+                        initialStartDate = semester.startDate,
+                        maxCourseWeek = maxCourseWeek,
+                        onDismissRequest = onDismiss,
+                        onConfirm = { name, weeks, date ->
+                            viewModel.updateCurrentSemester(name, weeks, date)
+                            onDismiss()
+                        }
+                    )
+                }
             }
             SettingsDialogState.BatchUpdateDuration -> {
                 AlertDialog(
@@ -1168,7 +1280,6 @@ private fun SettingsDialogManager(
                         TextButton(onClick = {
                             viewModel.clearSyncCredentials()
                             onDismiss()
-                            Toast.makeText(context, "已解绑", Toast.LENGTH_SHORT).show()
                         }) {
                             Text("确定解绑", color = MaterialTheme.colorScheme.error)
                         }
@@ -1245,6 +1356,7 @@ private fun LocalBackupSheet(
     onImport: () -> Unit,
     onConfirmImport: () -> Unit
 ) {
+    val locale = LocalConfiguration.current.locales[0]
     // 还原操作需要二次确认
     var showImportConfirm by remember { mutableStateOf(false) }
     val isProcessing = state.isProcessing || previewState.isLoading
@@ -1335,7 +1447,7 @@ private fun LocalBackupSheet(
                 // 预览信息展示
                 if (previewState.preview != null) {
                     val preview = previewState.preview
-                    val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                    val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
                         .format(Date(preview.exportTime))
                     val semesterNames = preview.semesterNames
                     val semesterDisplay = if (semesterNames.isEmpty()) {
@@ -1439,7 +1551,7 @@ private fun LocalBackupSheet(
     if (showImportConfirm) {
         val preview = previewState.preview
         val previewDesc = if (preview != null) {
-            val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+            val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
                 .format(Date(preview.exportTime))
             val semesterNames = if (preview.semesterNames.isEmpty()) {
                 "未包含学期名称"

@@ -51,6 +51,16 @@ data class SyncCredentials(
     val endpointUrl: String? = null
 )
 
+/** 自动更新来源与确定的 Profile/学期落点之间的稳定绑定。 */
+data class SyncSourceBinding(
+    val sourceBindingId: String,
+    val profileId: Long,
+    val semesterId: Long,
+    val provider: SyncProviderType,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 /**
  * 最近一次同步信息
  *
@@ -84,6 +94,8 @@ enum class SyncErrorCode {
     PARSE_ERROR,
     /** 服务端异常或不兼容响应 */
     SERVER_ERROR,
+    /** 本地补偿恢复失败，必须进入 RecoveryRequired */
+    RECOVERY_REQUIRED,
     /** 未知错误 */
     UNKNOWN
 }

@@ -1,5 +1,7 @@
 package com.dawncourse.core.data.repository
 
+import androidx.room.withTransaction
+import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.local.entity.toDomain
 import com.dawncourse.core.data.local.entity.toEntity
@@ -8,6 +10,7 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
+import javax.inject.Provider
 
 /**
  * 课程仓库实现类 (Repository Implementation)
@@ -18,7 +21,9 @@ import javax.inject.Inject
  * @property courseDao 注入的 DAO 对象，用于操作数据库
  */
 class CourseRepositoryImpl @Inject constructor(
-    private val courseDao: CourseDao
+    private val courseDao: CourseDao,
+    private val database: AppDatabase,
+    private val profileSelectionCoordinator: Provider<ProfileSelectionCoordinator>,
 ) : CourseRepository {
 
     /**
@@ -64,6 +69,58 @@ class CourseRepositoryImpl @Inject constructor(
 
     override suspend fun insertCourses(courses: List<Course>): List<Long> {
         return courseDao.insertCourses(courses.map { it.toEntity() })
+    }
+
+    override suspend fun saveCoursesAtomically(
+        courses: List<Course>,
+        editingCourseId: Long
+    ): CourseRepository.AtomicSaveResult = database.withTransaction {
+        saveCoursesLocked(courses, editingCourseId)
+    }
+
+    override suspend fun saveCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+        editingCourseId: Long,
+    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
+        profileId = profileId,
+        semesterId = semesterId,
+    ) {
+        saveCoursesLocked(courses, editingCourseId)
+    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+
+    /** 调用方必须已经持有 Room transaction。 */
+    private suspend fun saveCoursesLocked(
+        courses: List<Course>,
+        editingCourseId: Long,
+    ): CourseRepository.AtomicSaveResult {
+        if (courses.isEmpty()) {
+            return CourseRepository.AtomicSaveResult.Rejected("未选择任何周次，无法保存课程")
+        }
+        val semesterIds = courses.map { it.semesterId }.toSet()
+        if (semesterIds.size != 1 || semesterIds.single() <= 0L) {
+            return CourseRepository.AtomicSaveResult.Rejected("未选择有效学期，无法保存课程")
+        }
+        val semesterId = semesterIds.single()
+        if (database.semesterDao().getSemesterById(semesterId) == null) {
+            return CourseRepository.AtomicSaveResult.Rejected(
+                "目标学期不存在或已被删除，请重新选择学期"
+            )
+        }
+        if (editingCourseId > 0L && courseDao.getCourseById(editingCourseId) == null) {
+            return CourseRepository.AtomicSaveResult.Rejected(
+                "原课程已被删除，请刷新后重试"
+            )
+        }
+
+        if (editingCourseId > 0L && courses.size == 1) {
+            courseDao.updateCourse(courses.single().copy(id = editingCourseId).toEntity())
+        } else {
+            if (editingCourseId > 0L) courseDao.deleteCourseById(editingCourseId)
+            courseDao.insertCourses(courses.map { it.copy(id = 0L).toEntity() })
+        }
+        return CourseRepository.AtomicSaveResult.Success
     }
 
     /**

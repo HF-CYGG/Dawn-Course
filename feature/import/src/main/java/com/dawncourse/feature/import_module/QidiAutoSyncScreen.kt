@@ -98,23 +98,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
-import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.ImportCommitRequest
+import com.dawncourse.core.domain.model.ImportCommitResult
+import com.dawncourse.core.domain.model.ImportDestination
+import com.dawncourse.core.domain.model.NewSemesterSpec
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialsRepository
-import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.ImportCommitRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.LocalTime
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -733,16 +736,7 @@ fun QidiAutoSyncScreen(
                 addLog("解析完成，课程数：${parsed.size}", SyncLogType.SUCCESS)
                 addLog("开始对比当前课表", SyncLogType.INFO)
                 pendingParsedCourses = parsed
-                var semesterId = viewModel.getCurrentSemesterId()
-                if (semesterId == null) {
-                    // 自动兜底：存在学期但未标记当前时，自动设定第一个学期为当前
-                    val allSemesters = viewModel.getAllSemesters()
-                    if (allSemesters.isNotEmpty()) {
-                        val firstSemester = allSemesters.first()
-                        viewModel.setCurrentSemester(firstSemester.id)
-                        semesterId = viewModel.getCurrentSemesterId()
-                    }
-                }
+                val semesterId = viewModel.getCurrentSemesterId()
                 if (semesterId == null) {
                     loading = false
                     currentStep = "操作中止：未设置本地学期"
@@ -1099,15 +1093,7 @@ fun QidiAutoSyncScreen(
         addLog("解析完成，课程数：${parsed.size}", SyncLogType.SUCCESS)
         addLog("开始对比当前课表", SyncLogType.INFO)
         pendingParsedCourses = parsed
-        var semesterId = viewModel.getCurrentSemesterId()
-        if (semesterId == null) {
-            val allSemesters = viewModel.getAllSemesters()
-            if (allSemesters.isNotEmpty()) {
-                val firstSemester = allSemesters.first()
-                viewModel.setCurrentSemester(firstSemester.id)
-                semesterId = viewModel.getCurrentSemesterId()
-            }
-        }
+        val semesterId = viewModel.getCurrentSemesterId()
         if (semesterId == null) {
             loading = false
             currentStep = "操作中止：未设置本地学期"
@@ -1370,7 +1356,7 @@ fun QidiAutoSyncScreen(
                                 showProgressDialog = true
                                 currentStep = "覆盖写入当前学期"
                                 addLog("开始覆盖写入当前学期", SyncLogType.ACTION)
-                                val count = viewModel.applyToCurrentSemester(pendingParsedCourses)
+                                val count = viewModel.applyToCurrentSemester(pendingParsedCourses, provider)
                                 subTitle = "同步成功：更新 ${count} 门课程"
                                 currentStep = "同步完成"
                                 addLog("同步成功：更新 ${count} 门课程", SyncLogType.SUCCESS)
@@ -1467,7 +1453,8 @@ fun QidiAutoSyncScreen(
                                 addLog("开始应用部分变更", SyncLogType.ACTION)
                                 val result = viewModel.applyPartialUpdate(
                                     pendingParsedCourses,
-                                    selected
+                                    selected,
+                                    provider,
                                 )
                                 subTitle = "同步完成：新增 ${result.added} 项，移除 ${result.removed} 项"
                                 currentStep = "同步完成"
@@ -2442,11 +2429,16 @@ private fun parseJsReturn(value: String?): String {
 class QidiSyncViewModel @Inject constructor(
     private val credentialsRepository: CredentialsRepository,
     private val courseRepository: CourseRepository,
+    private val importCommitRepository: ImportCommitRepository,
+    private val scriptSyncRepository: ScriptSyncRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val semesterRepository: SemesterRepository,
-    private val scriptSyncRepository: ScriptSyncRepository
+    private val syncSourceBindingRepository: com.dawncourse.core.domain.repository.SyncSourceBindingRepository,
 ) : androidx.lifecycle.ViewModel() {
     // 自动更新（实验）当前脚本拉取任务 ID，用于服务端按任务去重统计
     private var currentScriptPullTaskId: String = ""
+    /** 首次使用时捕获固定写入目标，切换课表后不改写新 Profile。 */
+    private var capturedTarget: QidiSyncTarget? = null
 
     /**
      * 开始一次自动更新脚本拉取任务
@@ -2456,6 +2448,7 @@ class QidiSyncViewModel @Inject constructor(
      */
     fun beginScriptPullTask() {
         currentScriptPullTaskId = "qzsync_${System.currentTimeMillis()}_${(0..9999).random()}"
+        capturedTarget = null
     }
 
     /**
@@ -2488,7 +2481,12 @@ class QidiSyncViewModel @Inject constructor(
     /**
      * 读取起迪凭据
      */
-    suspend fun loadQidiCredentials() = credentialsRepository.getCredentials()
+    suspend fun loadQidiCredentials(): com.dawncourse.core.domain.model.SyncCredentials? {
+        val target = resolveCapturedTargetOrNull() ?: return null
+        val credentials = credentialsRepository.getCredentials(target.profileId) ?: return null
+        captureBindingForTarget(target, credentials.provider) ?: return null
+        return credentials
+    }
 
     /**
      * 若当前绑定与 provider 一致，且尚未记录入口或入口不同，则更新入口。
@@ -2496,13 +2494,16 @@ class QidiSyncViewModel @Inject constructor(
      * @return 是否发生更新
      */
     suspend fun updateEndpointIfNeeded(href: String, provider: SyncProviderType): Boolean {
-        val creds = credentialsRepository.getCredentials() ?: return false
+        val target = resolveCapturedTargetOrNull() ?: return false
+        val creds = credentialsRepository.getCredentials(target.profileId) ?: return false
         if (creds.provider != provider) return false
+        captureBindingForTarget(target, provider) ?: return false
         val normalized = normalizeEndpoint(href)
         if (normalized.isBlank()) return false
         if (creds.endpointUrl == normalized) return false
         credentialsRepository.saveCredentials(
-            creds.copy(endpointUrl = normalized)
+            target.profileId,
+            creds.copy(endpointUrl = normalized),
         )
         return true
     }
@@ -2533,37 +2534,32 @@ class QidiSyncViewModel @Inject constructor(
      *
      * @return 写入课程数量
      */
-    suspend fun applyToCurrentSemester(parsed: List<ParsedCourse>): Int {
-        val current = semesterRepository.getCurrentSemester().first() ?: return 0
-        courseRepository.deleteCoursesBySemester(current.id)
+    suspend fun applyToCurrentSemester(
+        parsed: List<ParsedCourse>,
+        provider: SyncProviderType,
+    ): Int {
+        val target = requireCapturedBinding(provider) ?: return 0
+        val current = semesterRepository.getSemesterById(target.semesterId)
+            ?.takeIf { it.profileId == target.profileId } ?: return 0
         val domainCourses = parsed.map { it.toDomainCourse().copy(semesterId = current.id) }
-        courseRepository.insertCourses(domainCourses)
-        return domainCourses.size
+        val bindingId = target.sourceBindingId ?: return 0
+        val result = importCommitRepository.commit(
+            ImportCommitRequest(
+                destination = ImportDestination.OverwriteSemester(target.profileId, current.id),
+                semester = NewSemesterSpec(
+                    name = current.name,
+                    startDate = current.startDate,
+                    weekCount = current.weekCount,
+                ),
+                courses = domainCourses,
+                expectedSourceBindingId = bindingId,
+            ),
+        )
+        return if (result is ImportCommitResult.Success) result.committedCourseCount else 0
     }
 
     suspend fun getCurrentSemesterId(): Long? {
-        return withContext(Dispatchers.IO) {
-            val current = semesterRepository.getCurrentSemester().first()
-            current?.id ?: semesterRepository.getAllSemesters().first().firstOrNull()?.id
-        }
-    }
-
-    /**
-     * 获取全部学期列表（用于自动兜底）
-     */
-    suspend fun getAllSemesters(): List<Semester> {
-        return withContext(Dispatchers.IO) {
-            semesterRepository.getAllSemesters().first()
-        }
-    }
-
-    /**
-     * 设置当前学期
-     */
-    suspend fun setCurrentSemester(semesterId: Long) {
-        withContext(Dispatchers.IO) {
-            semesterRepository.setCurrentSemester(semesterId)
-        }
+        return resolveCapturedTargetOrNull()?.semesterId
     }
 
     suspend fun getCoursesBySemester(semesterId: Long): List<Course> {
@@ -2572,25 +2568,95 @@ class QidiSyncViewModel @Inject constructor(
 
     suspend fun applyPartialUpdate(
         parsed: List<ParsedCourse>,
-        selectedItems: List<DiffItem>
+        selectedItems: List<DiffItem>,
+        provider: SyncProviderType,
     ): PartialUpdateResult {
-        val current = semesterRepository.getCurrentSemester().first() ?: return PartialUpdateResult(0, 0)
+        val target = requireCapturedBinding(provider) ?: return PartialUpdateResult(0, 0)
+        val current = semesterRepository.getSemesterById(target.semesterId)
+            ?.takeIf { it.profileId == target.profileId } ?: return PartialUpdateResult(0, 0)
+        val bindingId = target.sourceBindingId ?: return PartialUpdateResult(0, 0)
         val existing = courseRepository.getCoursesBySemester(current.id).first()
+        val finalCourses = existing.toMutableList()
         var removedCount = 0
         selectedItems.filter { it.type == DiffType.Removed }.forEach { item ->
-            val matches = existing.filter { toFingerprint(it) == item.fingerprint }.take(item.count)
-            matches.forEach { course ->
-                courseRepository.deleteCourse(course)
+            val indexes = finalCourses.indices
+                .filter { index -> toFingerprint(finalCourses[index]) == item.fingerprint }
+                .take(item.count)
+                .sortedDescending()
+            indexes.forEach { index ->
+                finalCourses.removeAt(index)
                 removedCount++
             }
         }
-        var addedCount = 0
+        val addedCourses = mutableListOf<Course>()
         selectedItems.filter { it.type == DiffType.Added }.forEach { item ->
             val matches = parsed.filter { toFingerprint(it) == item.fingerprint }.take(item.count)
-            val domainCourses = matches.map { it.toDomainCourse().copy(semesterId = current.id) }
-            courseRepository.insertCourses(domainCourses)
-            addedCount += domainCourses.size
+            addedCourses += matches.map { it.toDomainCourse().copy(semesterId = current.id) }
         }
-        return PartialUpdateResult(addedCount, removedCount)
+        val result = importCommitRepository.commit(
+            ImportCommitRequest(
+                destination = ImportDestination.OverwriteSemester(target.profileId, current.id),
+                semester = NewSemesterSpec(
+                    name = current.name,
+                    startDate = current.startDate,
+                    weekCount = current.weekCount,
+                ),
+                courses = finalCourses + addedCourses,
+                expectedSourceBindingId = bindingId,
+            ),
+        )
+        return if (result is ImportCommitResult.Success) {
+            PartialUpdateResult(addedCourses.size, removedCount)
+        } else {
+            PartialUpdateResult(0, 0)
+        }
+    }
+
+    /** 读取一次活动上下文并固定本次同步的 Profile/学期范围。 */
+    private suspend fun resolveCapturedTarget(): QidiSyncTarget {
+        capturedTarget?.let { return it }
+        val context = timetableProfileRepository.observeActiveContext().first()
+            ?: throw IllegalStateException("未选择活动课表")
+        val semester = context.semester ?: throw IllegalStateException("活动课表尚未选择学期")
+        return QidiSyncTarget(context.profile.id, semester.id).also { capturedTarget = it }
+    }
+
+    /** 网络开始时捕获一次 binding；提交阶段不得重新创建，否则会放过已经失效的旧任务。 */
+    private suspend fun captureBindingForTarget(
+        target: QidiSyncTarget,
+        provider: SyncProviderType,
+    ): QidiSyncTarget? {
+        if (target.sourceBindingId != null) {
+            return target.takeIf { it.provider == provider }
+        }
+        val bindingId = syncSourceBindingRepository.ensureIfStillActive(
+            profileId = target.profileId,
+            semesterId = target.semesterId,
+            provider = provider,
+        ) ?: return null
+        return target.copy(provider = provider, sourceBindingId = bindingId).also { capturedTarget = it }
+    }
+
+    /** 解析完成后只接受网络开始时冻结的 provider + binding。 */
+    private suspend fun requireCapturedBinding(provider: SyncProviderType): QidiSyncTarget? =
+        resolveCapturedTargetOrNull()?.takeIf {
+            it.provider == provider && !it.sourceBindingId.isNullOrBlank()
+        }
+
+    /** 起迪与正方页面同步的不可变写入范围。 */
+    private data class QidiSyncTarget(
+        val profileId: Long,
+        val semesterId: Long,
+        val provider: SyncProviderType? = null,
+        val sourceBindingId: String? = null,
+    )
+
+    /** 空 Profile 或读取选择失败时交给 UI 展示“尚未选择学期”，不让协程异常退出。 */
+    private suspend fun resolveCapturedTargetOrNull(): QidiSyncTarget? = try {
+        resolveCapturedTarget()
+    } catch (cancellation: kotlinx.coroutines.CancellationException) {
+        throw cancellation
+    } catch (_: IllegalStateException) {
+        null
     }
 }

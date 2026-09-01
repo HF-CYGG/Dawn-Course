@@ -4,10 +4,10 @@ package com.dawncourse.core.domain.model
  * Session-level parse context. It does not include page content.
  */
 data class ParseSessionContext(
-    val parseSessionId: String,
+    /** 随机导入会话身份；不得使用本地 Profile ID。 */
+    val importSessionId: String,
     val appVersionCode: Long,
     val appVersionName: String,
-    val installBucketIdHash: String,
     val importSource: ImportSourceType,
     val schoolId: String?,
     val schoolName: String?,

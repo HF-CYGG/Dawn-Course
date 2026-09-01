@@ -1,14 +1,15 @@
 package com.dawncourse.feature.import_module.engine
 
-import app.cash.quickjs.QuickJs
-import org.json.JSONObject
-
-/** 仅在 :script_runtime 进程内创建和运行 QuickJS。 */
-internal class QuickJsScriptExecutor {
-    private companion object {
-        const val IDLE_SLEEP_MS: Long = 2L
-    }
-
+/**
+ * 仅在 :script_runtime 进程内创建和运行 QuickJS。
+ *
+ * `script_host.js` 仍是入口探测、依赖加载和结果规范化的唯一契约。运行时 Adapter 在每次
+ * `evaluate` 返回前已完成 native Promise job drain，因此这里不得再以反射调用旧 wrapper
+ * 的 pending-job API，也不得轮询等待 Promise。
+ */
+internal class QuickJsScriptExecutor(
+    private val runtimeFactory: QuickJsRuntimeFactory = HarlonQuickJsRuntimeFactory
+) {
     fun execute(request: ScriptRuntimeRequest): ScriptEngine.ScriptExecutionResult {
         val validation = ScriptRuntimeLimits.validateInput(
             harnessBytes = ScriptRuntimeLimits.utf8Size(request.harnessSource),
@@ -24,17 +25,16 @@ internal class QuickJsScriptExecutor {
             return failure(ScriptEngine.ERROR_HARNESS_MISSING, "script harness is missing")
         }
 
-        val deadlineAt = System.currentTimeMillis() + request.timeoutMillis
-        val quickJs = QuickJs.create()
+        var runtime: QuickJsRuntimeAdapter? = null
         return try {
-            applyResourceLimits(quickJs)
-            setupRuntime(quickJs)
-            quickJs.evaluate(request.harnessSource)
+            runtime = runtimeFactory.create()
+            setupRuntime(runtime)
+            runtime.evaluate(request.harnessSource)
             request.dependencies.forEach { dependency ->
-                if (dependency.isNotBlank()) quickJs.evaluate(dependency)
+                if (dependency.isNotBlank()) runtime.evaluate(dependency)
             }
-            quickJs.evaluate(request.script)
-            invokeHarness(quickJs, request.html, request.targetType, deadlineAt)
+            runtime.evaluate(request.script)
+            invokeHarness(runtime, request.html, request.targetType, request.timeoutMillis)
         } catch (error: Throwable) {
             failure(
                 errorCode = (error as? ScriptEngine.ScriptExecutionException)?.errorCode
@@ -42,12 +42,14 @@ internal class QuickJsScriptExecutor {
                 message = "script execution failed"
             )
         } finally {
-            quickJs.close()
+            // close 失败不能覆盖已经得到的宿主结果，也不得把 vendor 异常回传到主进程。
+            runCatching { runtime?.close() }
         }
     }
 
-    private fun setupRuntime(quickJs: QuickJs) {
-        quickJs.evaluate(
+    /** 注入最小浏览器兼容对象，保持既有 parser script 的离线运行语义。 */
+    private fun setupRuntime(runtime: QuickJsRuntimeAdapter) {
+        runtime.evaluate(
             """
             (function() {
               if (!globalThis.console) {
@@ -70,46 +72,31 @@ internal class QuickJsScriptExecutor {
         )
     }
 
+    /**
+     * 调用共享宿主并读取一次已 eager-drain 的 settled 状态。
+     *
+     * `deadlineAt` 仍传给宿主做业务级截止判断；同步死循环的硬中断仍由主进程 5 秒
+     * withTimeout 后终止 :script_runtime 进程完成。
+     */
     private fun invokeHarness(
-        quickJs: QuickJs,
+        runtime: QuickJsRuntimeAdapter,
         html: String,
         targetType: String,
-        deadlineAt: Long
+        timeoutMillis: Long
     ): ScriptEngine.ScriptExecutionResult {
-        val options = JSONObject()
-            .put("targetType", targetType)
-            .put("deadlineAt", deadlineAt)
-        val pending = quickJs.evaluate(
-            "__dawnHost.begin(globalThis, ${JSONObject.quote(html)}, $options)"
-        )
-        if (pending is Boolean && pending) {
-            pumpUntilSettled(quickJs, deadlineAt)
+        val deadlineAt = System.currentTimeMillis() + timeoutMillis
+        val options = """{"targetType":${jsonStringLiteral(targetType)},"deadlineAt":$deadlineAt}"""
+        runtime.evaluate("__dawnHost.begin(globalThis, ${jsonStringLiteral(html)}, $options)")
+
+        val settled = runtime.evaluate("__dawnHost.isSettled()").booleanOrFalse()
+        if (!settled) {
+            runtime.evaluate("__dawnHost.abortAsTimeout('')")
         }
-        val settled = quickJs.evaluate("__dawnHost.isSettled()")
-        if (settled !is Boolean || !settled) {
-            quickJs.evaluate("__dawnHost.abortAsTimeout('')")
-        }
-        val json = quickJs.evaluate("__dawnHost.resultJson()")?.toString().orEmpty()
+        val json = runtime.evaluate("__dawnHost.resultJson()").textOrEmpty()
         return parseHarnessResult(json)
     }
 
-    private fun pumpUntilSettled(quickJs: QuickJs, deadlineAt: Long) {
-        if (!hasPendingJobsSupport(quickJs)) return
-        while (System.currentTimeMillis() < deadlineAt) {
-            val executedAny = executePendingJobs(quickJs)
-            val settled = quickJs.evaluate("__dawnHost.isSettled()")
-            if (settled is Boolean && settled) return
-            if (!executedAny) {
-                try {
-                    Thread.sleep(IDLE_SLEEP_MS)
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    return
-                }
-            }
-        }
-    }
-
+    /** 校验宿主 JSON 的体积，避免 Binder/文件协议把超大结果带回主进程。 */
     private fun parseHarnessResult(json: String): ScriptEngine.ScriptExecutionResult {
         if (json.isBlank()) {
             return failure(ScriptEngine.ERROR_SCRIPT_EXCEPTION, "empty host result")
@@ -123,6 +110,7 @@ internal class QuickJsScriptExecutor {
         }
     }
 
+    /** 创建不包含 wrapper 异常细节或脚本内容的稳定错误协议。 */
     private fun failure(errorCode: String, message: String) = ScriptEngine.ScriptExecutionResult(
         raw = "",
         ok = false,
@@ -133,48 +121,38 @@ internal class QuickJsScriptExecutor {
         entryUsed = "",
         contractVersion = ScriptEngine.SUPPORTED_CONTRACT_VERSION
     )
+}
 
-    private fun applyResourceLimits(quickJs: QuickJs) {
-        invokeIfPresent(quickJs, "setMemoryLimit", 64L * 1024 * 1024)
-        invokeIfPresent(quickJs, "setMaxStackSize", 512L * 1024)
-    }
+/** 把 Adapter 的受限值还原为宿主所需的布尔状态。 */
+private fun QuickJsEvaluationValue.booleanOrFalse(): Boolean =
+    (this as? QuickJsEvaluationValue.BooleanValue)?.value ?: false
 
-    private fun invokeIfPresent(quickJs: QuickJs, methodName: String, value: Long) {
-        try {
-            val method = quickJs.javaClass.methods.firstOrNull {
-                it.name == methodName && it.parameterCount == 1 &&
-                    (it.parameterTypes[0] == Long::class.javaPrimitiveType ||
-                        it.parameterTypes[0] == Int::class.javaPrimitiveType)
-            } ?: return
-            if (method.parameterTypes[0] == Int::class.javaPrimitiveType) {
-                method.invoke(quickJs, value.toInt())
+/** 把 Adapter 的受限值还原为宿主返回的 JSON 文本。 */
+private fun QuickJsEvaluationValue.textOrEmpty(): String =
+    (this as? QuickJsEvaluationValue.TextValue)?.value.orEmpty()
+
+/**
+ * 在不依赖 Android `JSONObject` 的前提下生成 JavaScript 可直接消费的 JSON 字符串字面量。
+ *
+ * 该函数仅用于把跨进程请求中的纯文本传给 `script_host.js`，不承担对象序列化职责。
+ */
+private fun jsonStringLiteral(value: String): String = buildString(value.length + 2) {
+    append('"')
+    value.forEach { character ->
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> if (character.code < 0x20 || character == '\u2028' || character == '\u2029') {
+                append("\\u%04x".format(character.code))
             } else {
-                method.invoke(quickJs, value)
-            }
-        } catch (_: Throwable) {
-            // QuickJS 绑定版本不提供资源限制时，由进程级隔离承担最终边界。
-        }
-    }
-
-    private fun executePendingJobs(quickJs: QuickJs): Boolean {
-        val method = quickJs.javaClass.methods.firstOrNull {
-            it.name == "executePendingJobs" && it.parameterCount == 0
-        } ?: return false
-        var executedAny = false
-        repeat(100) {
-            val result = method.invoke(quickJs)
-            when (result) {
-                is Boolean -> if (result) executedAny = true else return executedAny
-                is Int -> if (result != 0) executedAny = true else return executedAny
-                else -> return executedAny
+                append(character)
             }
         }
-        return executedAny
     }
-
-    private fun hasPendingJobsSupport(quickJs: QuickJs): Boolean {
-        return quickJs.javaClass.methods.any {
-            it.name == "executePendingJobs" && it.parameterCount == 0
-        }
-    }
+    append('"')
 }

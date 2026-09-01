@@ -55,6 +55,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -120,7 +123,10 @@ fun TimetableTopBar(
             Column {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable { showWeekMenu = true }
+                    modifier = Modifier
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag(TimetableBenchmarkContract.WEEK_SWITCH_TEST_TAG)
+                        .clickable { showWeekMenu = true }
                 ) {
                     Text(
                         text = if (isHolidayMode) "假期中" else "第 $displayedWeek 周",

@@ -11,6 +11,10 @@ import kotlinx.coroutines.flow.Flow
  * 这种设计实现了业务逻辑与数据存储的解耦。
  */
 interface CourseRepository {
+    sealed class AtomicSaveResult {
+        data object Success : AtomicSaveResult()
+        data class Rejected(val message: String) : AtomicSaveResult()
+    }
     /**
      * 获取所有课程列表
      *
@@ -46,6 +50,27 @@ interface CourseRepository {
      * @return 插入的主键列表
      */
     suspend fun insertCourses(courses: List<Course>): List<Long>
+
+    /**
+     * 在同一 Room transaction 内复核目标学期并完成更新或拆分替换。
+     *
+     * 学期不存在或原编辑记录已消失时不写入任何课程。
+     */
+    suspend fun saveCoursesAtomically(
+        courses: List<Course>,
+        editingCourseId: Long
+    ): AtomicSaveResult
+
+    /**
+     * 在活动 Profile 选择锁与同一 Room transaction 中复核目标作用域并保存课程。
+     * Profile 或活动学期已变化时不得写入旧课表。
+     */
+    suspend fun saveCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+        editingCourseId: Long,
+    ): AtomicSaveResult
     
     /**
      * 更新已有课程信息
