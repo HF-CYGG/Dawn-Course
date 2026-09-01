@@ -1,5 +1,6 @@
 package com.dawncourse.feature.import_module.model
 
+import androidx.annotation.VisibleForTesting
 import java.time.DayOfWeek
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -248,7 +249,11 @@ private fun parseParsedCourseArray(array: org.json.JSONArray): List<ParsedCourse
         val startWeek = item.optInt("startWeek", -1)
         val endWeek = item.optInt("endWeek", -1)
         val weekType = item.optInt("weekType", 0)
-        if (name.isBlank() || dayOfWeek <= 0 || startSection <= 0 || duration <= 0 || startWeek <= 0 || endWeek <= 0) {
+        if (name.isBlank() || dayOfWeek <= 0 || startSection <= 0 || duration <= 0 ||
+            startWeek <= 0 || endWeek <= 0 ||
+            startWeek > MAX_REASONABLE_WEEK || endWeek > MAX_REASONABLE_WEEK || endWeek < startWeek
+        ) {
+            // 过滤脏数据：周次越界或区间写反，避免异常值一路传到 Course.endWeek
             continue
         }
         list.add(
@@ -348,17 +353,21 @@ private fun parseXiaoaiCourses(array: org.json.JSONArray): List<XiaoaiCourse> {
     return list
 }
 
+/** 周次合理上限：没有学期超过约 53 周，用于过滤脏数据（与 JS 侧 pushWeek 一致） */
+internal const val MAX_REASONABLE_WEEK = 53
+
 /**
  * 解析 int 数组
  *
- * 用于 weeks 数组解析。
+ * 用于 weeks 数组解析。会过滤掉超出合理范围（1..[MAX_REASONABLE_WEEK]）的脏数据，
+ * 避免异常大的周次一路传到 Course.endWeek，进而让课表 Pager / 周次菜单被撑爆。
  */
 private fun parseIntArray(array: org.json.JSONArray?): List<Int> {
     if (array == null) return emptyList()
     val list = mutableListOf<Int>()
     for (i in 0 until array.length()) {
         val value = array.optInt(i, -1)
-        if (value > 0) list.add(value)
+        if (value in 1..MAX_REASONABLE_WEEK) list.add(value)
     }
     return list
 }
@@ -389,7 +398,8 @@ private fun parseSectionsArray(array: org.json.JSONArray?): List<Int> {
  *
  * 支持全周、单周、双周三种模式。
  */
-private fun splitWeeks(weeks: List<Int>): List<WeekRange> {
+@VisibleForTesting
+internal fun splitWeeks(weeks: List<Int>): List<WeekRange> {
     if (weeks.isEmpty()) return emptyList()
     val sorted = weeks.distinct().sorted()
     val ranges = mutableListOf<WeekRange>()
@@ -421,7 +431,8 @@ private fun splitWeeks(weeks: List<Int>): List<WeekRange> {
  *
  * step=2 时自动按奇偶周计算 weekType。
  */
-private fun buildWeekRange(start: Int, end: Int, step: Int): WeekRange {
+@VisibleForTesting
+internal fun buildWeekRange(start: Int, end: Int, step: Int): WeekRange {
     val weekType = if (step == 2) {
         if (start % 2 == 1) 1 else 2
     } else {

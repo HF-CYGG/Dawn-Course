@@ -171,8 +171,14 @@ internal fun TimetableScreen(
     val realCurrentWeek = (uiState as? TimetableUiState.Success)?.currentWeek ?: 1
     val semesterStartDate = (uiState as? TimetableUiState.Success)?.semesterStartDate
     val isBeforeSemesterStart = semesterStartDate != null && LocalDate.now().isBefore(semesterStartDate)
-    // 绑定总周数到设置
-    val maxWeeks = settings.totalWeeks
+    // 绑定总周数到设置；同时兜住"周数超过设置总周数"的课程（issue #109）：
+    // 只上一周的课若落在第 N 周且 N > settings.totalWeeks，原来会被"假期页"挡住、
+    // 周次选择器也选不到。取设置总周数与所有课程最大结束周的较大值。
+    // coerceAtMost(53)：即使某条脏数据带了异常大的 endWeek，也不会把 Pager /
+    // 周次菜单（TimetableComponents.kt 里的 for i in 1..totalWeeks）撑爆。
+    val maxCourseWeek = ((uiState as? TimetableUiState.Success)?.courses?.maxOfOrNull { it.endWeek } ?: 0)
+        .coerceAtMost(53)
+    val maxWeeks = maxOf(settings.totalWeeks, maxCourseWeek)
     // 允许 Pager 扩展到当前真实周次（如果超过总周数）
     val basePageCount = maxOf(maxWeeks, realCurrentWeek.coerceAtLeast(1))
     val hasHolidayPage = isBeforeSemesterStart

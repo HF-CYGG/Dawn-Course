@@ -15,6 +15,21 @@ import javax.inject.Singleton
 class ScriptEngine @Inject constructor() {
 
     /**
+     * 最近一次 [parseHtml] 执行期间，解析脚本上报的"被跳过记录"原因短码列表。
+     *
+     * 只包含固定短码（no_weeks / no_sections / no_day），不含任何页面内容，
+     * 可安全地用于 UI 提示与统计。每次 [parseHtml] 开头会重置。
+     */
+    @Volatile
+    var lastRunDiagnostics: List<String> = emptyList()
+        private set
+
+    /** 在一次全新的解析流程开始前清空诊断，避免读到上一次运行的残留 */
+    fun clearDiagnostics() {
+        lastRunDiagnostics = emptyList()
+    }
+
+    /**
      * 导入脚本执行异常（可恢复）
      *
      * 设计目标：
@@ -41,6 +56,7 @@ class ScriptEngine @Inject constructor() {
         // 调用方（ImportViewModel）目前已有 catch (Throwable) 兜底，不会崩溃，
         // 但仍统一转换为 ScriptExecutionException，保持“解析失败”的语义一致，
         // 并避免把底层 Error 类型泄露给上层。
+        lastRunDiagnostics = emptyList()
         var quickJs: QuickJs? = null
         return try {
             quickJs = QuickJs.create()
@@ -86,6 +102,9 @@ class ScriptEngine @Inject constructor() {
                   try { return JSON.stringify(v); } catch (e) { return String(v); }
                 };
               }
+              // 解析脚本可通过 reportDropped(reason) 往这里追加"被跳过记录"的原因短码，
+              // 供 ScriptEngine 在执行结束后读取（见 common_parser_utils.js）。
+              globalThis.__dc_diag = [];
             })();
             """.trimIndent()
         )
@@ -220,6 +239,15 @@ class ScriptEngine @Inject constructor() {
                 }
             }
         }
+        // 读取解析脚本上报的"被跳过记录"原因短码（仅固定短码，无页面内容）
+        runCatching {
+            val diagJson = quickJs.evaluate("JSON.stringify(globalThis.__dc_diag || [])")?.toString()
+            if (!diagJson.isNullOrBlank()) {
+                val arr = org.json.JSONArray(diagJson)
+                lastRunDiagnostics = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+            }
+        }
+
         val error = quickJs.evaluate("globalThis.__dc_error")?.toString()
         if (!error.isNullOrBlank()) {
             // JS 侧错误字符串可能包含页面片段/请求信息等敏感内容：

@@ -282,6 +282,12 @@ class ImportViewModel @Inject constructor(
     fun parseResultFromWebView(raw: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, resultText = "正在解析...") }
+            scriptEngine.clearDiagnostics()
+            // 累积“本次导入流程”里每一次 parseHtml 调用上报的诊断，而不是只读最后一次：
+            // 循环会依次尝试 qiangzhi/zhengfang/kingosoft，每次 parseHtml 开头都会重置
+            // scriptEngine.lastRunDiagnostics；若真正丢课的是前面的解析器，而最后一个
+            // 解析器成功或干脆没解析到任何东西，只读最后一次会把之前的丢课记录冲掉。
+            val allDiagnostics = mutableListOf<String>()
             try {
                 val parsed = withContext(Dispatchers.IO) {
                     // 解析流程的设计目标：
@@ -328,7 +334,14 @@ class ImportViewModel @Inject constructor(
                             "" // 理论上不应发生
                         }
 
-                        for (parserName in parsers) {
+                        // 三个解析脚本现在都依赖 common_parser_utils.js（周次/节次解析、reportDropped 等），
+                        // 缺了它 zhengfang.js 会直接 ReferenceError。此时直接判为解析失败，不再硬跑。
+                        if (commonUtils.isBlank()) {
+                            hasAnyParserAttempt = true
+                            hasParserCrash = true
+                        }
+
+                        for (parserName in if (commonUtils.isBlank()) emptyList() else parsers) {
                             hasAnyParserAttempt = true
                             try {
                                 // 加载解析脚本
@@ -340,9 +353,10 @@ class ImportViewModel @Inject constructor(
                                     script
                                 }
                                 val jsonResult = scriptEngine.parseHtml(fullScript, raw)
+                                allDiagnostics.addAll(scriptEngine.lastRunDiagnostics)
                                 val xiaoai = parseXiaoaiProviderResult(jsonResult)
                                 val result = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
-                                
+
                                 if (result.isNotEmpty()) {
                                     courses = result
                                     break // 解析成功，停止尝试其他脚本
@@ -370,8 +384,21 @@ class ImportViewModel @Inject constructor(
                     courses
                 }
                 
+                // 解析脚本上报的"被跳过记录"条数（仅统计，无页面内容；跨所有尝试过的解析器累加）
+                val droppedCount = allDiagnostics.size
+                val droppedNote = if (droppedCount > 0) {
+                    "\n（另有 $droppedCount 条记录因周次/节次识别失败被跳过；如有课程缺失，请在 issue 中附上教务系统课表页面代码）"
+                } else {
+                    ""
+                }
+
                 if (parsed.isEmpty()) {
-                    _uiState.update { it.copy(isLoading = false, resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载") }
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载$droppedNote"
+                        )
+                    }
                 } else {
                     val lastUrl = _uiState.value.webUrl
                     if (lastUrl.isNotBlank()) {
@@ -386,7 +413,7 @@ class ImportViewModel @Inject constructor(
                             step = ImportStep.Review,
                             detectedMaxSection = safeMaxSection,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                            resultText = "成功解析 ${parsed.size} 个课程段"
+                            resultText = "成功解析 ${parsed.size} 个课程段$droppedNote"
                         )
                     }
                 }
