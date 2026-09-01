@@ -55,13 +55,12 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      # 跨运行持久化依赖 + Gradle 构建缓存，使 CodeQL 的构建复用已编译产物。
+      # 仅用于依赖/wrapper 缓存（构建缓存对 CodeQL 反而有害，见下方 --no-build-cache）。
       - name: Set up Gradle
         if: matrix.language == 'java-kotlin'
         uses: gradle/actions/setup-gradle@v4
         with:
-          # 允许在 PR 分支写入自己的缓存条目，使同分支后续推送命中热缓存。
-          cache-read-only: false
+          cache-read-only: true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -72,11 +71,12 @@ jobs:
 
       - name: Build (Android)
         if: matrix.language == 'java-kotlin'
-        # 只需编译供 CodeQL 抽取，跳过 dex/打包/lint；:app:compileDebugSources 会
-        # 传递编译全部依赖模块。
+        # 必须禁用 Gradle 构建缓存：CodeQL 的 manual 抽取靠 trace 包裹真实的 kotlinc/
+        # javac 调用，一旦编译任务命中构建缓存（FROM-CACHE）就不会真正执行，数据库为空、
+        # 分析报 "no source code seen"。依赖缓存（setup-gradle）不受影响。
         run: >-
-          ./gradlew :app:compileDebugSources
-          --build-cache --max-workers=4
+          ./gradlew :app:assembleDebug
+          --no-build-cache --max-workers=4
           -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
       - name: Perform CodeQL Analysis
