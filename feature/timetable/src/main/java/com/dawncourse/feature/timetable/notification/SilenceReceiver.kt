@@ -43,6 +43,8 @@ class SilenceReceiver : BroadcastReceiver() {
     interface ReceiverEntryPoint {
         /** MUTE 在解析数据库 Repository 前检查；UNMUTE 补偿路径不依赖此状态。 */
         fun operationalDataGate(): OperationalDataGate
+        /** MUTE 在启动窗口内没等到数据库就绪时，改由持久任务补投的调度器。 */
+        fun triggerReadinessRetryScheduler(): TriggerReadinessRetryScheduler
         /** 设置仓库。 */
         fun settingsRepository(): SettingsRepository
         /** 课程仓库。 */
@@ -90,6 +92,11 @@ class SilenceReceiver : BroadcastReceiver() {
                                 .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
                             if (readiness == OperationalDataReadiness.READY) {
                                 muteIfStillValid(context, key, entryPoint)
+                            } else if (readiness == OperationalDataReadiness.STARTING) {
+                                // 一次性静音闹钟已被系统消费且无自身重试。启动仍在进行时，
+                                // 把完整 Key 交给 WorkManager 持久重试，就绪后按同一显式 Intent
+                                // 补投，避免自动静音永久丢失。
+                                entryPoint.triggerReadinessRetryScheduler().enqueue(key)
                             }
                         }
                         TriggerKind.UNMUTE -> recoverOwnedSession(

@@ -130,6 +130,10 @@ class TimetableViewModel @Inject constructor(
                 if (scope != lastActiveScope) {
                     lastActiveScope = scope
                     hasScrolledToCurrentWeek = false
+                    // 作用域（Profile/学期）切换后，上一课表的删除撤销栈与待显示提示不再适用，
+                    // 必须同时失效；否则用户切到另一课表再返回时点“撤销”，会把旧课表的课程
+                    // 写回旧学期，而当前看到的是另一张课表。
+                    invalidatePendingUndo()
                 }
                 val semester = context?.semester
                 if (semester != null) {
@@ -222,6 +226,18 @@ class TimetableViewModel @Inject constructor(
 
     // 删除操作的撤销栈，最多保存 5 步
     private val deletedCoursesStack = ArrayDeque<List<Course>>()
+
+    /**
+     * 作用域切换时失效待处理的删除撤销：清空撤销栈并撤下仍在显示的删除提示。
+     *
+     * 仅在确实存在待撤销记录时才清理提示，避免误清其他无关的用户消息。
+     * 与 currentSemesterFlow 的收集同在 viewModelScope 主调度器上执行，无需额外同步。
+     */
+    private fun invalidatePendingUndo() {
+        if (deletedCoursesStack.isEmpty()) return
+        deletedCoursesStack.clear()
+        _userMessage.value = null
+    }
 
     /**
      * 标记用户消息已显示

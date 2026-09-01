@@ -163,7 +163,16 @@ class MuteRecoveryWorker @AssistedInject constructor(
             throw cancellation
         } catch (failure: Exception) {
             Log.e(TAG, "静音恢复 Worker 处理失败: ${failure.javaClass.simpleName}")
-            Result.failure()
+            // SharedPreferences commit / 存储 IO 异常不是终态：ACTIVE/PENDING 恢复责任
+            // 与震动状态可能仍持久保留，直接 Result.failure() 会让用户在不重开应用的
+            // 情况下长期收不到响铃。有限次数内交给 WorkManager 退避重试；到上限后刷新
+            // 用户可见的恢复提醒作为兜底入口，再收敛为 success 以免无限占用后台配额。
+            if (runAttemptCount + 1 < MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS) {
+                Result.retry()
+            } else {
+                runCatching { notificationHelper.refreshForCurrentState() }
+                Result.success()
+            }
         }
     }
 

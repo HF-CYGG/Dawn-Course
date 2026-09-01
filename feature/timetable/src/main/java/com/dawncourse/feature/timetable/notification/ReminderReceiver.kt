@@ -40,6 +40,8 @@ class ReminderReceiver : BroadcastReceiver() {
     interface ReceiverEntryPoint {
         /** 在解析数据库 Repository 前检查启动状态。 */
         fun operationalDataGate(): OperationalDataGate
+        /** 启动窗口内没等到数据库就绪时，改由持久任务补投的调度器。 */
+        fun triggerReadinessRetryScheduler(): TriggerReadinessRetryScheduler
         /** 课程仓库。 */
         fun courseRepository(): CourseRepository
         /** 与 Profile 切换共用的最终动作线性化门。 */
@@ -76,7 +78,15 @@ class ReminderReceiver : BroadcastReceiver() {
         )
         val readiness = entryPoint.operationalDataGate()
             .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
-        if (readiness != OperationalDataReadiness.READY) return
+        if (readiness != OperationalDataReadiness.READY) {
+            // 一次性闹钟已被系统消费且无自身重试。启动仍在进行时，把完整 Key 交给
+            // WorkManager 持久重试，就绪后再按同一显式 Intent 补投，避免提醒永久丢失。
+            // RECOVERY_REQUIRED 需要前台恢复流程，补投一次性广播无意义，交由启动对账处理。
+            if (readiness == OperationalDataReadiness.STARTING) {
+                entryPoint.triggerReadinessRetryScheduler().enqueue(key)
+            }
+            return
+        }
         val candidate = entryPoint.courseRepository().getCourseById(key.courseId) ?: return
         entryPoint.activeTimetableActionGate().executeIfActive(
             profileId = key.profileId,

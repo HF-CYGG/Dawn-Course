@@ -38,6 +38,13 @@ abstract class TriggerSchedulingModule {
         implementation: WorkManagerMuteRecoveryScheduler
     ): MuteRecoveryWorkScheduler
 
+    /** 绑定启动窗口内错过数据库就绪时的一次性触发补投调度器。 */
+    @Binds
+    @Singleton
+    abstract fun bindTriggerReadinessRetryScheduler(
+        implementation: WorkManagerTriggerReadinessRetryScheduler
+    ): TriggerReadinessRetryScheduler
+
     /** 绑定独立低噪声恢复警示。 */
     @Binds
     @Singleton
