@@ -81,12 +81,10 @@ class WidgetTimelineBuilder @Inject constructor(
                 .atZone(ZoneId.systemDefault())
                 .toLocalDate()
         }
-        val isBeforeSemesterStart = termStartDate != null && today.isBefore(termStartDate)
-        val daysUntilSemesterStart = if (isBeforeSemesterStart) {
-            termStartDate?.let { startDate -> ChronoUnit.DAYS.between(today, startDate) }
-        } else {
-            null
-        }
+        val daysUntilSemesterStart = termStartDate
+            ?.takeIf { startDate -> today.isBefore(startDate) }
+            ?.let { startDate -> ChronoUnit.DAYS.between(today, startDate) }
+        val isBeforeSemesterStart = daysUntilSemesterStart != null
         val currentWeek = if (semester != null && termStartDate != null && !isBeforeSemesterStart) {
             val daysDiff = ChronoUnit.DAYS.between(termStartDate, today)
             (daysDiff / 7).toInt() + 1

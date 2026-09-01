@@ -155,18 +155,19 @@ class AtomicDatabaseMigrationFiles(
             ?: return@runCatching true
         if (journal.stage != DatabaseMigrationStage.COMPLETE) return@runCatching true
         val attempt = attemptFor(journal.attemptId)
-        val cleanupTargets = buildList {
-            add(attempt.plaintextPreimage)
-            add(File(attempt.plaintextPreimage.path + ".copying"))
-            SIDECAR_SUFFIXES.forEach { suffix ->
-                add(File(attempt.plaintextPreimage.path + suffix + ".at-swap"))
-                add(File(attempt.plaintextPreimage.path + suffix + ".closed"))
-            }
-        }
-        cleanupTargets.forEach(::deletePrivateArtifact)
-        deletePrivateArtifact(journalFile)
-        forceDirectoryBestEffort(databaseDirectory)
-        true
+        cleanupAttemptArtifacts(attempt, includeFailedEncrypted = false)
+    }.getOrDefault(false)
+
+    /**
+     * 仅接受 ROLLED_BACK journal；调用资格必须由已提交的显式恢复/放弃事务证明。
+     * 普通冷开不得调用，避免在用户尚未选择恢复路径时删除最后的明文回滚副本。
+     */
+    override fun cleanupRolledBackAfterExplicitRecoveryAndVerifiedColdOpen(): Boolean = runCatching {
+        val journal = (readJournal() as? JournalReadResult.Available)?.journal
+            ?: return@runCatching true
+        if (journal.stage != DatabaseMigrationStage.ROLLED_BACK) return@runCatching true
+        val attempt = attemptFor(journal.attemptId)
+        cleanupAttemptArtifacts(attempt, includeFailedEncrypted = true)
     }.getOrDefault(false)
 
     /** 将严格 UUID 映射到固定同目录文件名。 */
@@ -183,6 +184,38 @@ class AtomicDatabaseMigrationFiles(
     /** 防止调用方构造越界路径或混用另一个 attempt。 */
     private fun validateAttempt(attempt: DatabaseMigrationAttempt) {
         require(attempt == attemptFor(attempt.id)) { "数据库迁移 attempt 路径不匹配" }
+    }
+
+    /** 删除当前 journal 精确指向的产物；失败加密库只会出现在 ROLLED_BACK 清理路径。 */
+    private fun cleanupAttemptArtifacts(
+        attempt: DatabaseMigrationAttempt,
+        includeFailedEncrypted: Boolean,
+    ): Boolean {
+        val cleanupTargets = buildList {
+            add(attempt.plaintextPreimage)
+            add(File(attempt.plaintextPreimage.path + ".copying"))
+            SIDECAR_SUFFIXES.forEach { suffix ->
+                add(File(attempt.plaintextPreimage.path + suffix + ".at-swap"))
+                add(File(attempt.plaintextPreimage.path + suffix + ".closed"))
+            }
+            if (includeFailedEncrypted) {
+                val failedEncrypted = File(databaseDirectory, "${databaseFile.name}.failed-encrypted.${attempt.id}")
+                add(failedEncrypted)
+                SIDECAR_SUFFIXES.forEach { suffix -> add(File(failedEncrypted.path + suffix)) }
+                val rollbackSidecarPrefixes = SIDECAR_SUFFIXES.map { suffix ->
+                    "${attempt.plaintextPreimage.name}$suffix.rollback-"
+                }
+                databaseDirectory.listFiles()
+                    ?.filter { artifact ->
+                        rollbackSidecarPrefixes.any(artifact.name::startsWith)
+                    }
+                    ?.let(::addAll)
+            }
+        }
+        cleanupTargets.forEach(::deletePrivateArtifact)
+        deletePrivateArtifact(journalFile)
+        forceDirectoryBestEffort(databaseDirectory)
+        return true
     }
 
     /** 恢复函数只返回稳定结果，不让文件异常逃逸到启动入口。 */

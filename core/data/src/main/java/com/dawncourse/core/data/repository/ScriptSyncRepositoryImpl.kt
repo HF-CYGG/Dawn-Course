@@ -35,11 +35,19 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context
 ) : ScriptSyncRepository {
 
-    // 云端脚本的存储路径
-    private val backendEndpoints = CloudBackendEndpoints.apiBaseUrls
-    private val scriptBaseUrls = backendEndpoints.map { it.label to "${it.baseUrl}scripts/" }
-    private val pullStatUrls = backendEndpoints.map { "${it.baseUrl}api/v1/script_pull" }
-    private val activationEventUrls = backendEndpoints.map { "${it.baseUrl}api/v1/scripts/activation-events" }
+    /** 签名脚本与 manifest 的只读下载端点，允许兼容旧部署的 HTTP 回退。 */
+    private val signedReadOnlyEndpoints = CloudBackendEndpoints.signedReadOnlyBaseUrls
+
+    /** 携带诊断、统计或运行结果的写入端点，必须始终使用 HTTPS。 */
+    private val sensitiveApiEndpoints = CloudBackendEndpoints.sensitiveApiBaseUrls
+    /** Manifest 查询包含设备桶与学校范围，只能走 HTTPS API。 */
+    private val manifestApiEndpoints = sensitiveApiEndpoints
+    private val scriptBaseUrls = signedReadOnlyEndpoints.map { it.label to "${it.baseUrl}scripts/" }
+    private val feedbackBaseUrls = sensitiveApiEndpoints.map { "${it.baseUrl}scripts/" }
+    private val pullStatUrls = sensitiveApiEndpoints.map { "${it.baseUrl}api/v1/script_pull" }
+    private val activationEventUrls = sensitiveApiEndpoints.map {
+        "${it.baseUrl}api/v1/scripts/activation-events"
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -313,7 +321,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 .put("attemptedParsers", JSONArray(attemptedParsers))
                 .toString()
             val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
-            scriptBaseUrls.any { (_, baseUrl) ->
+            feedbackBaseUrls.any { baseUrl ->
                 runCatching { postFeedback(baseUrl, body) }.getOrDefault(false)
             }
         }
@@ -326,7 +334,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
     )
 
     private fun fetchScriptFromCloud(scriptName: String, category: String): CloudScriptResult {
-        for ((label, baseUrl) in backendEndpoints.map { it.label to it.baseUrl }) {
+        for ((label, baseUrl) in manifestApiEndpoints.map { it.label to it.baseUrl }) {
             fetchScriptFromManifest(scriptName, category, baseUrl, "manifest_$label")?.let { return it }
         }
         for ((label, baseUrl) in scriptBaseUrls) {
@@ -345,8 +353,7 @@ class ScriptSyncRepositoryImpl @Inject constructor(
         return withContext(Dispatchers.IO) {
             val resolvedSystemType = schoolSystemType.ifBlank { getSavedSchoolSystemType() }
             val resolvedSchoolId = schoolId.ifBlank { getSchoolIdForScript(resolvedSystemType) }
-            for ((_, baseScriptsUrl) in scriptBaseUrls) {
-                val baseUrl = baseScriptsUrl.removeSuffix("scripts/")
+            for ((_, baseUrl) in manifestApiEndpoints.map { it.label to it.baseUrl }) {
                 val manifestJson = fetchManifestJson(baseUrl, resolvedSystemType, resolvedSchoolId)
                     ?: continue
                 val scripts = manifestJson.optJSONArray("scripts") ?: continue

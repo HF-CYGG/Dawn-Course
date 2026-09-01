@@ -156,21 +156,33 @@ class DatabaseStartupRuntime @Inject constructor(
                 // （含 v5->v6 schema 迁移）成功后，才提交 COMPLETE。Room 这一步失败时，
                 // journal 仍未 COMPLETE，明文 pre-image 依然可以物理回滚，
                 // 不能让用户仍然完好的旧数据被锁死在一个未经验证的加密库里。
-                when (val opened = openAndPublish(passphrase = passphrase, migratedPlaintextThisRun = true)) {
+                when (
+                    val opened = openAndPublish(
+                        passphrase = passphrase,
+                        migratedPlaintextThisRun = true,
+                        deferRecoveryQuarantine = true,
+                    )
+                ) {
                     is DatabaseStartupInitialization.Ready -> {
                         if (migrator.confirmComplete(migration.attempt)) {
                             opened
                         } else {
-                            opened.handle.close()
-                            enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+                            finalizeFailedPostMigration(
+                                closeOpenedHandle = opened.handle::close,
+                                rollbackPlaintextPreimage = {
+                                    migrator.abandonAfterOpenFailure(migration.attempt)
+                                },
+                                enterRecovery = ::enterRecovery,
+                            )
                         }
                     }
                     is DatabaseStartupInitialization.RecoveryRequired -> {
-                        if (migrator.abandonAfterOpenFailure(migration.attempt)) {
-                            enterRecovery(DatabaseRecoveryReason.MigrationFailed)
-                        } else {
-                            opened
-                        }
+                        finalizeFailedPostMigration(
+                            rollbackPlaintextPreimage = {
+                                migrator.abandonAfterOpenFailure(migration.attempt)
+                            },
+                            enterRecovery = ::enterRecovery,
+                        )
                     }
                 }
             }
@@ -184,13 +196,23 @@ class DatabaseStartupRuntime @Inject constructor(
     /** Room 只有完整打开并通过 SQLite/SQLCipher 校验后才会发布给 Hilt。 */
     private fun openAndPublish(
         passphrase: SqlCipherPassphrase,
-        migratedPlaintextThisRun: Boolean
+        migratedPlaintextThisRun: Boolean,
+        deferRecoveryQuarantine: Boolean = false,
     ): DatabaseStartupInitialization<AppDatabase> {
+        fun fail(reason: DatabaseRecoveryReason): DatabaseStartupInitialization.RecoveryRequired =
+            if (deferRecoveryQuarantine) {
+                // 明文迁移仍持有可回滚 pre-image。调用方必须先回滚，再建立恢复 marker
+                // 并隔离数据库；否则会留下 main 与 recovery-quarantine 同时存在。
+                DatabaseStartupInitialization.RecoveryRequired(reason)
+            } else {
+                enterRecovery(reason)
+            }
+
         val database = try {
             roomFactory.openAndVerify(DATABASE_NAME, passphrase)
         } catch (_: Throwable) {
             passphrase.close()
-            return enterRecovery(DatabaseRecoveryReason.DatabaseOpenFailed)
+            return fail(DatabaseRecoveryReason.DatabaseOpenFailed)
         }
         val profileReady = runCatching {
             runBlocking {
@@ -208,15 +230,23 @@ class DatabaseStartupRuntime @Inject constructor(
         passphrase.close()
         if (!profileReady) {
             database.close()
-            return enterRecovery(DatabaseRecoveryReason.DatabaseOpenFailed)
+            return fail(DatabaseRecoveryReason.DatabaseOpenFailed)
         }
-        if (!migratedPlaintextThisRun && !migrationFiles.cleanupAfterVerifiedColdOpen()) {
-            database.close()
-            return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+        val migrationArtifactsCleaned = migratedPlaintextThisRun || migrationFiles.withExclusiveLock {
+            migrationFiles.cleanupAfterVerifiedColdOpen()
         }
-        if (!recoveryBootstrap.cleanupAfterVerifiedColdOpen()) {
+        if (!migrationArtifactsCleaned) {
             database.close()
-            return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+            return fail(DatabaseRecoveryReason.RecoveryStateCorrupt)
+        }
+        if (!recoveryBootstrap.cleanupAfterVerifiedColdOpen {
+                migrationFiles.withExclusiveLock {
+                    migrationFiles.cleanupRolledBackAfterExplicitRecoveryAndVerifiedColdOpen()
+                }
+            }
+        ) {
+            database.close()
+            return fail(DatabaseRecoveryReason.RecoveryStateCorrupt)
         }
         return DatabaseStartupInitialization.Ready(database, migratedPlaintextThisRun)
     }
@@ -236,6 +266,31 @@ class DatabaseStartupRuntime @Inject constructor(
         private const val DEFAULT_PROFILE_ID = 1L
         private const val DEFAULT_PROFILE_NAME = "默认课表"
     }
+}
+
+/**
+ * 明文迁移已换入但尚未提交 COMPLETE 时的唯一失败收口。
+ *
+ * 稳定顺序必须是：关闭已发布句柄（若有）→ 回滚 plaintext pre-image → 建立恢复状态。
+ * 即使关闭或回滚失败也必须尝试进入恢复；回滚失败升级为状态损坏，避免继续信任
+ * 未经 Room 完整验证的加密主库。
+ */
+internal fun finalizeFailedPostMigration(
+    closeOpenedHandle: () -> Unit = {},
+    rollbackPlaintextPreimage: () -> Boolean,
+    enterRecovery: (
+        DatabaseRecoveryReason
+    ) -> DatabaseStartupInitialization.RecoveryRequired,
+): DatabaseStartupInitialization.RecoveryRequired {
+    runCatching(closeOpenedHandle)
+    val rolledBack = runCatching(rollbackPlaintextPreimage).getOrDefault(false)
+    return enterRecovery(
+        if (rolledBack) {
+            DatabaseRecoveryReason.MigrationFailed
+        } else {
+            DatabaseRecoveryReason.RecoveryStateCorrupt
+        }
+    )
 }
 
 /** 使用独立 startup 锁包围 journal→文件→信封→迁移/打开→Room 的完整生命周期。 */

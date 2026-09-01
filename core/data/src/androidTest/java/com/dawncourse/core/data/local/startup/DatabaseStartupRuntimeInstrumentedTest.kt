@@ -92,6 +92,10 @@ class DatabaseStartupRuntimeInstrumentedTest {
         assertEquals(DatabaseRuntimeState.Ready, awaitTerminal(reopened))
         assertEquals(1, reopened.requireReadyDatabase().semesterDao().getAllSemestersOnce().size)
         assertEquals(1, reopened.requireReadyDatabase().courseDao().getAllCoursesOnce().size)
+        assertEquals(
+            1L,
+            ActiveProfileSelectionStore(context.settingsDataStore).rawActiveProfileId.first(),
+        )
         reopened.requireReadyDatabase().close()
         backupFile.delete()
         Unit

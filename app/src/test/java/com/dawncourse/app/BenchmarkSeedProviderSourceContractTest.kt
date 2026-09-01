@@ -18,8 +18,15 @@ class BenchmarkSeedProviderSourceContractTest {
         val source = benchmarkProviderSource()
 
         assertTrue(source.contains("id = BENCHMARK_SEMESTER_ID"))
+        assertTrue(source.contains("val profileId = requireNotNull(database.timetableProfileDao().getFirstProfile())"))
+        assertTrue(source.contains("profileId = profileId"))
         assertTrue(source.contains("id = BENCHMARK_COURSE_ID_START + index.toLong()"))
         assertTrue(source.contains("resetBenchmarkSequences(database)"))
+        assertTrue(
+            source.contains(
+                "database.timetableProfileDao().updateActiveSemesterId(profileId, BENCHMARK_SEMESTER_ID)"
+            )
+        )
         assertTrue(source.contains("DELETE FROM sqlite_sequence WHERE name IN ('courses', 'semesters')"))
         assertTrue(
             source.indexOf("database.courseDao().deleteAllCourses()") <
@@ -31,7 +38,14 @@ class BenchmarkSeedProviderSourceContractTest {
         )
         assertTrue(
             source.indexOf("resetBenchmarkSequences(database)") <
-                source.indexOf("database.semesterDao().insertSemester(benchmarkSemester())")
+                source.indexOf("database.semesterDao().insertSemester(benchmarkSemester(profileId))")
+        )
+        assertTrue(
+            source.indexOf("database.semesterDao().insertSemester(benchmarkSemester(profileId))") <
+                source.indexOf(
+                    "database.timetableProfileDao().updateActiveSemesterId(profileId, " +
+                        "BENCHMARK_SEMESTER_ID)"
+                )
         )
     }
 

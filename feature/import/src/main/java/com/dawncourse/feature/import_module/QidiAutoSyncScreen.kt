@@ -2336,9 +2336,13 @@ private fun WebViewBox(
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
-            settings.javaScriptCanOpenWindowsAutomatically = true
-            // 仅加载教务系统远程页面，禁止访问 content:// 避免恶意链接读取本地内容。
+            // 教务登录依赖页面 JavaScript，但不需要本地文件、content URI 或脚本弹窗能力。
+            settings.allowFileAccess = false
             settings.allowContentAccess = false
+            settings.setAllowFileAccessFromFileURLs(false)
+            settings.setAllowUniversalAccessFromFileURLs(false)
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
             if (provider == SyncProviderType.ZF) {
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 settings.userAgentString = settings.userAgentString.replace("wv", "")

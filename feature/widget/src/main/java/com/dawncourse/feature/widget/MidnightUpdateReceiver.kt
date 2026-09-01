@@ -3,6 +3,7 @@ package com.dawncourse.feature.widget
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
@@ -34,7 +35,7 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
                 set(Calendar.SECOND, 0)
             }
 
-            val intent = Intent(context, MidnightUpdateReceiver::class.java)
+            val intent = explicitIntent(context)
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
                 0,
@@ -74,7 +75,7 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
             // 使用与 scheduleNextMidnightUpdate 完全一致的 requestCode 与 intent，才能准确定位并取消同一条闹钟
-            val intent = Intent(context, MidnightUpdateReceiver::class.java)
+            val intent = explicitIntent(context)
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
                 0,
@@ -92,6 +93,11 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
                 } catch (_: Throwable) {
                 }
             }
+        }
+
+        /** 显式 component 避免 AlarmManager 持有的 PendingIntent 被解析到第三方组件。 */
+        private fun explicitIntent(context: Context): Intent = Intent().apply {
+            component = ComponentName(context, MidnightUpdateReceiver::class.java)
         }
     }
 }

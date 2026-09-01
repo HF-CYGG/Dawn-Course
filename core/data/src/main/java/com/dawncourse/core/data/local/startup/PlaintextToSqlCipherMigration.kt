@@ -111,6 +111,9 @@ interface DatabaseMigrationFileOperations {
 
     /** 下一次冷启动完整验证加密主库后，清理已完成迁移遗留的明文副本。 */
     fun cleanupAfterVerifiedColdOpen(): Boolean = true
+
+    /** 用户已完成恢复/放弃且替换库通过后续冷开验证后，清理回滚 attempt 的敏感产物。 */
+    fun cleanupRolledBackAfterExplicitRecoveryAndVerifiedColdOpen(): Boolean = true
 }
 
 /** Android SQLite/SQLCipher API 的可替换边界。 */

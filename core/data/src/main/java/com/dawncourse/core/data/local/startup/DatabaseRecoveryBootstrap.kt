@@ -610,13 +610,20 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         }
     }
 
-    /** 下一成功冷开同时清理旧 DB、旧信封和 committed journal。 */
-    fun cleanupAfterVerifiedColdOpen(): Boolean {
-        val attempt = journal.current() ?: return recoveryFiles.cleanupAfterVerifiedColdOpen()
-        if (attempt.stage != DatabaseRecoveryInstallStage.COMMITTED) return false
-        return recoveryFiles.cleanupAfterVerifiedColdOpen() &&
-            installer.cleanupCommittedOldKeyMaterial() &&
-            journal.clearCommittedArtifacts(attempt)
+    /** 下一成功冷开同时清理旧迁移产物、旧 DB、旧信封和 committed journal。 */
+    fun cleanupAfterVerifiedColdOpen(
+        cleanupRolledBackMigration: () -> Boolean,
+    ): Boolean {
+        val attempt = journal.current()
+        return cleanupArtifactsAfterVerifiedRecoveryColdOpen(
+            recoveryInstallStage = attempt?.stage,
+            cleanupRolledBackMigration = cleanupRolledBackMigration,
+            cleanupRecoveryDatabase = recoveryFiles::cleanupAfterVerifiedColdOpen,
+            cleanupOldKeyMaterial = installer::cleanupCommittedOldKeyMaterial,
+            cleanupInstallJournal = {
+                attempt != null && journal.clearCommittedArtifacts(attempt)
+            },
+        )
     }
 
     private suspend fun install(
@@ -749,4 +756,25 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         error is IllegalArgumentException -> DatabaseRecoveryActionFailure.BackupInvalid
         else -> DatabaseRecoveryActionFailure.WebDavUnavailable
     }
+}
+
+/**
+ * 只有 COMMITTED 恢复安装能证明用户已完成恢复或明确放弃；普通冷开仅处理无 marker 的隔离残留。
+ * 清理短路并保持 journal 到最后，使任一步失败都能在下次冷启动安全重试。
+ */
+internal fun cleanupArtifactsAfterVerifiedRecoveryColdOpen(
+    recoveryInstallStage: DatabaseRecoveryInstallStage?,
+    cleanupRolledBackMigration: () -> Boolean,
+    cleanupRecoveryDatabase: () -> Boolean,
+    cleanupOldKeyMaterial: () -> Boolean,
+    cleanupInstallJournal: () -> Boolean,
+): Boolean = when (recoveryInstallStage) {
+    null -> cleanupRecoveryDatabase()
+    DatabaseRecoveryInstallStage.COMMITTED -> {
+        cleanupRolledBackMigration() &&
+            cleanupRecoveryDatabase() &&
+            cleanupOldKeyMaterial() &&
+            cleanupInstallJournal()
+    }
+    else -> false
 }

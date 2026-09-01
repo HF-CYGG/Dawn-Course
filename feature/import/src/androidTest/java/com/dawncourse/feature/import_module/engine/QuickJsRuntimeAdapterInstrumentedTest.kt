@@ -10,7 +10,7 @@ import org.junit.runner.RunWith
 class QuickJsRuntimeAdapterInstrumentedTest {
     @Test
     fun evaluateReturnsAfterNativePromiseJobsAreDrained() {
-        val runtime = HarlonQuickJsRuntimeFactory.create()
+        val runtime = ThreadConfinedQuickJsRuntimeAdapter(HarlonQuickJsRuntimeFactory.create())
 
         try {
             runtime.evaluate(

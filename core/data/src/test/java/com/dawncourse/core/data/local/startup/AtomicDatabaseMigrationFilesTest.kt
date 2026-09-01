@@ -186,6 +186,58 @@ class AtomicDatabaseMigrationFilesTest {
         assertFalse(attempt.plaintextPreimage.exists())
     }
 
+    @Test
+    fun rolledBackArtifactsAreNotDeletedByOrdinaryColdOpenCleanup() {
+        val main = temporaryFolder.newFile("rolled-back-retained.db").apply { writeText("plaintext-main") }
+        val files = AtomicDatabaseMigrationFiles(main) { ATTEMPT_ONE }
+        lateinit var attempt: DatabaseMigrationAttempt
+        val failedEncrypted = File(main.parentFile, "${main.name}.failed-encrypted.$ATTEMPT_ONE")
+        lateinit var rollbackSidecar: File
+        files.withExclusiveLock {
+            attempt = files.beginAttempt()
+            attempt.plaintextPreimage.writeText("plaintext-pii")
+            failedEncrypted.writeText("failed-encrypted")
+            rollbackSidecar = File(attempt.plaintextPreimage.path + "-wal.rollback-$ATTEMPT_TWO")
+                .apply { writeText("failed-encrypted-wal") }
+            files.recordStage(attempt, DatabaseMigrationStage.ROLLED_BACK)
+        }
+
+        val cleaned = files.withExclusiveLock { files.cleanupAfterVerifiedColdOpen() }
+
+        assertTrue(cleaned)
+        assertTrue("尚无用户恢复决定时必须保留明文回滚副本", attempt.plaintextPreimage.exists())
+        assertTrue("尚无用户恢复决定时必须保留失败加密库", failedEncrypted.exists())
+        assertTrue("尚无用户恢复决定时必须保留失败加密 sidecar", rollbackSidecar.exists())
+    }
+
+    @Test
+    fun rolledBackArtifactsAreDeletedAfterExplicitRecoveryAndVerifiedColdOpen() {
+        val main = temporaryFolder.newFile("rolled-back-cleanup.db").apply { writeText("replacement-main") }
+        val files = AtomicDatabaseMigrationFiles(main) { ATTEMPT_ONE }
+        lateinit var attempt: DatabaseMigrationAttempt
+        val failedEncrypted = File(main.parentFile, "${main.name}.failed-encrypted.$ATTEMPT_ONE")
+        lateinit var rollbackSidecar: File
+        files.withExclusiveLock {
+            attempt = files.beginAttempt()
+            attempt.plaintextPreimage.writeText("plaintext-pii")
+            failedEncrypted.writeText("failed-encrypted")
+            rollbackSidecar = File(attempt.plaintextPreimage.path + "-wal.rollback-$ATTEMPT_TWO")
+                .apply { writeText("failed-encrypted-wal") }
+            files.recordStage(attempt, DatabaseMigrationStage.ROLLED_BACK)
+        }
+
+        val cleaned = files.withExclusiveLock {
+            files.cleanupRolledBackAfterExplicitRecoveryAndVerifiedColdOpen()
+        }
+
+        assertTrue(cleaned)
+        assertFalse(attempt.plaintextPreimage.exists())
+        assertFalse(failedEncrypted.exists())
+        assertFalse(rollbackSidecar.exists())
+        val journal = File(main.parentFile, "${main.name}.sqlcipher-migration.journal")
+        assertFalse(journal.exists())
+    }
+
     private companion object {
         const val ATTEMPT_ONE = "00000000-0000-0000-0000-000000000001"
         const val ATTEMPT_TWO = "00000000-0000-0000-0000-000000000002"

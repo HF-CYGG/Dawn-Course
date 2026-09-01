@@ -31,7 +31,7 @@ class ParseReportRepositoryImpl @Inject constructor() : ParseReportRepository {
             .toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
         val errors = mutableListOf<Throwable>()
-        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+        for (endpoint in CloudBackendEndpoints.sensitiveApiBaseUrls) {
             val attempt = runCatching { post("${endpoint.baseUrl}api/v1/parse/report", body) }
             if (attempt.isSuccess) {
                 return@withContext Result.success(Unit)

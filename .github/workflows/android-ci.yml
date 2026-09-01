@@ -47,13 +47,13 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleDebug --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
 
     - name: Run tests
-      run: ./gradlew testDebugUnitTest
+      run: ./gradlew testDebugUnitTest --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
 
     - name: Run Lint
-      run: ./gradlew lintDebug
+      run: ./gradlew lintDebug --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
 
     - name: Upload Test Reports
       if: always()
@@ -103,7 +103,7 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build minified releaseSmoke and run APK gates
-      run: ./gradlew :app:releaseSmoke -Pdawn.releaseSmoke=true
+      run: ./gradlew :app:releaseSmoke -Pdawn.releaseSmoke=true --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
 
     - name: Upload releaseSmoke APK
       if: always()

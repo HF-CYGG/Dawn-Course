@@ -83,7 +83,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
     private fun executeSubmitWithFallback(body: okhttp3.RequestBody): Result<LlmParseTaskResult> {
         val errors = mutableListOf<Throwable>()
         var lastResult: LlmParseTaskResult? = null
-        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+        for (endpoint in CloudBackendEndpoints.sensitiveApiBaseUrls) {
             val attempt = runCatching { executeSubmit(endpoint.baseUrl, body) }
             if (attempt.isSuccess) {
                 val value = attempt.getOrThrow()
@@ -102,7 +102,7 @@ class LlmParseRepositoryImpl @Inject constructor() : LlmParseRepository {
     private fun executeStatusWithFallback(taskId: String): Result<LlmParseStatusResult> {
         val errors = mutableListOf<Throwable>()
         var lastResult: LlmParseStatusResult? = null
-        for (endpoint in CloudBackendEndpoints.apiBaseUrls) {
+        for (endpoint in CloudBackendEndpoints.sensitiveApiBaseUrls) {
             val attempt = runCatching { executeStatus(endpoint.baseUrl, taskId) }
             if (attempt.isSuccess) {
                 val value = attempt.getOrThrow()

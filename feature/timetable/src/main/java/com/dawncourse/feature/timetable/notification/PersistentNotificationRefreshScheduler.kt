@@ -2,6 +2,7 @@ package com.dawncourse.feature.timetable.notification
 
 import android.app.AlarmManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -159,11 +160,10 @@ object PersistentNotificationRefreshScheduler {
      * 创建状态刷新广播的唯一 PendingIntent。
      */
     private fun createPendingIntent(context: Context, lookupFlag: Int): PendingIntent? {
-        val intent = Intent(context, PersistentNotificationRefreshReceiver::class.java).apply {
+        val intent = Intent().apply {
+            component = ComponentName(context, PersistentNotificationRefreshReceiver::class.java)
             action = ACTION_REFRESH_COURSE_STATUS
             data = Uri.parse(REFRESH_DATA_URI)
-            // 显式锁定目标包名，避免 AlarmManager 持有的 PendingIntent 被当作隐式 Intent 解析。
-            setPackage(context.packageName)
         }
         return PendingIntent.getBroadcast(
             context,

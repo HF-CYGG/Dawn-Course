@@ -215,7 +215,8 @@ object WidgetSyncManager {
     }
 
     private fun nextCourseUpdateIntent(context: Context): Intent =
-        Intent(context, DawnWidgetReceiver::class.java).apply {
+        Intent().apply {
+            component = ComponentName(context, DawnWidgetReceiver::class.java)
             action = ACTION_FORCE_UPDATE
         }
 

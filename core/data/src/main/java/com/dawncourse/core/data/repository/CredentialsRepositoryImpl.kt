@@ -12,6 +12,8 @@ import com.dawncourse.core.domain.repository.CredentialsRepository
 import com.google.gson.Gson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,6 +39,59 @@ internal object ProfileCredentialFileNamer {
     }
 
     fun isManagedFile(name: String): Boolean = name.startsWith(PREFIX) && name.endsWith(SUFFIX)
+}
+
+/** 将主文件及其崩溃备份/恢复临时文件统一映射到所属的受管凭据主文件。 */
+internal fun credentialOwnerFileName(name: String): String? {
+    if (ProfileCredentialFileNamer.isManagedFile(name)) return name
+    return listOf(".bak", ".restore")
+        .firstNotNullOfOrNull { suffix ->
+            name.takeIf { it.endsWith(suffix) }
+                ?.removeSuffix(suffix)
+                ?.takeIf(ProfileCredentialFileNamer::isManagedFile)
+        }
+}
+
+/** 崩溃备份只在新主文件可完整解密并解析后才能删除。 */
+internal fun recoverCredentialBackupIfNeeded(
+    mainExists: () -> Boolean,
+    backupExists: () -> Boolean,
+    mainIsValid: () -> Boolean,
+    restoreBackup: () -> Unit,
+    discardBackup: () -> Unit,
+) {
+    if (!backupExists()) return
+    if (mainExists() && mainIsValid()) {
+        discardBackup()
+    } else {
+        restoreBackup()
+    }
+}
+
+/** 清除前先收敛中断覆盖，再先删备份后删主文件，避免失败后复活。 */
+internal suspend fun clearCredentialFiles(
+    recoverBackups: suspend () -> Unit,
+    deleteRestoreStaging: () -> Unit,
+    deleteMain: () -> Unit,
+    deleteBackup: () -> Unit,
+) {
+    recoverBackups()
+    deleteRestoreStaging()
+    deleteBackup()
+    deleteMain()
+}
+
+/** 原备份在新主文件完整验证前始终保留。 */
+internal fun restoreCredentialBackupSafely(
+    stageBackupCopy: () -> Unit,
+    replaceMainAtomically: () -> Unit,
+    mainIsValid: () -> Boolean,
+    discardBackup: () -> Unit,
+) {
+    stageBackupCopy()
+    replaceMainAtomically()
+    check(mainIsValid()) { "恢复后的凭据备份未通过回读验证" }
+    discardBackup()
 }
 
 /** 以同一 MasterKey 为每个 Profile 独立加密凭据，并懒迁移单文件旧格式。 */
@@ -93,9 +148,20 @@ class CredentialsRepositoryImpl @Inject constructor(
             val profile = profileDao.getProfileById(profileId)
             if (profile != null) {
                 migrateLegacyLocked()
-                deleteIfPresent(profileFile(profile.uuid), "无法删除 Profile 凭据")
+                val file = profileFile(profile.uuid)
+                val backup = File(file.parentFile, file.name + BACKUP_SUFFIX)
+                val restoreStaging = File(file.parentFile, file.name + RESTORE_STAGING_SUFFIX)
+                clearCredentialFiles(
+                    recoverBackups = ::recoverBackupsLocked,
+                    deleteRestoreStaging = {
+                        deleteIfPresent(restoreStaging, "无法删除 Profile 凭据恢复临时文件")
+                    },
+                    deleteMain = { deleteIfPresent(file, "无法删除 Profile 凭据") },
+                    deleteBackup = { deleteIfPresent(backup, "无法删除 Profile 凭据备份") },
+                )
+            } else {
+                recoverBackupsLocked()
             }
-            recoverBackupsLocked()
             cleanupOrphansLocked()
             changes.tryEmit(Unit)
             Unit
@@ -138,27 +204,61 @@ class CredentialsRepositoryImpl @Inject constructor(
             ProfileCredentialFileNamer.fileName(it.uuid)
         }
         context.filesDir.listFiles().orEmpty().forEach { file ->
-            if (ProfileCredentialFileNamer.isManagedFile(file.name) && file.name !in validNames) {
-                deleteIfPresent(file, "无法清理孤立 Profile 凭据")
-            }
-            if (file.name.endsWith(BACKUP_SUFFIX)) {
-                val originalName = file.name.removeSuffix(BACKUP_SUFFIX)
-                if (ProfileCredentialFileNamer.isManagedFile(originalName) && originalName !in validNames) {
-                    deleteIfPresent(file, "无法清理孤立凭据备份")
-                }
+            val ownerName = credentialOwnerFileName(file.name)
+            if (ownerName != null && ownerName !in validNames) {
+                deleteIfPresent(file, "无法清理孤立 Profile 凭据文件")
             }
         }
     }
 
-    /** 崩溃发生在覆盖窗口时，以旧密文备份恢复；主文件存在时清理残留备份。 */
+    /** 崩溃发生在覆盖窗口时，只有新主文件验证成功才清理旧密文备份。 */
     private suspend fun recoverBackupsLocked() {
         profileDao.getAllProfilesOnce().forEach { profile ->
             val file = profileFile(profile.uuid)
             val backup = File(file.parentFile, file.name + BACKUP_SUFFIX)
-            if (!file.exists() && backup.exists() && !backup.renameTo(file)) {
-                error("无法恢复中断的凭据覆盖")
-            }
-            if (file.exists() && backup.exists()) deleteIfPresent(backup, "无法清理凭据备份")
+            val restoreStaging = File(file.parentFile, file.name + RESTORE_STAGING_SUFFIX)
+            deleteIfPresent(restoreStaging, "无法清理中断的凭据恢复临时文件")
+            recoverCredentialBackupIfNeeded(
+                mainExists = file::exists,
+                backupExists = backup::exists,
+                mainIsValid = { readSnapshot(file)?.toDomain() != null },
+                restoreBackup = { restoreCredentialBackup(file, backup) },
+                discardBackup = { deleteIfPresent(backup, "无法清理凭据备份") },
+            )
+        }
+    }
+
+    /** 复制旧密文并原子换入主路径；只有回读验证成功才删除 .bak。 */
+    private fun restoreCredentialBackup(file: File, backup: File) {
+        check(backup.exists()) { "待恢复的凭据备份不存在" }
+        val staging = File(file.parentFile, file.name + RESTORE_STAGING_SUFFIX)
+        deleteIfPresent(staging, "无法清理凭据恢复临时文件")
+        try {
+            restoreCredentialBackupSafely(
+                stageBackupCopy = {
+                    Files.copy(
+                        backup.toPath(),
+                        staging.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.COPY_ATTRIBUTES,
+                    )
+                },
+                replaceMainAtomically = {
+                    Files.move(
+                        staging.toPath(),
+                        file.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                },
+                mainIsValid = { readSnapshot(file)?.toDomain() != null },
+                discardBackup = { deleteIfPresent(backup, "无法清理已恢复的凭据备份") },
+            )
+        } catch (failure: Exception) {
+            runCatching { deleteIfPresent(staging, "无法清理失败的凭据恢复临时文件") }
+                .exceptionOrNull()
+                ?.let(failure::addSuppressed)
+            throw failure
         }
     }
 
@@ -233,5 +333,6 @@ class CredentialsRepositoryImpl @Inject constructor(
     private companion object {
         const val LEGACY_FILE_NAME = "dc_sync_credentials.json"
         const val BACKUP_SUFFIX = ".bak"
+        const val RESTORE_STAGING_SUFFIX = ".restore"
     }
 }
