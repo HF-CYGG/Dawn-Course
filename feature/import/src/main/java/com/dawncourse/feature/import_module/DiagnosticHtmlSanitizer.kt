@@ -21,7 +21,7 @@ data class SanitizedHtmlResult(
  */
 object DiagnosticHtmlSanitizer {
     /** 当前脱敏规则版本。 */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** 单次可处理的原始页面上限，避免恶意页面造成过量内存占用。 */
     const val MAX_INPUT_BYTES = 4 * 1024 * 1024
@@ -55,14 +55,27 @@ object DiagnosticHtmlSanitizer {
         )
     }
 
-    /** 只修改已识别为敏感字段的 input value，保留标签结构和其它属性。 */
+    /**
+     * 清空敏感 input 的 value，保留标签结构和其它属性。
+     *
+     * 触发条件：
+     * - 任意 `type=hidden` / `type=password` 的 input —— CAS/SSO 登录页失败时，
+     *   csrf、ticket、lt、execution、SAMLResponse 等一次性票据都藏在 hidden 里，
+     *   它们对课表解析诊断没有价值，一律清空；
+     * - 名称/ID/autocomplete 命中身份或认证字段白名单的 input（覆盖非 hidden 的情况）。
+     *
+     * 同时覆盖带引号与不带引号两种 value 写法。
+     */
     private fun sanitizeSensitiveInputTag(tag: String): String {
-        if (!SENSITIVE_INPUT_MARKER_PATTERN.containsMatchIn(tag)) return tag
-        return tag.replace(INPUT_VALUE_PATTERN) { match ->
+        val sensitive = HIDDEN_OR_PASSWORD_INPUT_PATTERN.containsMatchIn(tag) ||
+            SENSITIVE_INPUT_MARKER_PATTERN.containsMatchIn(tag)
+        if (!sensitive) return tag
+        val quotedRedacted = tag.replace(INPUT_VALUE_PATTERN) { match ->
             val prefix = match.groupValues[1]
             val quote = match.groupValues[2]
             "$prefix$quote***$quote"
         }
+        return quotedRedacted.replace(INPUT_VALUE_UNQUOTED_PATTERN, "$1\"***\"")
     }
 
     /** 构建不含单元格正文的课表结构摘要。 */
@@ -94,12 +107,29 @@ object DiagnosticHtmlSanitizer {
     private val SCRIPT_PATTERN = Regex("(?is)<script\\b[^>]*>(.*?)</script>")
     private val STYLE_PATTERN = Regex("(?is)<style\\b[^>]*>(.*?)</style>")
     private val INPUT_TAG_PATTERN = Regex("(?is)<input\\b[^>]*>")
+    /** hidden / password 类型的 input，无论字段名如何一律清空 value。 */
+    private val HIDDEN_OR_PASSWORD_INPUT_PATTERN = Regex(
+        "(?i)\\btype\\s*=\\s*['\"]?(?:hidden|password)['\"]?"
+    )
     private val SENSITIVE_INPUT_MARKER_PATTERN = Regex(
-        "(?i)(?:name|id|autocomplete)\\s*=\\s*['\"](?:xh|xgh|student(?:id|no|number)?|username|user|account|xm|realname|full_?name|mobile|phone|tel|sfzh|idcard|identity|email|password|passwd|pwd|mm|hidMm)['\"]"
+        // name/id/autocomplete 的取值只要“包含”下列关键词即视为敏感（覆盖 csrf_token、
+        // loginToken、org.apache.struts...TOKEN 等变体）。诊断样本丢一个 input 的 value
+        // 不影响结构诊断，宁可多脱敏。
+        "(?i)(?:name|id|autocomplete)\\s*=\\s*['\"][^'\"]*(?:" +
+            // 身份类
+            "xh|xgh|student|username|user|account|xm|realname|full_?name|" +
+            "mobile|phone|tel|sfzh|idcard|identity|email|password|passwd|pwd|mm|hidmm|" +
+            // 认证 / 反跨站 / SSO 票据类
+            "csrf|xsrf|requestverificationtoken|authenticity_token|token|ticket|tgt|" +
+            "execution|_eventid|saml|relaystate|rsakey|encryptsalt|encrypted|croypto|" +
+            "logindata|viewstate|eventvalidation" +
+            ")[^'\"]*['\"]"
     )
     private val INPUT_VALUE_PATTERN = Regex("(?is)(\\bvalue\\s*=\\s*)(['\"])(.*?)\\2")
+    /** 无引号写法 value=xxx（CAS/正方偶见），把 xxx 换成带引号的 *** 。 */
+    private val INPUT_VALUE_UNQUOTED_PATTERN = Regex("(?is)(\\bvalue\\s*=\\s*)(?![\"'])[^\\s>]+")
     private val SECRET_ASSIGNMENT_PATTERN = Regex(
-        "(?i)(password|passwd|pwd|mm|hidMm|token|csrf|session(?:id)?)\\s*=\\s*['\"][^'\"]{1,}['\"]"
+        "(?i)(password|passwd|pwd|mm|hidMm|token|csrf|session(?:id)?|ticket|lt|execution|saml\\w+|relaystate|authenticity_token)\\s*=\\s*['\"][^'\"]{1,}['\"]"
     )
     private val TOKEN_PAIR_PATTERN = Regex(
         "(?i)(token|csrf|session(?:id)?)\\s*[:=]\\s*['\"]?[A-Za-z0-9_\\-\\.]{6,}['\"]?"

@@ -54,6 +54,35 @@ class DiagnosticHtmlSanitizerTest {
         assertTrue(sanitized.contentSha256.matches(Regex("[a-f0-9]{64}")))
     }
 
+    /** CAS/SSO 登录页失败时，hidden 里的一次性票据与 CSRF 凭据不得进入脱敏结果。 */
+    @Test
+    fun sanitize_blanksHiddenAuthTokenInputs() {
+        val rawHtml = """
+            <form>
+              <input type="hidden" name="lt" value="LT-98765-abcdefg-cas" />
+              <input type="hidden" name="execution" value="e1s1" />
+              <input type='hidden' name='_eventId' value='submit'/>
+              <input type="hidden" name="SAMLResponse" value="PHNhbWxwOlJlc3BvbnNlWFhY" />
+              <input type="hidden" name="csrf_token" value="9f8e7d6c5b4a" />
+              <input type=hidden name=RelayState value=https://portal.example.edu.cn/home />
+              <input type="text" name="kcCode" value="A101" />
+            </form>
+        """.trimIndent()
+
+        val sanitized = DiagnosticHtmlSanitizer.sanitize(rawHtml)
+
+        listOf(
+            "LT-98765-abcdefg-cas",
+            "e1s1",
+            "PHNhbWxwOlJlc3BvbnNlWFhY",
+            "9f8e7d6c5b4a",
+            "https://portal.example.edu.cn/home"
+        ).forEach { secret -> assertFalse("脱敏结果泄漏认证票据：$secret", sanitized.content.contains(secret)) }
+        // 非敏感的普通表单字段不受影响，保留结构诊断价值。
+        assertTrue(sanitized.content.contains("name=\"kcCode\""))
+        assertTrue(sanitized.content.contains("A101"))
+    }
+
     /** 默认导出函数只能返回脱敏内容，不能回传原始 HTML。 */
     @Test
     fun buildSanitizedDiagnosticExport_neverReturnsRawHtml() {

@@ -312,7 +312,10 @@ class ScriptSyncRepositoryImpl @Inject constructor(
                 .put("scriptVersion", scriptVersion)
                 .put("success", success)
                 .put("errorMessage", errorMessage ?: "")
-                .put("sourceUrl", sourceUrl ?: "")
+                // 教务当前 URL 可能带 SSO ticket / token / 学号（在 userinfo、路径、查询或
+                // fragment 里）。服务端只用到 host 与 origin 级关键词，且会原样入库/记日志，
+                // 因此这里与解析报告一致，只提交规范化 origin，剥离其余部分。
+                .put("sourceUrl", DiagnosticUrlPolicy.originOnly(sourceUrl))
                 .put("parseSessionId", parseSessionId ?: "")
                 .put("isSessionFinal", isSessionFinal)
                 .put("finalResult", finalResult ?: "")

@@ -3,9 +3,11 @@ package com.dawncourse.core.data.repository
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -15,6 +17,11 @@ class ActiveProfileSelectionStore @Inject constructor(
 ) {
     /** 原始键值；null 仅表示尚未执行旧选择桥接。 */
     internal val rawActiveProfileId: Flow<Long?> = dataStore.data
+        // 单次可恢复的存储读取异常不得终止此流：否则 ProfileSelectionCoordinator
+        // .observeActiveContext() 的 first() 永不发射，MainViewModel 会一直卡在
+        // Loading、Splash 不退出。与 SemesterSelectionStore / SettingsRepositoryImpl
+        // 一致，用空偏好回退（等价于“键缺失”，随后按未选择处理）。
+        .catch { emit(emptyPreferences()) }
         .map { preferences -> preferences[ACTIVE_PROFILE_ID_KEY] }
         .distinctUntilChanged()
 

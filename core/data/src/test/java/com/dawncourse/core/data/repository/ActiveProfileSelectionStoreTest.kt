@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -47,16 +46,22 @@ class ActiveProfileSelectionStoreTest {
         assertNull(store.rawActiveProfileId.first())
     }
 
+    /**
+     * 单次可恢复的 DataStore 读取异常必须回退为“未选择”，且流不能终止。
+     *
+     * 之前的契约是把异常向上抛，但 ProfileSelectionCoordinator.observeActiveContext()
+     * 会先对该流调用 first()，异常会让活动上下文永不发射、MainViewModel 卡在 Loading、
+     * Splash 不退出。resolveAndRepairSelectionLocked 对 null（键缺失）已有“回退到遗留
+     * 选择或首个 Profile”的安全路径，因此与 SemesterSelectionStore /
+     * SettingsRepositoryImpl 一致，用空偏好回退。
+     */
     @Test
-    fun dataStoreReadFailureIsNotSilentlyTreatedAsMissingSelection() {
+    fun dataStoreReadFailureFallsBackToNoSelectionWithoutTerminatingFlow() = runBlocking {
         val failure = IllegalStateException("selection store unavailable")
         val store = ActiveProfileSelectionStore(FailingReadPreferencesDataStore(failure))
 
-        val thrown = assertThrows(IllegalStateException::class.java) {
-            runBlocking { store.activeProfileId.first() }
-        }
-
-        assertEquals(failure, thrown)
+        assertNull(store.activeProfileId.first())
+        assertNull(store.rawActiveProfileId.first())
     }
 
     private class InMemoryPreferencesDataStore : DataStore<Preferences> {
