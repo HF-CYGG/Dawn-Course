@@ -41,7 +41,10 @@ object CrashReporter {
      * （例如：让 ActivityManager 感知崩溃、避免影响 ANR/崩溃对话框等系统行为）。
      */
     fun install(context: Context) {
-        val appContext = context.applicationContext
+        // 允许在 Application.attachBaseContext() 阶段调用：此时 applicationContext
+        // 可能尚未就绪（返回 null），回退到传入的 base context，两者都能满足
+        // writeCrashReport 对 filesDir / packageManager 的使用。
+        val appContext = context.applicationContext ?: context
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

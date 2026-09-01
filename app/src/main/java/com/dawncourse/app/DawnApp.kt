@@ -1,6 +1,7 @@
 package com.dawncourse.app
 
 import android.app.Application
+import android.content.Context
 import com.dawncourse.app.crash.CrashReporter
 import dagger.hilt.android.HiltAndroidApp
 
@@ -13,12 +14,22 @@ import dagger.hilt.android.HiltAndroidApp
  */
 @HiltAndroidApp
 class DawnApp : Application() {
-    override fun onCreate() {
-        // 必须在 super.onCreate() 与其余任何初始化逻辑之前安装：
-        // 越早安装，越能覆盖 Hilt 组件构建、App Startup 初始化器等后续流程中
-        // 可能出现的崩溃。
-        CrashReporter.install(this)
 
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        // 全局崩溃捕获必须在这里安装，而不是 onCreate()：
+        //
+        // Android 进程启动顺序为
+        //   Application.attachBaseContext() → 各 ContentProvider.onCreate() → Application.onCreate()
+        //
+        // androidx.startup.InitializationProvider 及其 App Startup 初始化器
+        // （WidgetSyncInitializer / WorkManagerInitializer 等）都在 onCreate() 之前的
+        // provider 阶段执行。冷启动白屏闪退恰恰可能发生在这一段——若等到 onCreate()
+        // 再安装 handler，这段崩溃就永远落不了盘。
+        CrashReporter.install(base)
+    }
+
+    override fun onCreate() {
         super.onCreate()
     }
 }

@@ -4,7 +4,9 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.dawncourse.core.domain.model.Course
@@ -109,6 +111,23 @@ class PersistentNotificationService : Service() {
         
         // START_STICKY: 如果服务被系统意外杀死，系统会尝试重建服务
         return START_STICKY
+    }
+
+    /**
+     * 前台服务执行时长配额耗尽回调（Android 15 / API 35 起）
+     *
+     * targetSdk 35+ 后，系统对 `dataSync` 类型前台服务施加“24 小时内累计运行不超过 6 小时”的限制。
+     * 本服务声明为 `foregroundServiceType="dataSync"` 且返回 START_STICKY，若用户长时间把应用留在后台，
+     * 累计运行时间会触发该配额。配额耗尽时系统调用本回调，并给出很短的宽限期；
+     * 若不在宽限期内主动停止，系统会以 fatal 的 RemoteServiceException 杀死整个进程。
+     *
+     * 常驻通知属于“增强体验”功能，这里的处理是：立即、同步地停止服务。
+     * 之后若应用回到前台、用户仍开启该开关，MainActivity 会重新拉起本服务
+     * （新的 24 小时窗口会重新计算配额）。
+     */
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopServiceSafely()
     }
 
     private suspend fun updateNotification() {

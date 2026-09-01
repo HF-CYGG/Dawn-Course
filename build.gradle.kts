@@ -1,10 +1,11 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     alias(libs.plugins.androidApplication) apply false
-    alias(libs.plugins.kotlinAndroid) apply false
+    // kotlinAndroid 插件已移除：AGP 9.0+ 内置 Kotlin 支持，无需再显式声明
     alias(libs.plugins.androidLibrary) apply false
     alias(libs.plugins.hiltAndroid) apply false
     alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.composeCompiler) apply false
 }
 
 allprojects {

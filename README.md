@@ -77,8 +77,8 @@
 ### 环境要求
 
 - **JDK**：17+
-- **Android Studio**：Hedgehog / Iguana 或更新版本
-- **Android SDK**：API 34（Compile SDK）
+- **Android Studio**：需支持 AGP 9.x 的版本（建议使用当前最新稳定版）
+- **Android SDK**：API 36（Compile SDK）
 
 ### 构建步骤
 
@@ -102,10 +102,10 @@
 
 以下版本信息以仓库默认配置为准；完整依赖以 `gradle/libs.versions.toml` 为最终来源。
 
-- **语言**：Kotlin 1.9.23
-- **UI**：Jetpack Compose（Material 3，BOM 2024.02.00）
+- **语言**：Kotlin 2.2.10
+- **UI**：Jetpack Compose（Material 3，BOM 2026.08.00）
 - **架构**：MVVM + Clean Architecture（App / Domain / Data / UI 分层）
-- **依赖注入**：Hilt 2.51
+- **依赖注入**：Hilt 2.59.2
 - **异步**：Coroutines + Flow
 - **数据库**：Room 2.6.1
 - **网络**：Retrofit + OkHttp

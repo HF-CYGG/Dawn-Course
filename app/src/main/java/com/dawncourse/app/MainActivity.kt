@@ -16,7 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.core.view.WindowCompat
+import androidx.activity.enableEdgeToEdge
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -73,9 +73,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
-        
+
         // 开启 Edge-to-Edge 沉浸式模式
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        //
+        // targetSdk 35+ 起系统强制启用 edge-to-edge，无法关闭：
+        // 旧的 WindowCompat.setDecorFitsSystemWindows(window, false) 调用在新 targetSdk 下
+        // 变为无效果的 no-op（系统已经强制铺满），改用官方推荐的 enableEdgeToEdge()，
+        // 它同时兼容新旧系统版本行为。
+        // 状态栏图标明暗对比色仍由 core/ui 的 DawnTheme（WindowInsetsControllerCompat.
+        // isAppearanceLightStatusBars）单独控制，与这里不冲突。
+        enableEdgeToEdge()
 
         // 获取 ViewModel 用于控制启动画面
         val viewModel = ViewModelProvider(this)[MainViewModel::class.java]
