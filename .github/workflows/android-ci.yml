@@ -22,6 +22,11 @@ on:
       - 'LICENSE'
       - 'deps.txt'
 
+# 同一分支/PR 的新推送取消尚未结束的旧运行，避免排队浪费并更快拿到最终结果。
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +40,14 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    # setup-gradle 跨运行持久化依赖缓存 + Gradle 构建缓存 + 配置缓存，
+    # 比 setup-java 的 cache: gradle（仅依赖）显著减少重复编译。
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        # 允许在 PR 分支写入自己的缓存条目，使同分支后续推送命中热缓存。
+        cache-read-only: false
 
     - name: Set up Android SDK
       uses: android-actions/setup-android@v3
@@ -46,14 +58,12 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
-
-    - name: Run tests
-      run: ./gradlew testDebugUnitTest --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
-
-    - name: Run Lint
-      run: ./gradlew lintDebug --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
+    # 单次调用共享一次配置阶段与守护进程，避免三次分开调用重复配置整个多模块构建。
+    - name: Build, test and lint
+      run: >-
+        ./gradlew assembleDebug testDebugUnitTest lintDebug
+        --build-cache --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
     - name: Upload Test Reports
       if: always()
@@ -80,8 +90,9 @@ jobs:
 
   release-smoke:
     name: Minified release/native gate
-    needs: build
+    # 与 build 相互独立，不再串行等待，直接并行以缩短 PR 总时长。
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
 
     steps:
     - uses: actions/checkout@v4
@@ -91,7 +102,11 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
 
     - name: Set up Android SDK
       uses: android-actions/setup-android@v3
@@ -103,7 +118,10 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build minified releaseSmoke and run APK gates
-      run: ./gradlew :app:releaseSmoke -Pdawn.releaseSmoke=true --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
+      run: >-
+        ./gradlew :app:releaseSmoke -Pdawn.releaseSmoke=true
+        --build-cache --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
     - name: Upload releaseSmoke APK
       if: always()

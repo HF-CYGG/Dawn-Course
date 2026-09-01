@@ -25,6 +25,11 @@ on:
   schedule:
     - cron: "0 2 * * 1"   # 每周一 02:00 例行扫描
 
+# 新推送取消尚未结束的旧扫描。
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write
@@ -44,20 +49,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
+        if: matrix.language == 'java-kotlin'
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      # 跨运行持久化依赖 + Gradle 构建缓存，使 CodeQL 的构建复用已编译产物。
+      - name: Set up Gradle
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          # 允许在 PR 分支写入自己的缓存条目，使同分支后续推送命中热缓存。
+          cache-read-only: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -68,8 +72,10 @@ jobs:
 
       - name: Build (Android)
         if: matrix.language == 'java-kotlin'
-        run: |
-          ./gradlew --no-daemon :app:assembleDebug --max-workers=4 -Dorg.gradle.jvmargs="-Xmx3072m -Dfile.encoding=UTF-8"
+        run: >-
+          ./gradlew :app:assembleDebug
+          --build-cache --max-workers=4
+          -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
