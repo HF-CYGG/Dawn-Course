@@ -3,7 +3,6 @@ package com.dawncourse.feature.widget
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
@@ -95,9 +94,11 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
             }
         }
 
-        /** 显式 component 避免 AlarmManager 持有的 PendingIntent 被解析到第三方组件。 */
-        private fun explicitIntent(context: Context): Intent = Intent().apply {
-            component = ComponentName(context, MidnightUpdateReceiver::class.java)
-        }
+        /**
+         * 用 Intent(Context, Class) 构造显式广播 Intent，避免 AlarmManager 持有的
+         * PendingIntent 被解析到第三方组件，也让静态分析明确识别目标组件。
+         */
+        private fun explicitIntent(context: Context): Intent =
+            Intent(context, MidnightUpdateReceiver::class.java)
     }
 }

@@ -64,7 +64,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.language == 'java-kotlin' && 'manual' || 'none' }}
-          queries: +security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Build (Android)
         if: matrix.language == 'java-kotlin'

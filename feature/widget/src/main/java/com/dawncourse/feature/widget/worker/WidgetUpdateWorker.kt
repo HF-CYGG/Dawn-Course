@@ -214,9 +214,10 @@ object WidgetSyncManager {
         }
     }
 
+    // 用 Intent(Context, Class) 构造显式广播 Intent：显式 component 能让静态分析
+    // 明确识别目标组件，避免 AlarmManager 持有的 PendingIntent 被判定为隐式 Intent。
     private fun nextCourseUpdateIntent(context: Context): Intent =
-        Intent().apply {
-            component = ComponentName(context, DawnWidgetReceiver::class.java)
+        Intent(context, DawnWidgetReceiver::class.java).apply {
             action = ACTION_FORCE_UPDATE
         }
 
