@@ -72,8 +72,10 @@ jobs:
 
       - name: Build (Android)
         if: matrix.language == 'java-kotlin'
+        # 只需编译供 CodeQL 抽取，跳过 dex/打包/lint；:app:compileDebugSources 会
+        # 传递编译全部依赖模块。
         run: >-
-          ./gradlew :app:assembleDebug
+          ./gradlew :app:compileDebugSources
           --build-cache --max-workers=4
           -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
