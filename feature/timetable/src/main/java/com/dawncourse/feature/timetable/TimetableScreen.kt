@@ -277,7 +277,7 @@ internal fun TimetableScreen(
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.weight(1f),
-                    beyondViewportPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度
+                    beyondViewportPageCount = 1 // 预加载前后各1页，大幅提升滑动流畅度（Compose 1.7+ 由 beyondBoundsPageCount 更名）
                 ) { page ->
                     val week = if (hasHolidayPage) page else page + 1
                     

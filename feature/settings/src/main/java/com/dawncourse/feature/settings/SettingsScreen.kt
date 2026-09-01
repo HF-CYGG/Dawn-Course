@@ -338,7 +338,7 @@ fun SettingsScreen(
             )
 
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val versionName = remember { packageInfo.versionName.orEmpty() }
+            val versionName = remember { packageInfo.versionName ?: "" } // compileSdk 37 起 versionName 为可空
 
             AboutBrandFooter(
                 versionName = versionName,
@@ -1104,7 +1104,7 @@ private fun AboutSection(
     onCheckUpdate: () -> Unit
 ) {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    val versionName = remember { packageInfo.versionName.orEmpty() }
+    val versionName = remember { packageInfo.versionName ?: "" } // compileSdk 37 起 versionName 为可空
     PreferenceCategory(title = "关于") {
         UpdateSettingItem(
             currentVersion = versionName,
@@ -1447,8 +1447,11 @@ private fun LocalBackupSheet(
                 // 预览信息展示
                 if (previewState.preview != null) {
                     val preview = previewState.preview
-                    val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
-                        .format(Date(preview.exportTime))
+                    // LocalConfiguration 会随界面语言更新，键中包含 locale 以同步刷新格式化结果。
+                    val exportTime = remember(preview.exportTime, locale) {
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
+                            .format(Date(preview.exportTime))
+                    }
                     val semesterNames = preview.semesterNames
                     val semesterDisplay = if (semesterNames.isEmpty()) {
                         "未包含学期名称"
@@ -1551,8 +1554,11 @@ private fun LocalBackupSheet(
     if (showImportConfirm) {
         val preview = previewState.preview
         val previewDesc = if (preview != null) {
-            val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
-                .format(Date(preview.exportTime))
+            // LocalConfiguration 会随界面语言更新，键中包含 locale 以同步刷新格式化结果。
+            val exportTime = remember(preview.exportTime, locale) {
+                SimpleDateFormat("yyyy-MM-dd HH:mm", locale)
+                    .format(Date(preview.exportTime))
+            }
             val semesterNames = if (preview.semesterNames.isEmpty()) {
                 "未包含学期名称"
             } else {

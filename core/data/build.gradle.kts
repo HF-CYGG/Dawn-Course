@@ -35,6 +35,8 @@ android {
     sourceSets {
         getByName("androidTest").assets.srcDir("schemas")
     }
+    // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
+    // 上面的 compileOptions.targetCompatibility，无需重复声明
 }
 
 ksp {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      启动窗口背景色（浅色模式）
+
+      注意：该颜色同时用于 windowSplashScreenBackground 与 android:windowBackground，
+      是 Compose 内容绘制之前用户唯一能看到的颜色。
+      深色模式下的取值见 values-night/colors.xml，避免深色模式启动时闪白屏。
+    -->
+    <color name="splash_background">#FFFBFE</color>
+</resources>

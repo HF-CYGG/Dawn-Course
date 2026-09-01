@@ -57,7 +57,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 deliverIfStillValid(context, key)
             } catch (cancellation: CancellationException) {
                 throw cancellation
-            } catch (failure: Exception) {
+            } catch (failure: Throwable) {
                 Log.e(TAG, "课程提醒广播处理失败: ${failure.javaClass.simpleName}")
             } finally {
                 pendingResult.finish()

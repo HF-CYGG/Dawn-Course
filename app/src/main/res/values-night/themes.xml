@@ -1,0 +1,10 @@
+<resources>
+    <!--
+      深色模式下改用深色平台主题，避免窗口装饰（如 Activity 重建、Dialog 宿主）沿用浅色样式。
+      windowBackground / splash 背景色由 values-night/colors.xml 提供。
+    -->
+    <style name="Theme.DawnCourse" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+</resources>

@@ -14,6 +14,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // kotlinOptions 块已移除：built-in Kotlin 下由顶层 kotlin.compilerOptions 配置，
+    // 且 jvmTarget 默认等于上面的 compileOptions.targetCompatibility，无需重复声明
 }
 
 dependencies {

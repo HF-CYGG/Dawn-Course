@@ -1,11 +1,13 @@
 package com.dawncourse.app
 
 import android.app.Application
+import android.content.Context
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.startup.AppInitializer
 import androidx.work.Configuration
-import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
+import com.dawncourse.app.crash.CrashReporter
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -32,6 +34,20 @@ class DawnApp : Application(), Configuration.Provider {
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
             .build()
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        // 全局崩溃捕获必须在这里安装，而不是 onCreate()：
+        //
+        // Android 进程启动顺序为
+        //   Application.attachBaseContext() → 各 ContentProvider.onCreate() → Application.onCreate()
+        //
+        // androidx.startup.InitializationProvider 及其 App Startup 初始化器
+        // （WidgetSyncInitializer / WorkManagerInitializer 等）都在 onCreate() 之前的
+        // provider 阶段执行。冷启动白屏闪退恰恰可能发生在这一段——若等到 onCreate()
+        // 再安装 handler，这段崩溃就永远落不了盘。
+        CrashReporter.install(base)
+    }
 
     override fun onCreate() {
         try {

@@ -7,9 +7,9 @@ import org.gradle.api.tasks.Exec
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.baselineProfile)
-    alias(libs.plugins.composeCompiler)
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.composeCompiler)
 }
 
 val releaseSmokeEnabled = providers.gradleProperty("dawn.releaseSmoke")
@@ -84,12 +84,28 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
+    // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        // 16 KB 内存页对齐（部分 2024 年后发布的设备，如高通骁龙 8 Elite Gen 5 机型，
+        // 已切换为 16 KB page size；未按 16 KB 对齐的 .so 会在 dlopen 时抛
+        // UnsatisfiedLinkError）。
+        //
+        // 注意：这里显式声明 useLegacyPackaging = false 只是保证 AGP 不压缩、
+        // 页对齐地打包 .so 文件本身，是必要条件，不是充分条件——
+        // .so 内部 ELF LOAD 段的实际对齐方式取决于编译该 .so 时使用的 NDK 版本
+        // （需 NDK r28+，或 r26/r27 显式加对齐链接参数）。当前已升级到 AGP 9.0.1
+        // （官方完整支持 16 KB 对齐的最低版本是 8.5.1），打包层面的对齐已生效；
+        // 但 quickjs-android 0.9.0 这个原生库本身是否已按 16 KB 对齐编译，
+        // 仍需要在真机上验证（参见 feature/import 模块的相关说明）。
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 
@@ -99,7 +115,6 @@ android {
         xmlReport = true
         htmlReport = true
     }
-
     // 仅 benchmark 相关变体合入数据种子 Provider；release manifest 完全不注册测试组件。
     sourceSets {
         getByName("benchmark") {
@@ -312,6 +327,7 @@ dependencies {
 
     implementation(libs.hilt.android)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
+    implementation(libs.hilt.navigation.compose)
     implementation(libs.hilt.work)
     ksp(libs.hilt.compiler)
     ksp(libs.androidx.hilt.compiler)
@@ -321,6 +337,8 @@ dependencies {
     implementation(libs.ui.graphics)
     implementation(libs.ui.tooling.preview)
     implementation(libs.material3)
+    // CrashReportDialog 使用 Icons.Rounded.Warning / ContentCopy，二者属于扩展图标集
+    implementation(libs.material.icons.extended)
 
     implementation(libs.activity.compose)
     implementation(libs.navigation.compose)

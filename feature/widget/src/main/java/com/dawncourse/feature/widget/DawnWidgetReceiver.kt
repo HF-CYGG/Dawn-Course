@@ -2,6 +2,7 @@ package com.dawncourse.feature.widget
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
@@ -21,23 +22,31 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
             intent.action == Intent.ACTION_DATE_CHANGED ||
             intent.action == Intent.ACTION_TIMEZONE_CHANGED) {
             // 包括 DATE_CHANGED 在内的所有系统更新入口均先判定 Widget 实例。
-            WidgetSyncManager.restoreAfterSystemEvent(context)
+            runCatching { WidgetSyncManager.restoreAfterSystemEvent(context) }
+                .onFailure { Log.w(TAG, "widget system-event restore failed", it) }
         }
         super.onReceive(context, intent)
     }
 
     override fun onEnabled(context: Context) {
         super.onEnabled(context)
-        WidgetSyncManager.restoreAfterSystemEvent(context)
+        runCatching { WidgetSyncManager.restoreAfterSystemEvent(context) }
+            .onFailure { Log.w(TAG, "widget enable restore failed", it) }
     }
 
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
-        WidgetSyncManager.cancelUpdate(context)
+        runCatching { WidgetSyncManager.cancelUpdate(context) }
+            .onFailure { Log.w(TAG, "widget work cancellation failed", it) }
         
         // 当用户移除所有 Widget 实例时，主动取消“午夜刷新”闹钟：
         // - 避免无 Widget 时仍每天触发闹钟唤醒
         // - 减少后台开销，符合“本地优先/长期维护”的资源控制原则
-        MidnightUpdateReceiver.cancelNextMidnightUpdate(context)
+        runCatching { MidnightUpdateReceiver.cancelNextMidnightUpdate(context) }
+            .onFailure { Log.w(TAG, "midnight alarm cancellation failed", it) }
+    }
+
+    private companion object {
+        private const val TAG = "DawnWidgetReceiver"
     }
 }

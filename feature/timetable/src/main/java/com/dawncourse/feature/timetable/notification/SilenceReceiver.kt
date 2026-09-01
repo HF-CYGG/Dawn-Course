@@ -98,7 +98,7 @@ class SilenceReceiver : BroadcastReceiver() {
                 }
             } catch (cancellation: CancellationException) {
                 throw cancellation
-            } catch (failure: Exception) {
+            } catch (failure: Throwable) {
                 Log.e(TAG, "静音广播处理失败: ${failure.javaClass.simpleName}")
             } finally {
                 pendingResult.finish()

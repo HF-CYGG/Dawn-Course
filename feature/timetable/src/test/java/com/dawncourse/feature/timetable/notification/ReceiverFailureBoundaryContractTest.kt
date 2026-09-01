@@ -12,7 +12,7 @@ class ReceiverFailureBoundaryContractTest {
             val source = File("src/main/java/com/dawncourse/feature/timetable/notification/$fileName").readText()
             assertTrue(source.contains("catch (cancellation: CancellationException)"))
             assertTrue(source.contains("throw cancellation"))
-            assertTrue(source.contains("catch (failure: Exception)"))
+            assertTrue(source.contains("catch (failure: Throwable)"))
             assertTrue(source.contains("failure.javaClass.simpleName"))
             assertTrue(source.contains("pendingResult.finish()"))
         }

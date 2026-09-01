@@ -1,8 +1,8 @@
 plugins {
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.composeCompiler)
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.composeCompiler)
 }
 
 android {
@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         minSdk = 26
-        
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
     }
@@ -26,6 +26,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
+    // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
         aidl = true

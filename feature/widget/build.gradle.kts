@@ -1,8 +1,8 @@
 plugins {
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.composeCompiler)
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.composeCompiler)
 }
 
 android {
@@ -25,6 +25,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
+    // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
     }
@@ -34,6 +36,9 @@ dependencies {
     implementation(project(":core:domain"))
     implementation(project(":core:data"))
     implementation(project(":core:ui"))
+
+    // AndroidX Core (ContextCompat.registerReceiver 等兼容 API)
+    implementation(libs.core.ktx)
 
     // Glance
     implementation(libs.glance.appwidget)

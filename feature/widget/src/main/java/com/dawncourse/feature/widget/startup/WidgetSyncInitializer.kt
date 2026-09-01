@@ -1,8 +1,14 @@
 package com.dawncourse.feature.widget.startup
 
 import android.content.Context
+import android.util.Log
 import androidx.startup.Initializer
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 桌面小组件同步初始化器
@@ -18,10 +24,16 @@ class WidgetSyncInitializer : Initializer<Unit> {
      * @param context 应用上下文
      */
     override fun create(context: Context) {
-        // 启动时也必须先经过实例判定，避免没有 Widget 时创建后台任务。
-        WidgetSyncManager.restoreAfterSystemEvent(context)
-        // 注册系统时间/日期变化广播，以便在变化后再次按实例恢复。
-        WidgetSyncManager.registerTimeChangeReceiver(context)
+        val appContext = context.applicationContext
+        val handler = CoroutineExceptionHandler { _, throwable ->
+            Log.w(TAG, "Widget sync initialization failed", throwable)
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).launch {
+            // 启动时也必须先经过实例判定，避免没有 Widget 时创建后台任务。
+            WidgetSyncManager.restoreAfterSystemEvent(appContext)
+            // 注册系统时间/日期变化广播，以便在变化后再次按实例恢复。
+            WidgetSyncManager.registerTimeChangeReceiver(appContext)
+        }
     }
 
     /**
@@ -31,5 +43,9 @@ class WidgetSyncInitializer : Initializer<Unit> {
      */
     override fun dependencies(): List<Class<out Initializer<*>>> {
         return emptyList()
+    }
+
+    private companion object {
+        private const val TAG = "WidgetSyncInitializer"
     }
 }

@@ -13,12 +13,14 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.core.view.WindowCompat
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.activity.enableEdgeToEdge
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -51,7 +53,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import com.dawncourse.app.crash.CrashReportDialog
+import com.dawncourse.app.crash.CrashReporter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
@@ -87,15 +93,33 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
-        
+
         // 开启 Edge-to-Edge 沉浸式模式
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        //
+        // targetSdk 35+ 起系统强制启用 edge-to-edge，无法关闭：
+        // 旧的 WindowCompat.setDecorFitsSystemWindows(window, false) 调用在新 targetSdk 下
+        // 变为无效果的 no-op（系统已经强制铺满），改用官方推荐的 enableEdgeToEdge()，
+        // 它同时兼容新旧系统版本行为。
+        // 状态栏图标明暗对比色仍由 core/ui 的 DawnTheme（WindowInsetsControllerCompat.
+        // isAppearanceLightStatusBars）单独控制，与这里不冲突。
+        enableEdgeToEdge()
 
         // 数据库仍在 IO 检查时保持 Splash；恢复状态必须释放 Splash 展示可见入口。
         splashScreen.setKeepOnScreenCondition {
             databaseStartupRuntime.state.value is DatabaseRuntimeState.Starting ||
                 mainViewModel?.uiState?.value is MainUiState.Loading
         }
+
+        // 获取当前应用版本号
+        //
+        // 必须在 onCreate 中取一次并复用：getPackageInfo 是一次同步 Binder IPC，
+        // 若写在 setContent 的 composable 作用域内，会随每次重组在主线程重复发起 IPC，
+        // 在冷启动阶段 system_server 繁忙时可能显著拖慢首帧。
+        val currentVersionCode = runCatching {
+            val packageInfo = applicationContext.packageManager
+                .getPackageInfo(applicationContext.packageName, 0)
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
+        }.getOrDefault(0L)
 
         // 设置 Compose 内容视图
         setContent {
@@ -116,10 +140,20 @@ class MainActivity : ComponentActivity() {
             }
             val uiState by viewModel.uiState.collectAsState()
             val exhaustedMuteRecoveries by viewModel.exhaustedMuteRecoveries.collectAsState()
-            
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
             val updateUiState by updateViewModel.uiState.collectAsState()
+
+            // 读取上一次启动时捕获的崩溃报告（如果有）
+            //
+            // 读取即清除文件（见 CrashReporter.readAndClear），保证同一份崩溃报告只弹一次。
+            // 文件 IO 放到 Dispatchers.IO 执行，避免阻塞首帧渲染。
+            var crashReport by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                crashReport = withContext(Dispatchers.IO) {
+                    runCatching { CrashReporter.readAndClear(applicationContext) }.getOrNull()
+                }
+            }
 
             // 监听更新事件 (Toast)
             if (!isBenchmarkMode) {
@@ -133,10 +167,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-
-            // 获取当前应用版本号
-            val packageInfo = applicationContext.packageManager.getPackageInfo(applicationContext.packageName, 0)
-            val currentVersionCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
 
             // Auto check for update on launch (silent)
             if (!isBenchmarkMode) {
@@ -167,17 +197,30 @@ class MainActivity : ComponentActivity() {
                 // - revision 同时包含当前学期和课程字段，编辑、导入、还原后都会触发即时收敛
                 if (!isBenchmarkMode) {
                     LaunchedEffect(scheduleRevision) {
-                        ReminderScheduler.triggerImmediateWork(applicationContext, forceReplay = false)
-                        // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
-                        WidgetSyncManager.updateWidgetNow(applicationContext)
-                        if (scheduleRevision.hasEnabledSystemSchedule) {
-                            ReminderScheduler.scheduleDailyWork(applicationContext)
-                        } else {
-                            ReminderScheduler.cancelWork(applicationContext)
+                        // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
+                        // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
+                        runCatching {
+                            ReminderScheduler.triggerImmediateWork(
+                                applicationContext,
+                                forceReplay = false
+                            )
+                            // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
+                            WidgetSyncManager.updateWidgetNow(applicationContext)
+                            if (scheduleRevision.hasEnabledSystemSchedule) {
+                                ReminderScheduler.scheduleDailyWork(applicationContext)
+                            } else {
+                                ReminderScheduler.cancelWork(applicationContext)
+                            }
+                        }.onFailure {
+                            android.util.Log.w(
+                                "MainActivity",
+                                "schedule daily reminder work failed",
+                                it
+                            )
                         }
                     }
 
-                    // 监听 WebDAV 自动同步配置变化，统一调度 WorkManager 任务
+                    // 监听 WebDAV 自动同步配置变化，统一调度 WorkManager 任务。
                     LaunchedEffect(
                         settings.enableWebDavAutoSync,
                         settings.webDavAutoSyncMode,
@@ -185,7 +228,15 @@ class MainActivity : ComponentActivity() {
                         settings.webDavAutoSyncIntervalValue,
                         settings.webDavAutoSyncIntervalUnit
                     ) {
-                        WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                        runCatching {
+                            WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                        }.onFailure {
+                            android.util.Log.w(
+                                "MainActivity",
+                                "schedule WebDAV auto sync failed",
+                                it
+                            )
+                        }
                     }
                 }
 
@@ -409,6 +460,15 @@ class MainActivity : ComponentActivity() {
                                         Text(stringResource(R.string.mute_recovery_release))
                                     }
                                 }
+                            )
+                        }
+
+                        // 上次启动崩溃报告弹窗
+                        // 关闭后 crashReport 置空，避免同一次 Composition 内重复弹出
+                        crashReport?.let { report ->
+                            CrashReportDialog(
+                                report = report,
+                                onDismiss = { crashReport = null }
                             )
                         }
                     }
