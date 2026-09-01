@@ -80,6 +80,10 @@ for (const [name, ctx] of scopes) {
     eq(parseWeeks(''), [], name + ' parseWeeks("")');
     eq(parseWeeks('单周'), [], name + ' parseWeeks("单周") 无数字');
     eq(parseWeeks('99周'), [], name + ' parseWeeks("99周") 越界钳制');
+    // 整体被括号包住的周次：不能被 stripWeekNoise 一起清掉（Codex PR #112 P1）
+    eq(parseWeeks('(1-16周)'), range(1, 16), name + ' parseWeeks("(1-16周)") 括号包裹');
+    eq(parseWeeks('（9周）'), [9], name + ' parseWeeks("（9周）") 全角括号包裹');
+    eq(parseWeeks('1-4周(1-2节),6-8周'), [1, 2, 3, 4, 6, 7, 8], name + ' parseWeeks 区间+节次括号+区间');
 
     // ---- extractWeeksStr ----
     eq(extractWeeksStr('周次:5'), '5', name + ' extractWeeksStr("周次:5") 无 周 字');
@@ -97,6 +101,8 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('1-8周,10-16周'), '1-8周,10-16周', name + ' extractWeeksStr(无标签 每段带周)');
     eq(extractWeeksStr('1-8,10-16周 教师：张三'), '1-8,10-16周', name + ' extractWeeksStr(无标签+多区间) 不吞教师');
     eq(extractWeeksStr('节次1-2 上课时间1-3节'), '', name + ' extractWeeksStr(纯节次 不以周收尾) -> ""');
+    eq(extractWeeksStr('(1-16周)'), '1-16周', name + ' extractWeeksStr("(1-16周)") 括号包裹');
+    eq(extractWeeksStr('（9周）'), '9周', name + ' extractWeeksStr("（9周）") 全角括号');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
