@@ -90,7 +90,8 @@ class ScriptEngine @Inject constructor(
         val errorCode: String,
         val errorMessage: String,
         val entryUsed: String,
-        val contractVersion: Int
+        val contractVersion: Int,
+        val diagnostics: List<String> = emptyList()
     )
 
     class ScriptExecutionException(

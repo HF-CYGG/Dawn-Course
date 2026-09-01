@@ -128,7 +128,13 @@ function parseNewZhengfang(html) {
                         weeks: weeks,
                         sections: sections
                     });
+                } else if (weeks.length === 0) {
+                    reportDropped("no_weeks");
+                } else {
+                    reportDropped("no_sections");
                 }
+            } else if (name && !weeksStr) {
+                reportDropped("no_weeks");
             }
         }
     }
@@ -189,7 +195,15 @@ function parseNewZhengfang(html) {
                     weeks: listWeeks,
                     sections: listSections
                 });
+            } else if (listDay <= 0) {
+                reportDropped("no_day");
+            } else if (listWeeks.length === 0) {
+                reportDropped("no_weeks");
+            } else {
+                reportDropped("no_sections");
             }
+        } else if (listName && !listWeeksStr) {
+            reportDropped("no_weeks");
         }
     }
 
@@ -267,16 +281,32 @@ function parseOldZhengfang(html) {
                 var sections = [];
                 var weeks = [];
                 
-                if (ranges.length === 2) {
+                if (ranges.length >= 2) {
+                    // 首个数字块是节次，其余全部并入周次
+                    // （兼容 "1-8,10-16周" 这类会被拆成多段的周次列表 —— issue #109）
                     sections = ranges[0];
-                    weeks = ranges[1];
+                    weeks = [];
+                    for (var r = 1; r < ranges.length; r++) {
+                        weeks = weeks.concat(ranges[r]);
+                    }
                 } else if (ranges.length === 1) {
                     // 只有周次，节次由行号推断
                     // defaultSection logic: 假设 Row 2 -> Section 1
-                    var defaultSection = i - 1; 
+                    var defaultSection = i - 1;
                     if (defaultSection > 0) sections.push(defaultSection);
                     weeks = ranges[0];
                 }
+                // 去重周次，避免多段合并后出现重复
+                if (weeks.length > 0) {
+                    var seenW = {};
+                    weeks = weeks.filter(function (w) {
+                        if (seenW[w]) return false;
+                        seenW[w] = 1;
+                        return true;
+                    });
+                }
+                if (day > 0 && sections.length === 0) reportDropped("no_sections");
+                if (day > 0 && sections.length > 0 && weeks.length === 0) reportDropped("no_weeks");
                 
                 // 处理单双周
                 if (/\|单周/.test(timeStr)) {
@@ -303,17 +333,38 @@ function parseOldZhengfang(html) {
     return courses;
 }
 
+/**
+ * 把 "周三第1-2节 1-16周" 这类时间描述拆成若干"数字块"数组。
+ *
+ * 加固点（issue #109）：区分 '-'（区间）与 ','（列表）。
+ * 原实现 /(\d+)[-,]?(\d*)/g 把 "1,3,5" 当成 "1-3" + "5" 两段，
+ * 既算错周次、又让 ranges 的分组数变成 3，导致既非 1 也非 2 → 整行被丢弃。
+ */
 function parseOldTimeRanges(rawTime) {
     var result = [];
-    var regex = /(\d+)[-,]?(\d*)/g;
-    var match;
-    // 限制只匹配前面的数字部分，避免匹配到无关内容
-    while ((match = regex.exec(rawTime)) !== null) {
-        var start = parseInt(match[1]);
-        var end = match[2] ? parseInt(match[2]) : start;
-        var range = [];
-        for(var k=start; k<=end; k++) range.push(k);
-        result.push(range);
+    // 按"非数字/逗号/短横线"的字符切段，每段内部再按逗号拆 token、按短横线展开区间
+    var segs = String(rawTime).split(/[^0-9,，\-]+/);
+    for (var s = 0; s < segs.length; s++) {
+        var seg = (segs[s] || "").trim();
+        if (!seg || !/\d/.test(seg)) continue;
+        var nums = [];
+        var tokens = seg.split(/[,，]/);
+        for (var t = 0; t < tokens.length; t++) {
+            var tok = tokens[t].trim();
+            if (!tok) continue;
+            var m = /^(\d+)-(\d+)$/.exec(tok);
+            if (m) {
+                var a = parseInt(m[1], 10);
+                var b = parseInt(m[2], 10);
+                if (isNaN(a) || isNaN(b)) continue;
+                if (b < a) { var tmp = a; a = b; b = tmp; }
+                for (var k = a; k <= b; k++) nums.push(k);
+            } else {
+                var n = parseInt(tok, 10);
+                if (!isNaN(n)) nums.push(n);
+            }
+        }
+        if (nums.length) result.push(nums);
     }
     return result;
 }
@@ -398,15 +449,8 @@ function extractTextByTitle(blockHtml, titleText) {
     return "";
 }
 
-function extractWeeksStr(text) {
-    var weeksMatch = /周数\s*[:：]?\s*([^教师节次校区]+?周[^教师节次校区]*)/i.exec(text);
-    if (weeksMatch) return weeksMatch[1].trim();
-    var rangeMatch = /(\d+\s*[-至~～—－]\s*\d+\s*周[^\s]*)/i.exec(text);
-    if (rangeMatch) return rangeMatch[1].trim();
-    var singleMatch = /(\d+\s*周[^\s]*)/i.exec(text);
-    if (singleMatch) return singleMatch[1].trim();
-    return "";
-}
+// 注意：extractWeeksStr 已移除本地副本，改用 common_parser_utils.js 中经 issue #109
+// 加固过的版本（common_parser_utils.js 会拼接在本脚本之前加载）。
 
 function extractSectionsStr(text) {
     var sectionMatch = /节次\s*[:：]?\s*(\d+)\s*[-至~～—－]\s*(\d+)/i.exec(text);
@@ -439,45 +483,8 @@ function dedupeCourses(courses) {
     return result;
 }
 
-function parseWeeks(str) {
-    var weeks = [];
-    if (!str) return weeks;
-
-    var type = 0; // 0:全, 1:单, 2:双
-    if (str.indexOf("单") > -1) type = 1;
-    if (str.indexOf("双") > -1) type = 2;
-
-    str = str.replace(/周数[:：]/g, '');
-    str = str.replace(/共\d+周|共\d+次|共\d+节/g, '');
-    str = str.replace(/[至~～—－]/g, '-');
-    str = str.replace(/周|单|双|\(|\)|（|）/g, '');
-    
-    var parts = str.split(/[,，;、]/); 
-
-    for (var i = 0; i < parts.length; i++) {
-        var part = parts[i].trim();
-        if (part.indexOf('-') > -1) {
-            var range = part.split('-');
-            var start = parseInt(range[0]);
-            var end = parseInt(range[1]);
-            if (!isNaN(start) && !isNaN(end)) {
-                for (var w = start; w <= end; w++) {
-                    if (type === 0 || (type === 1 && w % 2 !== 0) || (type === 2 && w % 2 === 0)) {
-                        weeks.push(w);
-                    }
-                }
-            }
-        } else if (part !== '') {
-            var week = parseInt(part);
-            if (!isNaN(week)) {
-                 if (type === 0 || (type === 1 && week % 2 !== 0) || (type === 2 && week % 2 === 0)) {
-                    weeks.push(week);
-                }
-            }
-        }
-    }
-    return weeks;
-}
+// 注意：parseWeeks 已移除本地副本，改用 common_parser_utils.js 中经 issue #109
+// 加固过的版本（正确处理单周 "9周"、节次粘连 "9周(1-2节)"、"第9周"、写反的区间等）。
 
 function parseSections(sectionsString) {
     var sections = [];

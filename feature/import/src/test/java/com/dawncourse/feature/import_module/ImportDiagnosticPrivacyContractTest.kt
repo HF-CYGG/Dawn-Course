@@ -28,6 +28,17 @@ class ImportDiagnosticPrivacyContractTest {
         assertFalse(source.contains("diagnosticSampleRepository.saveRaw("))
     }
 
+    /** 多解析器尝试必须累计隔离运行时返回的固定诊断短码，不能依赖共享可变状态。 */
+    @Test
+    fun viewModel_accumulatesDiagnosticsFromEveryIsolatedExecution() {
+        val source = sourceFile("ImportViewModel.kt")
+
+        assertTrue(source.contains("val allDiagnostics = mutableListOf<String>()"))
+        assertTrue(source.contains("allDiagnostics.addAll(execution.diagnostics)"))
+        assertTrue(source.contains("val droppedCount = allDiagnostics.size"))
+        assertFalse(source.contains("lastRunDiagnostics"))
+    }
+
     /** 读取当前模块源码；兼容从仓库根或模块目录启动测试。 */
     private fun sourceFile(name: String): String {
         val candidates = listOf(

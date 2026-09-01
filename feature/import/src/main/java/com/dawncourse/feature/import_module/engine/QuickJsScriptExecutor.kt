@@ -1,5 +1,7 @@
 package com.dawncourse.feature.import_module.engine
 
+import org.json.JSONArray
+
 /**
  * 仅在 :script_runtime 进程内创建和运行 QuickJS。
  *
@@ -93,15 +95,18 @@ internal class QuickJsScriptExecutor(
             runtime.evaluate("__dawnHost.abortAsTimeout('')")
         }
         val json = runtime.evaluate("__dawnHost.resultJson()").textOrEmpty()
-        return parseHarnessResult(json)
+        return parseHarnessResult(json, readDiagnostics(runtime))
     }
 
     /** 校验宿主 JSON 的体积，避免 Binder/文件协议把超大结果带回主进程。 */
-    private fun parseHarnessResult(json: String): ScriptEngine.ScriptExecutionResult {
+    private fun parseHarnessResult(
+        json: String,
+        diagnostics: List<String>
+    ): ScriptEngine.ScriptExecutionResult {
         if (json.isBlank()) {
             return failure(ScriptEngine.ERROR_SCRIPT_EXCEPTION, "empty host result")
         }
-        val result = scriptExecutionResultFromJson(json)
+        val result = scriptExecutionResultFromJson(json).copy(diagnostics = diagnostics)
         val encodedSize = ScriptRuntimeLimits.utf8Size(result.toProtocolJson())
         return if (ScriptRuntimeLimits.isResultSizeValid(encodedSize)) {
             result
@@ -109,6 +114,19 @@ internal class QuickJsScriptExecutor(
             failure(ScriptEngine.ERROR_RESULT_TOO_LARGE, "script result exceeds limit")
         }
     }
+
+    /** 诊断只允许固定短码并限制条数，禁止把页面内容经 IPC 带回主进程。 */
+    private fun readDiagnostics(runtime: QuickJsRuntimeAdapter): List<String> = runCatching {
+        val raw = runtime.evaluate(DIAGNOSTICS_QUERY).textOrEmpty()
+        val array = JSONArray(raw)
+        buildList {
+            for (index in 0 until array.length().coerceAtMost(MAX_DIAGNOSTIC_COUNT)) {
+                array.optString(index)
+                    .takeIf(ALLOWED_DIAGNOSTIC_CODES::contains)
+                    ?.let(::add)
+            }
+        }
+    }.getOrDefault(emptyList())
 
     /** 创建不包含 wrapper 异常细节或脚本内容的稳定错误协议。 */
     private fun failure(errorCode: String, message: String) = ScriptEngine.ScriptExecutionResult(
@@ -121,6 +139,13 @@ internal class QuickJsScriptExecutor(
         entryUsed = "",
         contractVersion = ScriptEngine.SUPPORTED_CONTRACT_VERSION
     )
+
+    private companion object {
+        const val MAX_DIAGNOSTIC_COUNT = 512
+        const val DIAGNOSTICS_QUERY =
+            "JSON.stringify((globalThis.__dc_diag || []).slice(0, 512))"
+        val ALLOWED_DIAGNOSTIC_CODES = setOf("no_weeks", "no_sections", "no_day")
+    }
 }
 
 /** 把 Adapter 的受限值还原为宿主所需的布尔状态。 */

@@ -51,6 +51,7 @@ internal fun ScriptEngine.ScriptExecutionResult.toProtocolJson(): String = JSONO
     .put("errorMessage", errorMessage)
     .put("entryUsed", entryUsed)
     .put("contractVersion", contractVersion)
+    .put("diagnostics", JSONArray(diagnostics))
     .toString()
 
 internal fun scriptExecutionResultFromJson(raw: String): ScriptEngine.ScriptExecutionResult {
@@ -63,6 +64,19 @@ internal fun scriptExecutionResultFromJson(raw: String): ScriptEngine.ScriptExec
         errorCode = json.optString("errorCode"),
         errorMessage = json.optString("errorMessage"),
         entryUsed = json.optString("entryUsed"),
-        contractVersion = json.optInt("contractVersion", 0)
+        contractVersion = json.optInt("contractVersion", 0),
+        diagnostics = json.optJSONArray("diagnostics").toDiagnosticCodes()
     )
 }
+
+private fun JSONArray?.toDiagnosticCodes(): List<String> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length().coerceAtMost(MAX_DIAGNOSTIC_COUNT)) {
+            optString(index).takeIf(ALLOWED_DIAGNOSTIC_CODES::contains)?.let(::add)
+        }
+    }
+}
+
+private const val MAX_DIAGNOSTIC_COUNT = 512
+private val ALLOWED_DIAGNOSTIC_CODES = setOf("no_weeks", "no_sections", "no_day")

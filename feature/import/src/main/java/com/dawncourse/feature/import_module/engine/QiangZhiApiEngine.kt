@@ -184,11 +184,15 @@ class QiangZhiApiEngine @Inject constructor() {
             var weeks = parseWeekString(weekText)
             
             // 处理单双周：结合 kkzc 文本和 sjbz 字段
+            // 非破坏性：若过滤后为空（数据里单/双标记与实际周次冲突，例如只上第 6 周却被标"单"），
+            // 保留过滤前的周次，避免整门课因一个可疑标记被丢弃（issue #109）
             val sjbz = item.optString("sjbz")
             if (weekText.contains("单") || sjbz == "1") {
-                weeks = weeks.filter { it % 2 == 1 }
+                val filtered = weeks.filter { it % 2 == 1 }
+                weeks = if (filtered.isEmpty()) weeks else filtered
             } else if (weekText.contains("双") || sjbz == "2") {
-                weeks = weeks.filter { it % 2 == 0 }
+                val filtered = weeks.filter { it % 2 == 0 }
+                weeks = if (filtered.isEmpty()) weeks else filtered
             }
 
             // 解析节次
@@ -598,28 +602,18 @@ class QiangZhiApiEngine @Inject constructor() {
             }
         }
 
-        // 解析周次 1-16 或 1-8,10-16
-        val weeks = mutableListOf<Int>()
-        val weekStr = weekRaw.substringBefore("(").trim()
-        if (weekStr.isNotEmpty()) {
-            val parts = weekStr.split(",", "，")
-            for (part in parts) {
-                val token = part.trim()
-                if (token.isEmpty()) continue
-                if (token.contains("-")) {
-                    val rangeParts = token.split("-")
-                    val startWeek = rangeParts.getOrNull(0)?.trim()?.toIntOrNull() ?: continue
-                    val endWeek = rangeParts.getOrNull(1)?.trim()?.toIntOrNull() ?: continue
-                    if (startWeek > 0 && endWeek >= startWeek) {
-                        for (w in startWeek..endWeek) {
-                            weeks.add(w)
-                        }
-                    }
-                } else {
-                    val week = token.toIntOrNull()
-                    if (week != null && week > 0) weeks.add(week)
-                }
-            }
+        // 解析周次 1-16 / 1-8,10-16 / 5周 / 第5周 / 5周(1-2节) / (1-16周) 等
+        // 直接把整串交给 parseWeekString：它逐位扫描数字、跳过 "周"/"第"/裸括号，
+        // 并会剔除"含节次"的括号组（[03-04节] / (1-2节)），因此不用再 substringBefore
+        // （那样会把整体被括号包住的 "(5周)" 截成空串，丢掉整门课 —— issue #109）
+        var weeks = parseWeekString(weekRaw)
+        // 单双周：过滤后为空则保留原周次（与 parseApiCourses 一致，非破坏性）
+        if (weekRaw.contains("单")) {
+            val filtered = weeks.filter { it % 2 == 1 }
+            weeks = if (filtered.isEmpty()) weeks else filtered
+        } else if (weekRaw.contains("双")) {
+            val filtered = weeks.filter { it % 2 == 0 }
+            weeks = if (filtered.isEmpty()) weeks else filtered
         }
 
         if (weeks.isNotEmpty() && sections.isNotEmpty()) {
@@ -749,34 +743,42 @@ class QiangZhiApiEngine @Inject constructor() {
         return list
     }
     
+    /** 匹配"含节次"的括号/方括号组，如 "(1-2节)"、"[03-04节]"，用于从周次串里剔除节次后缀 */
+    private val bracketWithSectionRegex = Regex("[（(\\[][^）)\\]]*节[^）)\\]]*[）)\\]]")
+
     /**
      * 解析周次字符串
+     *
+     * 逐位扫描数字，兼容 "周" / "第" / 裸括号等非数字字符；支持 "1-16" 区间与逗号列表。
+     * 只剔除"含节次"的括号组（如 "5周(1-2节)" / "1-16周[03-04节]"），
+     * 而 "(1-16周)" / "（5周）" 这种整体被括号包住的写法保持不变（裸括号会被扫描逻辑跳过）。
      */
     fun parseWeekString(weekStr: String): List<Int> {
         val weeks = mutableListOf<Int>()
+        val trimmed = weekStr.replace(bracketWithSectionRegex, "")
         var index = 0
-        val len = weekStr.length
+        val len = trimmed.length
         while (index < len) {
             // 跳过非数字字符 (如 "周", "(", "," 等)
-            while (index < len && !weekStr[index].isDigit()) {
+            while (index < len && !trimmed[index].isDigit()) {
                 index++
             }
             if (index >= len) break
 
             // 提取第一个数字 (起始周或单周)
             var l = 0
-            while (index < len && weekStr[index].isDigit()) {
-                l = l * 10 + (weekStr[index] - '0')
+            while (index < len && trimmed[index].isDigit()) {
+                l = l * 10 + (trimmed[index] - '0')
                 index++
             }
             
             // 检查是否为区间格式 (例如 "1-16")
-            if (index < len && weekStr[index] == '-') {
+            if (index < len && trimmed[index] == '-') {
                 index++
                 // 提取第二个数字 (结束周)
                 var r = 0
-                while (index < len && weekStr[index].isDigit()) {
-                    r = r * 10 + (weekStr[index] - '0')
+                while (index < len && trimmed[index].isDigit()) {
+                    r = r * 10 + (trimmed[index] - '0')
                     index++
                 }
                 if (r > 0) {

@@ -22,6 +22,12 @@ class SemesterMetadataSourceContractTest {
     }
 
     @Test
+    fun timetableKeepsLateSingleWeekCoursesReachableWithoutTrustingUnboundedData() {
+        assertTrue(timetableScreen.contains("maxOf(configuredWeeks, maxCourseWeek)"))
+        assertTrue(timetableScreen.contains("coerceAtMost(53)"))
+    }
+
+    @Test
     fun courseEditorUsesCurrentSemesterWeekCountFromViewModelContract() {
         assertTrue(editorViewModel.contains("currentSemesterWeekCount"))
         assertTrue(editorScreen.contains("currentSemesterWeekCount: Int"))

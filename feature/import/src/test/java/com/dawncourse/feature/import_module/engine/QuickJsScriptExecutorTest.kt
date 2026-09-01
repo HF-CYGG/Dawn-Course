@@ -29,7 +29,8 @@ class QuickJsScriptExecutorTest {
                 "parser-source",
                 "__dawnHost.begin",
                 "__dawnHost.isSettled",
-                "__dawnHost.resultJson"
+                "__dawnHost.resultJson",
+                DIAGNOSTICS_QUERY
             ),
             runtime.evaluated.map(::contractCall)
         )
@@ -62,6 +63,24 @@ class QuickJsScriptExecutorTest {
         assertEquals(ScriptEngine.ERROR_SCRIPT_EXCEPTION, result.errorCode)
         assertEquals("script execution failed", result.errorMessage)
         assertEquals(1, runtime.closeCalls)
+    }
+
+    @Test
+    fun `执行器只返回允许的丢弃诊断并保留重复计数`() {
+        val runtime = RecordingRuntime(
+            evaluations = mapOf(
+                "__dawnHost.begin" to QuickJsEvaluationValue.BooleanValue(false),
+                "__dawnHost.isSettled" to QuickJsEvaluationValue.BooleanValue(true),
+                "__dawnHost.resultJson" to QuickJsEvaluationValue.TextValue(successResultJson()),
+                DIAGNOSTICS_QUERY to QuickJsEvaluationValue.TextValue(
+                    """["no_weeks","private-html","no_weeks","no_day"]"""
+                )
+            )
+        )
+
+        val result = QuickJsScriptExecutor(QuickJsRuntimeFactory { runtime }).execute(request())
+
+        assertEquals(listOf("no_weeks", "no_weeks", "no_day"), result.diagnostics)
     }
 
     @Test
@@ -124,6 +143,7 @@ class QuickJsScriptExecutorTest {
         source.startsWith("__dawnHost.begin") -> "__dawnHost.begin"
         source == "__dawnHost.isSettled()" -> "__dawnHost.isSettled"
         source == "__dawnHost.resultJson()" -> "__dawnHost.resultJson"
+        source == DIAGNOSTICS_QUERY -> DIAGNOSTICS_QUERY
         else -> source
     }
 
@@ -153,5 +173,7 @@ class QuickJsScriptExecutorTest {
 
     private companion object {
         const val SETUP_RUNTIME_PREFIX = "setup-runtime"
+        const val DIAGNOSTICS_QUERY =
+            "JSON.stringify((globalThis.__dc_diag || []).slice(0, 512))"
     }
 }

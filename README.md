@@ -146,9 +146,12 @@ DawnCourse/
 
 导入与自动更新依赖一组可独立演进的 JavaScript 脚本，用于 WebView 交互与 HTML 提取/解析：
 
-- 内置脚本（兜底）：`app/src/main/assets/js/`
+- 内置脚本（兜底）：`app/src/main/assets/js/`（WebView 交互）与 `feature/import/src/main/assets/parsers/`（HTML 解析器：`common_parser_utils.js` / `zhengfang.js` / `qiangzhi.js` / `kingosoft.js`）
 - 云端脚本（可更新）：独立 `DawnCourse-server` 仓库中的 `html/scripts/js/`
 - 获取策略：云端 → 本地缓存 → Assets 兜底（保证离线可用与可控升级）
+
+> ⚠️ 修改内置解析器脚本后，**务必同步更新云端同名脚本**（或提升其版本号触发客户端重新拉取）。
+> 否则已缓存旧云端脚本的设备会继续用旧版本覆盖修好的内置兜底。
 
 如需贡献新的教务系统脚本，请参考：
 

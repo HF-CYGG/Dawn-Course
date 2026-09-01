@@ -508,6 +508,9 @@ class ImportViewModel @Inject constructor(
                     latestLlmTaskId = ""
                 )
             }
+            // 每个 parser 都在隔离运行时中执行；诊断随执行结果返回并在本次导入内累积，
+            // 避免后续 parser 覆盖前一个 parser 的丢弃记录。
+            val allDiagnostics = mutableListOf<String>()
             try {
                 var repairContext: LlmRepairContext? = null
                 val parsed = withContext(Dispatchers.IO) {
@@ -573,6 +576,7 @@ class ImportViewModel @Inject constructor(
                                         harnessSource = scriptHostSource,
                                         dependencies = dependencyScripts
                                     )
+                                    allDiagnostics.addAll(execution.diagnostics)
                                     val jsonResult = execution.raw
                                     val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
                                     if (parsedDirect.isNotEmpty()) {
@@ -685,6 +689,13 @@ class ImportViewModel @Inject constructor(
                     }
                     courses
                 }
+
+                val droppedCount = allDiagnostics.size
+                val droppedNote = if (droppedCount > 0) {
+                    "\n（另有 $droppedCount 条记录因周次/节次识别失败被跳过；如有课程缺失，请在 issue 中附上脱敏后的页面结构）"
+                } else {
+                    ""
+                }
                 
                 if (parsed.isEmpty()) {
                     val context = repairContext
@@ -703,7 +714,7 @@ class ImportViewModel @Inject constructor(
                             isLoading = false,
                             parsePipelineStage = ParsePipelineStage.IDLE,
                             parseFailureType = context?.failureType ?: "",
-                            resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载"
+                            resultText = "未识别到课程数据。请确认：\n1. 已登录教务系统\n2. 位于个人课表页面\n3. 页面已完全加载$droppedNote"
                         )
                     }
                 } else {
@@ -722,7 +733,7 @@ class ImportViewModel @Inject constructor(
                             step = ImportStep.Review,
                             detectedMaxSection = safeMaxSection,
                             sectionTimes = generateDefaultSectionTimes(it, safeMaxSection),
-                            resultText = "成功解析 ${parsed.size} 个课程段"
+                            resultText = "成功解析 ${parsed.size} 个课程段$droppedNote"
                         )
                     }
                 }
