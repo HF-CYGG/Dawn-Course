@@ -277,24 +277,29 @@ function extractWeeksStr(text) {
     // "周" 后缀（排除 "周次"/"周数" 这类标签，避免把节次旁边的标签 "周" 误当作周次单位）
     var zhou = "周(?![次数])";
 
+    // 从整段匹配文本里提取单/双周标记，附加到返回值上（parity 可能出现在周次列表前或后）
+    function paritySuffix(matchText) {
+        return /单/.test(matchText) ? "(单)" : (/双/.test(matchText) ? "(双)" : "");
+    }
+
     // 1) 带 "周数"/"周次" 标签，后跟数字列表/区间。
-    //    冒号可选（兼容 "周数 1,3,5周"、"周数1-8,10-16周"、"周数 1-8周,10-16周" 等）。
-    var labeled = new RegExp("周\\s*[数次]\\s*[:：]?\\s*(" + list + ")" + parity, "i").exec(t);
+    //    冒号可选（兼容 "周数 1,3,5周"、"周数1-8,10-16周"、"周数 1-8周,10-16周" 等）；
+    //    单/双标记允许出现在列表前（"周数：(单)1-16周"）或列表后（"1-16周(单)"）。
+    var labeled = new RegExp("周\\s*[数次]\\s*[:：]?\\s*" + parity + "\\s*(" + list + ")" + parity, "i").exec(t);
     if (labeled) {
-        var suffix = /单/.test(labeled[0]) ? "(单)" : (/双/.test(labeled[0]) ? "(双)" : "");
-        return labeled[1].replace(/\s+/g, "") + suffix;
+        return labeled[1].replace(/\s+/g, "") + paritySuffix(labeled[0]);
     }
     // 2) 无标签的连续周次串：以数字开头，由 数字/区间/逗号/"周" 组成，
     //    且必须以真正的 "周" 收尾。这样 "1-8,10-16周" 和 "1-8周,10-16周" 都能完整保留，
-    //    而 "节次1-2" 因为不以 "周" 收尾不会被误匹配。
+    //    而 "节次1-2" 因为不以 "周" 收尾不会被误匹配。前置的单/双标记也一并纳入匹配。
     var listMatch = new RegExp(
-        "(" + num + "(?:\\s*[-,，、;至~～—–－]\\s*" + num + "|\\s*" + zhou + ")*\\s*" + zhou + parity + ")",
+        parity + "\\s*(" + num + "(?:\\s*[-,，、;至~～—–－]\\s*" + num + "|\\s*" + zhou + ")*\\s*" + zhou + ")" + parity,
         "i"
     ).exec(t);
-    if (listMatch) return listMatch[1].replace(/\s+/g, "");
-    // 3) 单周 "N周"（可带单双）—— issue #109
-    var single = new RegExp("(" + num + "\\s*周" + parity + ")", "i").exec(t);
-    if (single) return single[1].replace(/\s+/g, "");
+    if (listMatch) return listMatch[1].replace(/\s+/g, "") + paritySuffix(listMatch[0]);
+    // 3) 单周 "N周"（可带单双，标记可在前可在后）—— issue #109
+    var single = new RegExp(parity + "\\s*(" + num + "\\s*周)" + parity, "i").exec(t);
+    if (single) return single[1].replace(/\s+/g, "") + paritySuffix(single[0]);
     return "";
 }
 

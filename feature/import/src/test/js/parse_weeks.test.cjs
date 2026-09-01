@@ -103,6 +103,10 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('节次1-2 上课时间1-3节'), '', name + ' extractWeeksStr(纯节次 不以周收尾) -> ""');
     eq(extractWeeksStr('(1-16周)'), '1-16周', name + ' extractWeeksStr("(1-16周)") 括号包裹');
     eq(extractWeeksStr('（9周）'), '9周', name + ' extractWeeksStr("（9周）") 全角括号');
+    // 单/双标记出现在周次列表之前（Codex PR #112 P1）
+    eq(extractWeeksStr('周数：(单)1-16周'), '1-16周(单)', name + ' extractWeeksStr("周数：(单)1-16周") 前置单周标记');
+    eq(extractWeeksStr('周数：(双)2-16周'), '2-16周(双)', name + ' extractWeeksStr("周数：(双)2-16周") 前置双周标记');
+    eq(extractWeeksStr('(单) 1-16周'), '1-16周(单)', name + ' extractWeeksStr("(单) 1-16周") 无标签前置单周标记');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
@@ -122,6 +126,11 @@ for (const [name, ctx] of scopes) {
         parseWeeks(extractWeeksStr('1-8,10-16周(单)')),
         [1, 3, 5, 7, 11, 13, 15],
         name + ' e2e 多区间带单周标记'
+    );
+    eq(
+        parseWeeks(extractWeeksStr('周数：(单)1-16周 节次:1-2节')),
+        [1, 3, 5, 7, 9, 11, 13, 15],
+        name + ' e2e 前置单周标记'
     );
 }
 

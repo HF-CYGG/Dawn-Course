@@ -602,11 +602,11 @@ class QiangZhiApiEngine @Inject constructor() {
             }
         }
 
-        // 解析周次 1-16 / 1-8,10-16 / 5周 / 第5周 / 5周(1-2节) 等
-        // 复用逐位扫描的 parseWeekString，容忍带 "周"、"第"、括号后缀的 token（issue #109），
-        // 不再用严格的 token.toIntOrNull()（它会把 "5周" 判为 null 从而丢弃单周课）
-        val weekStr = weekRaw.substringBefore("(").substringBefore("（").trim()
-        var weeks = parseWeekString(weekStr)
+        // 解析周次 1-16 / 1-8,10-16 / 5周 / 第5周 / 5周(1-2节) / (1-16周) 等
+        // 直接把整串交给 parseWeekString：它逐位扫描数字、跳过 "周"/"第"/裸括号，
+        // 并会剔除"含节次"的括号组（[03-04节] / (1-2节)），因此不用再 substringBefore
+        // （那样会把整体被括号包住的 "(5周)" 截成空串，丢掉整门课 —— issue #109）
+        var weeks = parseWeekString(weekRaw)
         // 单双周：过滤后为空则保留原周次（与 parseApiCourses 一致，非破坏性）
         if (weekRaw.contains("单")) {
             val filtered = weeks.filter { it % 2 == 1 }
@@ -743,15 +743,19 @@ class QiangZhiApiEngine @Inject constructor() {
         return list
     }
     
+    /** 匹配"含节次"的括号/方括号组，如 "(1-2节)"、"[03-04节]"，用于从周次串里剔除节次后缀 */
+    private val bracketWithSectionRegex = Regex("[（(\\[][^）)\\]]*节[^）)\\]]*[）)\\]]")
+
     /**
      * 解析周次字符串
      *
-     * 逐位扫描数字，兼容 "周" / "第" 等非数字字符；支持 "1-16" 区间与逗号列表。
-     * 括号后缀（通常是节次/备注，如 "5周(1-2节)"）会被截断，避免把节次误当周次。
+     * 逐位扫描数字，兼容 "周" / "第" / 裸括号等非数字字符；支持 "1-16" 区间与逗号列表。
+     * 只剔除"含节次"的括号组（如 "5周(1-2节)" / "1-16周[03-04节]"），
+     * 而 "(1-16周)" / "（5周）" 这种整体被括号包住的写法保持不变（裸括号会被扫描逻辑跳过）。
      */
     fun parseWeekString(weekStr: String): List<Int> {
         val weeks = mutableListOf<Int>()
-        val trimmed = weekStr.substringBefore("(").substringBefore("（").substringBefore("[")
+        val trimmed = weekStr.replace(bracketWithSectionRegex, "")
         var index = 0
         val len = trimmed.length
         while (index < len) {

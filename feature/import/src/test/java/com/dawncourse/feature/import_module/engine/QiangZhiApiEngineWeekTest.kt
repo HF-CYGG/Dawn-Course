@@ -26,6 +26,18 @@ class QiangZhiApiEngineWeekTest {
     }
 
     @Test
+    fun `parseWeekString - 整体被括号包住不能截成空串`() {
+        assertEquals((1..16).toList(), engine.parseWeekString("(1-16周)"))
+        assertEquals(listOf(5), engine.parseWeekString("（5周）"))
+    }
+
+    @Test
+    fun `parseWeekString - 剔除方括号里的节次后缀`() {
+        assertEquals((1..16).toList(), engine.parseWeekString("1-16周[03-04节]"))
+        assertEquals(listOf(5), engine.parseWeekString("5周[1-2节]"))
+    }
+
+    @Test
     fun `parseWeekString - 区间与列表`() {
         assertEquals((1..16).toList(), engine.parseWeekString("1-16周"))
         assertEquals(listOf(1, 2, 3, 4, 10), engine.parseWeekString("1-4,10周"))
