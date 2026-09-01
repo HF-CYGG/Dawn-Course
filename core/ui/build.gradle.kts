@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.dawncourse.core.ui"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 26
@@ -19,8 +19,8 @@ android {
     // Compose 编译器版本现在由 composeCompiler 插件（版本随 Kotlin 一同发布）管理
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
     // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
     // 上面的 compileOptions.targetCompatibility，无需重复声明

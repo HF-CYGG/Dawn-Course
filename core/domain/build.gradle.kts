@@ -5,15 +5,15 @@ plugins {
 
 android {
     namespace = "com.dawncourse.core.domain"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 26
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
     }
     // kotlinOptions 块已移除：built-in Kotlin 下由顶层 kotlin.compilerOptions 配置，
     // 且 jvmTarget 默认等于上面的 compileOptions.targetCompatibility，无需重复声明
