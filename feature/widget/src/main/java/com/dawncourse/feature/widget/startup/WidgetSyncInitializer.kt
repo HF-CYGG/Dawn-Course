@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  * 将这部分逻辑从 Application 的 onCreate 中解耦出来，以优化应用的启动速度和模块的独立性。
  */
 class WidgetSyncInitializer : Initializer<Unit> {
-    
+
     /**
      * 执行初始化操作
      *
