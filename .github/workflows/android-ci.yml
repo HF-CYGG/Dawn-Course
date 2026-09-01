@@ -40,6 +40,9 @@ jobs:
     - name: Set up Android SDK
       uses: android-actions/setup-android@v3
 
+    - name: Debug available SDK platforms
+      run: sdkmanager --channel=3 --list 2>&1 | grep -iE "platforms;android|build-tools;3[5-9]" || true
+
     - name: Install compile SDK
       run: sdkmanager --channel=3 "platforms;android-37" "build-tools;36.0.0"
 
