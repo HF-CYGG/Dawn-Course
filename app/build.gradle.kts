@@ -1,6 +1,5 @@
 import java.util.Properties
 import java.io.FileInputStream
-import java.security.MessageDigest
 import java.util.zip.ZipFile
 import org.gradle.api.tasks.Exec
 
@@ -167,10 +166,33 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             .asFile
         val baselineProfile = profileDirectory.resolve("baseline-prof.txt")
         val startupProfile = profileDirectory.resolve("startup-prof.txt")
-        val mergedProfileDirectory = layout.buildDirectory
-            .dir("intermediates/baselineprofiles/release/merged")
+        // AGP 会把 src/release/generated/baselineProfiles 下的文本规则并入 release 的
+        // ART / Startup Profile 合并产物，最终打进 APK 的 assets/dexopt。这里校验的是
+        // 这条「消费」链路的合并输出（mergeReleaseArtProfile / mergeReleaseStartupProfile），
+        // 而不是 baselineprofile 插件「生成」链路的 intermediates/baselineprofiles 目录——
+        // 后者仅在连设备生成 Profile 时才产出，clean 状态下的 assembleRelease 不会创建它，
+        // 之前正是因此让本门禁在 CI 上误报失败。
+        val mergedArtProfileRoot = layout.buildDirectory
+            .dir("intermediates/merged_art_profile/release")
             .get().asFile
-        listOf(baselineProfile, startupProfile).forEach { profile ->
+        val mergedStartupProfileRoot = layout.buildDirectory
+            .dir("intermediates/merged_startup_profile/release")
+            .get().asFile
+        fun locateMergedProfile(root: File, fileName: String): File {
+            val matches = root.walkTopDown()
+                .filter { it.isFile && it.name == fileName }
+                .toList()
+            check(matches.size == 1) {
+                "release 合并输出中应恰好有一个 $fileName，实际：" +
+                    matches.map(File::getAbsolutePath)
+            }
+            return matches.single()
+        }
+        val profileToMerged = linkedMapOf(
+            baselineProfile to locateMergedProfile(mergedArtProfileRoot, "baseline-prof.txt"),
+            startupProfile to locateMergedProfile(mergedStartupProfileRoot, "startup-prof.txt")
+        )
+        profileToMerged.forEach { (profile, mergedProfile) ->
             check(profile.isFile && profile.length() > 0L) {
                 "缺少非空的生成 Profile：${profile.absolutePath}"
             }
@@ -182,15 +204,16 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             check(rules.none { it.contains("Lcom/dawncourse/app/benchmark/") }) {
                 "生成 Profile 泄漏 benchmark-only 规则：${profile.name}"
             }
-            val mergedProfile = mergedProfileDirectory.resolve(profile.name)
             check(mergedProfile.isFile && mergedProfile.length() > 0L) {
-                "release 合并输入缺少非空 Profile：${mergedProfile.absolutePath}"
+                "release 合并输出缺少非空 Profile：${mergedProfile.absolutePath}"
             }
-            val digest = MessageDigest.getInstance("SHA-256")
-            val sourceHash = digest.digest(profile.readBytes())
-            val mergedHash = digest.digest(mergedProfile.readBytes())
-            check(sourceHash.contentEquals(mergedHash)) {
-                "生成 Profile 与 release 合并输入不一致：${profile.name}"
+            // AGP 先原样并入应用规则，再在后续 expand 任务里展开通配符，因此合并输出必然
+            // 逐行包含全部来源规则；库自带规则只会让合并输出更大，不影响这里的子集校验。
+            val mergedRules = mergedProfile.readLines().filterTo(HashSet(), String::isNotBlank)
+            val missing = rules.filterNot(mergedRules::contains)
+            check(missing.isEmpty()) {
+                "生成 Profile 的规则未全部进入 release 合并输出：${profile.name}，" +
+                    "缺失 ${missing.size} 条，例如 ${missing.take(3)}"
             }
         }
 
