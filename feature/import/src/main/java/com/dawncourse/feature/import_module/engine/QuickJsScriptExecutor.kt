@@ -75,8 +75,8 @@ internal class QuickJsScriptExecutor(
     /**
      * 调用共享宿主并读取一次已 eager-drain 的 settled 状态。
      *
-     * `deadlineAt` 仍传给宿主做业务级截止判断；同步死循环的硬中断仍由主进程 5 秒
-     * withTimeout 后终止 :script_runtime 进程完成。
+     * `deadlineAt` 仍传给宿主做业务级截止判断；同步死循环的硬中断仍由主进程按请求预算
+     * 通过 withTimeout 后终止 :script_runtime 进程完成。
      */
     private fun invokeHarness(
         runtime: QuickJsRuntimeAdapter,

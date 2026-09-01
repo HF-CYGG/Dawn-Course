@@ -59,7 +59,10 @@ class ScriptEngine @Inject constructor(
             ERROR_HARNESS_MISSING
         )
 
-        private const val SERVICE_BIND_TIMEOUT_MS: Long = 5_000L
+        // 独立覆盖隔离进程创建与 native 冷加载；脚本执行仍受 request.timeoutMillis 限制。
+        private const val SERVICE_BIND_TIMEOUT_MS: Long = 10_000L
+        // 大请求的 Pipe 传输与协议解码不占用脚本执行预算，但同样必须有硬上限。
+        private const val SERVICE_PREPARATION_TIMEOUT_MS: Long = 10_000L
         private const val SERVICE_TERMINATION_TIMEOUT_MS: Long = 1_000L
         private const val DEFAULT_PIPE_BUFFER_BYTES: Int = 8 * 1024
 
@@ -167,6 +170,7 @@ class ScriptEngine @Inject constructor(
         val responseRead = responsePipe[0]
         val responseWrite = responsePipe[1]
         val requestBytes = request.toJson().toByteArray(Charsets.UTF_8)
+        val executionStarted = CompletableDeferred<Unit>()
         val completion = CompletableDeferred<Unit>()
         val connected = CompletableDeferred<Int>()
         val runtimeDied = CompletableDeferred<Unit>()
@@ -190,6 +194,10 @@ class ScriptEngine @Inject constructor(
             }.getOrElse { PipeReadResult.Failed }
         }
         val callback = object : IScriptRuntimeCallback.Stub() {
+            override fun onExecutionStarted() {
+                executionStarted.complete(Unit)
+            }
+
             override fun onComplete() {
                 completion.complete(Unit)
             }
@@ -267,6 +275,7 @@ class ScriptEngine @Inject constructor(
                 failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding failed")
             } else {
                 withTimeout(SERVICE_BIND_TIMEOUT_MS) { connected.await() }
+                withTimeout(SERVICE_PREPARATION_TIMEOUT_MS) { executionStarted.await() }
                 val result = withTimeout(request.timeoutMillis) {
                     completion.await()
                     when (requestWriter.await()) {

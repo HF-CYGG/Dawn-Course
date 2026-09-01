@@ -27,8 +27,10 @@ class ScriptRuntimeService : Service() {
                     val requestText = ParcelFileDescriptor.AutoCloseInputStream(request)
                         .bufferedReader(Charsets.UTF_8)
                         .use { it.readText() }
+                    val runtimeRequest = ScriptRuntimeRequest.fromJson(requestText)
+                    callback.onExecutionStarted()
                     QuickJsScriptExecutor()
-                        .execute(ScriptRuntimeRequest.fromJson(requestText))
+                        .execute(runtimeRequest)
                         .toProtocolJson()
                 }.getOrElse {
                     ScriptEngine.failureResult(
@@ -55,6 +57,12 @@ class ScriptRuntimeService : Service() {
                 runCatching { callback.onComplete() }
             }
         }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // native 冷加载属于隔离进程启动成本，不应消耗单次脚本的 5 秒执行预算。
+        HarlonQuickJsRuntimeFactory.preloadNative()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

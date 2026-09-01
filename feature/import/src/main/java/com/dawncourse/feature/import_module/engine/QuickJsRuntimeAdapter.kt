@@ -107,6 +107,16 @@ internal object HarlonQuickJsRuntimeFactory : QuickJsRuntimeFactory {
         }
     }
 
+    /**
+     * 在隔离服务建立 Binder 连接前完成 native library 冷加载。
+     *
+     * 这一步不创建 QuickJS Context，因此不会破坏 Context 必须由执行线程创建和使用的
+     * 线程约束；它只把进程启动成本与真正的脚本执行预算分离开。
+     */
+    fun preloadNative() {
+        initializeLoaderOnce()
+    }
+
     /** 同步加载 native library；失败时不标记成功，下一次新进程调用可重新尝试。 */
     private fun initializeLoaderOnce() {
         if (loaderInitialized) return
