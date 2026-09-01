@@ -268,19 +268,27 @@ function extractWeeksStr(text) {
     var dash = "[-至~～—–－]";
     var num = "[0-9]{1,2}";
     var parity = "(?:\\s*[（(]?\\s*[单双]\\s*[)）]?)?";
-    var list = num + "(?:\\s*" + dash + "\\s*" + num + ")?" +
-        "(?:\\s*[,，、;]\\s*" + num + "(?:\\s*" + dash + "\\s*" + num + ")?)*";
+    // 单个列表段：一个周次或 a-b 区间，允许每段自带 "周" 后缀
+    // （如 "1-8周,10-16周" —— 每段都有 "周"，parseWeeks 会忽略这些 "周"）
+    var seg = num + "(?:\\s*" + dash + "\\s*" + num + ")?\\s*周?";
+    var list = seg + "(?:\\s*[,，、;]\\s*" + seg + ")*";
+    // "周" 后缀（排除 "周次"/"周数" 这类标签，避免把节次旁边的标签 "周" 误当作周次单位）
+    var zhou = "周(?![次数])";
 
     // 1) 带 "周数"/"周次" 标签，后跟数字列表/区间。
-    //    冒号可选（兼容 "周数 1,3,5周"、"周数1-8,10-16周" 等无冒号写法），
-    //    但必须紧跟数字，避免误吞后面的教师/节次等字段。
-    var labeled = new RegExp("周\\s*[数次]\\s*[:：]?\\s*(" + list + ")\\s*周?" + parity, "i").exec(t);
+    //    冒号可选（兼容 "周数 1,3,5周"、"周数1-8,10-16周"、"周数 1-8周,10-16周" 等）。
+    var labeled = new RegExp("周\\s*[数次]\\s*[:：]?\\s*(" + list + ")" + parity, "i").exec(t);
     if (labeled) {
         var suffix = /单/.test(labeled[0]) ? "(单)" : (/双/.test(labeled[0]) ? "(双)" : "");
         return labeled[1].replace(/\s+/g, "") + suffix;
     }
-    // 2) "a-b,c-d周" 列表/区间（可带单双）
-    var listMatch = new RegExp("(" + list + "\\s*周" + parity + ")", "i").exec(t);
+    // 2) 无标签的连续周次串：以数字开头，由 数字/区间/逗号/"周" 组成，
+    //    且必须以真正的 "周" 收尾。这样 "1-8,10-16周" 和 "1-8周,10-16周" 都能完整保留，
+    //    而 "节次1-2" 因为不以 "周" 收尾不会被误匹配。
+    var listMatch = new RegExp(
+        "(" + num + "(?:\\s*[-,，、;至~～—–－]\\s*" + num + "|\\s*" + zhou + ")*\\s*" + zhou + parity + ")",
+        "i"
+    ).exec(t);
     if (listMatch) return listMatch[1].replace(/\s+/g, "");
     // 3) 单周 "N周"（可带单双）—— issue #109
     var single = new RegExp("(" + num + "\\s*周" + parity + ")", "i").exec(t);

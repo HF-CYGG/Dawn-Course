@@ -90,18 +90,32 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('1-16周(单)'), '1-16周(单)', name + ' extractWeeksStr("1-16周(单)")');
     eq(extractWeeksStr('教师:张三 上课时间:1-2节'), '', name + ' extractWeeksStr(无周次信息) -> ""');
     // 无冒号的 "周数" 标签 + 逗号列表：必须保留完整列表（Codex PR #112 P1）
-    // 带标签分支返回纯数字列表（"周" 由 parseWeeks 忽略），关键是列表不被截断
-    eq(extractWeeksStr('周数 1,3,5周'), '1,3,5', name + ' extractWeeksStr("周数 1,3,5周") 无冒号+列表');
-    eq(extractWeeksStr('周数1-8,10-16周'), '1-8,10-16', name + ' extractWeeksStr("周数1-8,10-16周") 无冒号+多区间');
+    eq(extractWeeksStr('周数 1,3,5周'), '1,3,5周', name + ' extractWeeksStr("周数 1,3,5周") 无冒号+列表');
+    eq(extractWeeksStr('周数1-8,10-16周'), '1-8,10-16周', name + ' extractWeeksStr("周数1-8,10-16周") 无冒号+多区间');
+    // 每段自带 "周" 后缀的列表：必须完整保留（Codex PR #112 P1 二次）
+    eq(extractWeeksStr('周次:1-8周,10-16周'), '1-8周,10-16周', name + ' extractWeeksStr("周次:1-8周,10-16周") 每段带周');
+    eq(extractWeeksStr('1-8周,10-16周'), '1-8周,10-16周', name + ' extractWeeksStr(无标签 每段带周)');
     eq(extractWeeksStr('1-8,10-16周 教师：张三'), '1-8,10-16周', name + ' extractWeeksStr(无标签+多区间) 不吞教师');
+    eq(extractWeeksStr('节次1-2 上课时间1-3节'), '', name + ' extractWeeksStr(纯节次 不以周收尾) -> ""');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
     eq(parseWeeks(extractWeeksStr('5周(1-2节)')), [5], name + ' e2e 单周("5周(1-2节)")');
+    const w1to8_10to16 = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16];
     eq(
         parseWeeks(extractWeeksStr('周数 1-8,10-16周 教师：张三')),
-        [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16],
+        w1to8_10to16,
         name + ' e2e 无冒号多区间不丢周次'
+    );
+    eq(
+        parseWeeks(extractWeeksStr('周次:1-8周,10-16周 节次:1-2节')),
+        w1to8_10to16,
+        name + ' e2e 每段带周 不丢周次'
+    );
+    eq(
+        parseWeeks(extractWeeksStr('1-8,10-16周(单)')),
+        [1, 3, 5, 7, 11, 13, 15],
+        name + ' e2e 多区间带单周标记'
     );
 }
 
