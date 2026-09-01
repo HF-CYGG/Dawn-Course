@@ -233,8 +233,11 @@ function parseCell(cellContent, day) {
             } else {
                 reportDropped("no_sections");
             }
-        } else if (name && !weeksStr) {
+        } else if (!weeksStr) {
+            // name 在函数开头已用 if (!name) continue 保证非空
             reportDropped("no_weeks");
+        } else if (!sectionsStr) {
+            reportDropped("no_sections");
         }
     }
     return results;
@@ -370,7 +373,8 @@ function parseListTable(cleanHtml) {
         if (!sectionsText) sectionsText = extractSectionsStr(rowText);
         var day = parseDayFromText(dayText || rowText);
 
-        if (!day) { if (nameText) reportDropped("no_day"); continue; }
+        // nameText 在上面已用 if (!nameText) continue 保证非空
+        if (!day) { reportDropped("no_day"); continue; }
         if (!weeksText) { reportDropped("no_weeks"); continue; }
         if (!sectionsText) { reportDropped("no_sections"); continue; }
 

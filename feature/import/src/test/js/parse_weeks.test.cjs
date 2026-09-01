@@ -89,10 +89,20 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('1-16周'), '1-16周', name + ' extractWeeksStr("1-16周")');
     eq(extractWeeksStr('1-16周(单)'), '1-16周(单)', name + ' extractWeeksStr("1-16周(单)")');
     eq(extractWeeksStr('教师:张三 上课时间:1-2节'), '', name + ' extractWeeksStr(无周次信息) -> ""');
+    // 无冒号的 "周数" 标签 + 逗号列表：必须保留完整列表（Codex PR #112 P1）
+    // 带标签分支返回纯数字列表（"周" 由 parseWeeks 忽略），关键是列表不被截断
+    eq(extractWeeksStr('周数 1,3,5周'), '1,3,5', name + ' extractWeeksStr("周数 1,3,5周") 无冒号+列表');
+    eq(extractWeeksStr('周数1-8,10-16周'), '1-8,10-16', name + ' extractWeeksStr("周数1-8,10-16周") 无冒号+多区间');
+    eq(extractWeeksStr('1-8,10-16周 教师：张三'), '1-8,10-16周', name + ' extractWeeksStr(无标签+多区间) 不吞教师');
 
-    // 端到端：extractWeeksStr -> parseWeeks 对单周应得到 [N]
+    // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
     eq(parseWeeks(extractWeeksStr('5周(1-2节)')), [5], name + ' e2e 单周("5周(1-2节)")');
+    eq(
+        parseWeeks(extractWeeksStr('周数 1-8,10-16周 教师：张三')),
+        [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16],
+        name + ' e2e 无冒号多区间不丢周次'
+    );
 }
 
 console.log('\nJS 解析器测试：' + passes + ' 通过，' + failures + ' 失败');

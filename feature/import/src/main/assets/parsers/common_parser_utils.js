@@ -259,7 +259,7 @@ function extractName(blockHtml) {
  *
  * 加固点（issue #109）：
  * - 周数上限约束为 [0-9]{1,2}，去掉原来贪婪的 [^\s]*，节次文本不会再被捕获进来。
- * - 新增"带标签但不带 周 字"的分支（如 "周次:5"）。
+ * - 带标签分支（"周数"/"周次"）冒号可选，且完整保留逗号列表（如 "周数 1-8,10-16周"）。
  * - 新增独立的单周分支（"9周"），不再要求必须是区间。
  */
 function extractWeeksStr(text) {
@@ -271,21 +271,20 @@ function extractWeeksStr(text) {
     var list = num + "(?:\\s*" + dash + "\\s*" + num + ")?" +
         "(?:\\s*[,，、;]\\s*" + num + "(?:\\s*" + dash + "\\s*" + num + ")?)*";
 
-    // 1) 带 "周数:" / "周次:" 标签，后跟数字列表/区间（不要求结尾有 "周"）
-    var labeled = new RegExp("周\\s*[数次]\\s*[:：]\\s*(" + list + ")\\s*周?" + parity, "i").exec(t);
+    // 1) 带 "周数"/"周次" 标签，后跟数字列表/区间。
+    //    冒号可选（兼容 "周数 1,3,5周"、"周数1-8,10-16周" 等无冒号写法），
+    //    但必须紧跟数字，避免误吞后面的教师/节次等字段。
+    var labeled = new RegExp("周\\s*[数次]\\s*[:：]?\\s*(" + list + ")\\s*周?" + parity, "i").exec(t);
     if (labeled) {
         var suffix = /单/.test(labeled[0]) ? "(单)" : (/双/.test(labeled[0]) ? "(双)" : "");
         return labeled[1].replace(/\s+/g, "") + suffix;
     }
-    // 2) "a-b周" 区间（可带单双）
-    var range = new RegExp("(" + num + "\\s*" + dash + "\\s*" + num + "\\s*周" + parity + ")", "i").exec(t);
-    if (range) return range[1].replace(/\s+/g, "");
+    // 2) "a-b,c-d周" 列表/区间（可带单双）
+    var listMatch = new RegExp("(" + list + "\\s*周" + parity + ")", "i").exec(t);
+    if (listMatch) return listMatch[1].replace(/\s+/g, "");
     // 3) 单周 "N周"（可带单双）—— issue #109
     var single = new RegExp("(" + num + "\\s*周" + parity + ")", "i").exec(t);
     if (single) return single[1].replace(/\s+/g, "");
-    // 4) 兜底：紧挨 "周次"/"周数" 标签的裸数字（前面分支已覆盖带冒号的情况，这里处理无冒号）
-    var bareLabeled = new RegExp("周\\s*[数次]\\s*(" + num + "(?:\\s*" + dash + "\\s*" + num + ")?)", "i").exec(t);
-    if (bareLabeled) return bareLabeled[1].replace(/\s+/g, "");
     return "";
 }
 
@@ -332,6 +331,9 @@ if (typeof module !== 'undefined' && module.exports) {
         extractSectionsStr: extractSectionsStr,
         stripTags: stripTags,
         stripWeekNoise: stripWeekNoise,
-        dedupeCourses: dedupeCourses
+        dedupeCourses: dedupeCourses,
+        // reportDropped 由各具体解析脚本（zhengfang.js/qiangzhi.js/kingosoft.js）在运行时调用，
+        // 它们与本文件是拼接加载的；此处导出同时让静态分析识别其被使用。
+        reportDropped: reportDropped
     };
 }
