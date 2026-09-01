@@ -111,6 +111,10 @@ for (const [name, ctx] of scopes) {
     eq(extractWeeksStr('周数:1-16周|单周'), '1-16周(单)', name + ' extractWeeksStr("...|单周") 竖线分隔');
     eq(extractWeeksStr('1-16周/双周'), '1-16周(双)', name + ' extractWeeksStr(".../双周") 斜杠分隔');
     eq(extractWeeksStr('1-16周[单]'), '1-16周(单)', name + ' extractWeeksStr("...[单]") 方括号');
+    // 裸露的"单"/"双"不该被误当标记：后面跟的是普通地名/词语，不是分隔符包裹或 "单周"/"双周"
+    eq(extractWeeksStr('1-16周 双创楼'), '1-16周', name + ' extractWeeksStr("...双创楼") 不误判"双"');
+    eq(extractWeeksStr('1-16周 单元楼101'), '1-16周', name + ' extractWeeksStr("...单元楼") 不误判"单"');
+    eq(extractWeeksStr('1-16周单周'), '1-16周(单)', name + ' extractWeeksStr("...单周") 无分隔符但成词仍识别');
 
     // 端到端：extractWeeksStr -> parseWeeks
     eq(parseWeeks(extractWeeksStr('周次:5 节次:1-2节')), [5], name + ' e2e 单周("周次:5 节次:1-2节")');
@@ -135,6 +139,11 @@ for (const [name, ctx] of scopes) {
         parseWeeks(extractWeeksStr('周数：(单)1-16周 节次:1-2节')),
         [1, 3, 5, 7, 9, 11, 13, 15],
         name + ' e2e 前置单周标记'
+    );
+    eq(
+        parseWeeks(extractWeeksStr('1-16周 双创楼 节次:1-2节')),
+        range(1, 16),
+        name + ' e2e "双创楼" 不触发误判过滤，保留全部周次'
     );
 }
 
