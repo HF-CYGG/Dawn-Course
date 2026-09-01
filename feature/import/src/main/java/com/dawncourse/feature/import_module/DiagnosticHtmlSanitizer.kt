@@ -21,7 +21,7 @@ data class SanitizedHtmlResult(
  */
 object DiagnosticHtmlSanitizer {
     /** 当前脱敏规则版本。 */
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** 单次可处理的原始页面上限，避免恶意页面造成过量内存占用。 */
     const val MAX_INPUT_BYTES = 4 * 1024 * 1024
@@ -36,6 +36,10 @@ object DiagnosticHtmlSanitizer {
         text = text.replace(SCRIPT_PATTERN, "<script>***</script>")
         text = text.replace(STYLE_PATTERN, "<style>***</style>")
         text = text.replace(INPUT_TAG_PATTERN) { match -> sanitizeSensitiveInputTag(match.value) }
+        // CAS/SSO 常把票据放在 URL 里：<form action="...?ticket=ST-...">、href、
+        // <meta http-equiv="refresh" content="0;url=...?lt=..."> 等。这些不经过 input
+        // 分支，需在 URL 查询/路径参数层面统一剥离认证字段的值。
+        text = text.replace(URL_AUTH_PARAM_PATTERN, "$1***")
         text = text.replace(SECRET_ASSIGNMENT_PATTERN, "$1=\"***\"")
         text = text.replace(TOKEN_PAIR_PATTERN, "$1=***")
         text = text.replace(STRUCTURED_PII_PAIR_PATTERN, "$1$2***$3")
@@ -124,6 +128,17 @@ object DiagnosticHtmlSanitizer {
             "execution|_eventid|saml|relaystate|rsakey|encryptsalt|encrypted|croypto|" +
             "logindata|viewstate|eventvalidation" +
             ")[^'\"]*['\"]"
+    )
+    /**
+     * URL 查询/路径参数里的认证票据：`?ticket=ST-...`、`&lt=...`、`;jsessionid=...`。
+     * 只替换值，保留参数名以维持结构诊断价值。
+     */
+    private val URL_AUTH_PARAM_PATTERN = Regex(
+        "(?i)([?&;](?:ticket|lt|execution|_eventid|samlresponse|samlrequest|relaystate|" +
+            "authenticity_token|_?csrf|xsrf|tgt|st|jsessionid|access_token|id_token)=)" +
+            // 值不得吞掉后续分隔符（? & ;），否则 `;jsessionid=A?ticket=B` 会把整串连同
+            // 后面的参数名一起替换掉，反而丢失结构信息。`=` 需保留以覆盖 base64 padding。
+            "[^&?;\"'\\s<>#]+"
     )
     private val INPUT_VALUE_PATTERN = Regex("(?is)(\\bvalue\\s*=\\s*)(['\"])(.*?)\\2")
     /** 无引号写法 value=xxx（CAS/正方偶见），把 xxx 换成带引号的 *** 。 */

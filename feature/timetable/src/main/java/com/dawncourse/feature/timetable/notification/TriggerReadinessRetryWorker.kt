@@ -15,6 +15,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.dawncourse.core.domain.model.TriggerKey
 import com.dawncourse.core.domain.model.TriggerKind
+import com.dawncourse.core.domain.model.TriggerPrecision
 import com.dawncourse.core.domain.model.TriggerUriCodec
 import com.dawncourse.core.domain.repository.OperationalDataGate
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
@@ -35,13 +36,22 @@ import kotlinx.coroutines.CancellationException
 object TriggerReadinessRetryInputPolicy {
     /** Work Data 中完整 TriggerKey URI 的键名。 */
     const val INPUT_TRIGGER_URI = "trigger_uri"
+    /** 下发时记录的闹钟精度（可空）；随补投任务持久保存，避免启动对账清除注册表后丢失。 */
+    const val INPUT_PRECISION = "trigger_precision"
 
     /** 只接受 REMINDER / MUTE Key。 */
-    fun createInputData(key: TriggerKey): Data {
+    fun createInputData(key: TriggerKey, precision: TriggerPrecision?): Data {
         require(key.kind == TriggerKind.REMINDER || key.kind == TriggerKind.MUTE) {
             "触发就绪重试 Worker 只接受 REMINDER 或 MUTE Key"
         }
-        return workDataOf(INPUT_TRIGGER_URI to TriggerUriCodec.encode(key))
+        return if (precision == null) {
+            workDataOf(INPUT_TRIGGER_URI to TriggerUriCodec.encode(key))
+        } else {
+            workDataOf(
+                INPUT_TRIGGER_URI to TriggerUriCodec.encode(key),
+                INPUT_PRECISION to precision.name
+            )
+        }
     }
 
     /** 解码时同时校验类型与规范编码，拒绝宽松等价 URI。 */
@@ -52,12 +62,23 @@ object TriggerReadinessRetryInputPolicy {
             ?: return null
         return key.takeIf { TriggerUriCodec.encode(it) == raw }
     }
+
+    /** 解出随任务保存的精度，损坏或缺失时返回 null。 */
+    fun decodePrecision(data: Data): TriggerPrecision? =
+        data.getString(INPUT_PRECISION)?.let { name ->
+            TriggerPrecision.entries.firstOrNull { it.name == name }
+        }
 }
 
 /** Receiver 在启动窗口内没等到数据库就绪时，把完整 Key 交出去的持久重试边界。 */
 interface TriggerReadinessRetryScheduler {
-    /** 安排一次唯一、可被 WorkManager 退避重试的“就绪后补投”。 */
-    fun enqueue(key: TriggerKey)
+    /**
+     * 安排一次唯一、可被 WorkManager 退避重试的“就绪后补投”。
+     *
+     * [precision] 为下发该 occurrence 时记录的实际闹钟精度：随任务持久保存，
+     * 即使就绪后启动对账先清掉注册表记录，补投仍能据此判定非精确迟到宽限。
+     */
+    fun enqueue(key: TriggerKey, precision: TriggerPrecision?)
 }
 
 /** 用唯一 WorkManager 任务持久保存完整 Key 的就绪重试调度器。 */
@@ -65,10 +86,10 @@ interface TriggerReadinessRetryScheduler {
 class WorkManagerTriggerReadinessRetryScheduler @Inject constructor(
     @ApplicationContext private val context: Context
 ) : TriggerReadinessRetryScheduler {
-    override fun enqueue(key: TriggerKey) {
+    override fun enqueue(key: TriggerKey, precision: TriggerPrecision?) {
         runCatching {
             val request = OneTimeWorkRequestBuilder<TriggerReadinessRetryWorker>()
-                .setInputData(TriggerReadinessRetryInputPolicy.createInputData(key))
+                .setInputData(TriggerReadinessRetryInputPolicy.createInputData(key, precision))
                 .setBackoffCriteria(BackoffPolicy.LINEAR, BACKOFF_SECONDS, TimeUnit.SECONDS)
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(
@@ -104,10 +125,11 @@ class TriggerReadinessRetryWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val key = TriggerReadinessRetryInputPolicy.decode(inputData) ?: return Result.failure()
+        val precision = TriggerReadinessRetryInputPolicy.decodePrecision(inputData)
         return try {
             when (operationalDataGate.awaitReadiness(READINESS_AWAIT_TIMEOUT_MS)) {
                 OperationalDataReadiness.READY -> {
-                    redeliver(key)
+                    redeliver(key, precision)
                     Result.success()
                 }
                 // 数据库仍在启动、或需要前台恢复：一次性 Alarm 已被系统消费，启动后的
@@ -128,8 +150,12 @@ class TriggerReadinessRetryWorker @AssistedInject constructor(
         }
     }
 
-    /** 用与 AlarmManager 原 PendingIntent 相同的显式 component/action/data 重新广播。 */
-    private fun redeliver(key: TriggerKey) {
+    /**
+     * 用与 AlarmManager 原 PendingIntent 相同的显式 component/action/data 重新广播，
+     * 并把持久保存的原始精度作为 extra 一并带上——就绪后启动对账可能已清掉注册表记录，
+     * Receiver 优先用该 extra 判定非精确迟到宽限。
+     */
+    private fun redeliver(key: TriggerKey, precision: TriggerPrecision?) {
         val receiver = when (key.kind) {
             TriggerKind.REMINDER -> ReminderReceiver::class.java
             TriggerKind.MUTE -> SilenceReceiver::class.java
@@ -138,6 +164,9 @@ class TriggerReadinessRetryWorker @AssistedInject constructor(
         val intent = Intent(applicationContext, receiver).apply {
             action = TriggerIntentPolicy.expectedAction(key.kind)
             data = Uri.parse(TriggerUriCodec.encode(key))
+            if (precision != null) {
+                putExtra(ReminderReceiver.EXTRA_TRIGGER_PRECISION, precision.name)
+            }
         }
         applicationContext.sendBroadcast(intent)
     }

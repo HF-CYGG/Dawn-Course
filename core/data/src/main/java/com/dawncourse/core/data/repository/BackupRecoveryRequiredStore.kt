@@ -32,4 +32,13 @@ class BackupRecoveryRequiredStore @Inject constructor(
     }
 
     fun isRequired(): Boolean = markerFile.baseFile.exists()
+
+    /**
+     * 恢复成功后清除标记；同步删除，供数据库启动临界区在 IO 线程内直接调用。
+     *
+     * 不抛异常：删除失败只会让下一次启动再次进入恢复流程，属于安全侧。
+     */
+    fun clearRequired() {
+        runCatching { markerFile.delete() }
+    }
 }

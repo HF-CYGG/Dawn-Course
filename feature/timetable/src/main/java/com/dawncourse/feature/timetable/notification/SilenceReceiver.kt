@@ -97,7 +97,8 @@ class SilenceReceiver : BroadcastReceiver() {
                                 // （STARTING）或需要前台恢复（RECOVERY_REQUIRED）时，都把完整
                                 // Key 交给 WorkManager 持久重试，就绪后按同一显式 Intent 补投，
                                 // 避免自动静音永久丢失。
-                                entryPoint.triggerReadinessRetryScheduler().enqueue(key)
+                                // MUTE 的窗口以 courseEnd 为界，不需要非精确迟到宽限，精度传 null。
+                                entryPoint.triggerReadinessRetryScheduler().enqueue(key, precision = null)
                             }
                         }
                         TriggerKind.UNMUTE -> recoverOwnedSession(

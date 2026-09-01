@@ -40,7 +40,9 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 class DatabaseStartupRuntime @Inject constructor(
     @ApplicationContext private val context: Context,
     settingsRepository: SettingsRepository,
-    activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore
+    activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore,
+    private val backupRecoveryRequiredStore:
+        com.dawncourse.core.data.repository.BackupRecoveryRequiredStore
 ) : OperationalDataGate {
     private val databaseFile = context.getDatabasePath(DATABASE_NAME)
     private val migrationFiles = AtomicDatabaseMigrationFiles(databaseFile)
@@ -62,7 +64,10 @@ class DatabaseStartupRuntime @Inject constructor(
             databaseFile = databaseFile,
             recoveryFiles = recoveryFiles,
             roomFactory = roomFactory
-        )
+        ),
+        // 备份恢复补偿失败标记与 recoveryFiles 标记同生命周期：任一恢复动作提交成功后
+        // 一并清除，否则下次启动会永久重入恢复。
+        clearBackupRecoveryRequired = backupRecoveryRequiredStore::clearRequired
     )
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -122,6 +127,16 @@ class DatabaseStartupRuntime @Inject constructor(
         }
         if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
             return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+        }
+        // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
+        // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
+        //
+        // 位置必须在上面两步之后：先让 readRecoveryReason 的既有恢复原因优先（避免重复
+        // 隔离），再让 recoverIncompleteMigration 把可能半迁移的文件集收敛为一致的主库，
+        // 然后才隔离它。标记在恢复动作提交成功后由 DatabaseRecoveryBootstrapCoordinator
+        // 与 recoveryFiles marker 一并清除。
+        if (backupRecoveryRequiredStore.isRequired()) {
+            return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
         }
 
         val coordinator = DatabaseStartupCoordinator(

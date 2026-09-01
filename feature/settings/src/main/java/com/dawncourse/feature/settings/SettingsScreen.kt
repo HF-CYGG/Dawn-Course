@@ -1531,6 +1531,37 @@ private fun LocalBackupSheet(
                         color = messageColor
                     )
                 }
+                // 还原失败且补偿也失败：数据库内容已不一致，必须立刻重启进入 Recovery。
+                // 启动流程已持久化恢复标记，下次冷启动会强制进入恢复引导；这里明确告知
+                // 用户不要继续使用当前会话，避免在不一致数据上继续写入。
+                AnimatedVisibility(visible = state.recoveryRequired) {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        elevation = CardDefaults.cardElevation(0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "数据需要恢复",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = "还原失败且未能回滚到原数据，当前课表内容可能不完整。" +
+                                    "请立即完全退出并重新打开应用，届时会自动进入数据恢复引导；" +
+                                    "在此之前请不要继续编辑课表。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
             // 处理中的遮罩，防止误触

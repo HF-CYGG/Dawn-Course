@@ -83,6 +83,30 @@ class DiagnosticHtmlSanitizerTest {
         assertTrue(sanitized.content.contains("A101"))
     }
 
+    /** URL 属性里的认证票据（form action / href / meta refresh）也必须剥离。 */
+    @Test
+    fun sanitize_stripsAuthTicketsFromUrlAttributes() {
+        val rawHtml = """
+            <form action="https://cas.example.edu.cn/login;jsessionid=ABC123?ticket=ST-9-abcdefghijklmno-cas">
+              <a href="/portal?lt=LT-1-xyz&execution=e1s2&_eventId=submit">continue</a>
+              <meta http-equiv="refresh" content="0;url=https://sso.example.edu.cn/cb?SAMLResponse=PHNhbWxwWFhY&RelayState=/home">
+            </form>
+        """.trimIndent()
+
+        val sanitized = DiagnosticHtmlSanitizer.sanitize(rawHtml)
+
+        listOf(
+            "ST-9-abcdefghijklmno-cas",
+            "ABC123",
+            "LT-1-xyz",
+            "e1s2",
+            "PHNhbWxwWFhY"
+        ).forEach { secret -> assertFalse("URL 认证票据泄漏：$secret", sanitized.content.contains(secret)) }
+        // 参数名保留，结构可诊断。
+        assertTrue(sanitized.content.contains("ticket=***"))
+        assertTrue(sanitized.content.contains("SAMLResponse=***"))
+    }
+
     /** 默认导出函数只能返回脱敏内容，不能回传原始 HTML。 */
     @Test
     fun buildSanitizedDiagnosticExport_neverReturnsRawHtml() {

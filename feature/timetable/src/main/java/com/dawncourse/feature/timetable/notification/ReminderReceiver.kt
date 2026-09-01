@@ -29,6 +29,13 @@ class ReminderReceiver : BroadcastReceiver() {
     companion object {
         /** 新提醒 PendingIntent 的唯一 action。 */
         const val ACTION_REMINDER = "com.dawncourse.action.REMINDER"
+        /**
+         * 补投广播携带的原始闹钟精度 extra（[TriggerPrecision] 名）。
+         *
+         * TriggerReadinessRetryWorker 在数据库就绪后补投时带上；此时启动对账可能已把
+         * 该 occurrence 从注册表删除，Receiver 优先用它判定非精确迟到宽限。
+         */
+        const val EXTRA_TRIGGER_PRECISION = "com.dawncourse.extra.TRIGGER_PRECISION"
         private const val TAG = "ReminderReceiver"
 
         /** goAsync 窗口内可等待数据库就绪的上限；避免进程刚被拉起时因 STARTING 直接丢弃闹钟。 */
@@ -68,10 +75,13 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val key = TriggerIntentPolicy.parse(intent.action, intent.dataString) ?: return
         if (key.profileId == TriggerKey.LEGACY_PROFILE_ID) return
+        val precisionHint = intent.getStringExtra(EXTRA_TRIGGER_PRECISION)?.let { name ->
+            TriggerPrecision.entries.firstOrNull { it.name == name }
+        }
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                deliverIfStillValid(context, key)
+                deliverIfStillValid(context, key, precisionHint)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Throwable) {
@@ -82,8 +92,17 @@ class ReminderReceiver : BroadcastReceiver() {
         }
     }
 
-    /** 触发时重新校验开关、当前学期、课程与 occurrence 日期。 */
-    private suspend fun deliverIfStillValid(context: Context, key: TriggerKey) {
+    /**
+     * 触发时重新校验开关、当前学期、课程与 occurrence 日期。
+     *
+     * [precisionHint] 来自补投广播 extra：数据库就绪后启动对账可能已删掉注册表记录，
+     * 此时优先用它判定非精确迟到宽限，避免有效的非精确提醒被零宽限丢弃。
+     */
+    private suspend fun deliverIfStillValid(
+        context: Context,
+        key: TriggerKey,
+        precisionHint: TriggerPrecision?
+    ) {
         val entryPoint = EntryPointAccessors.fromApplication(
             context.applicationContext,
             ReceiverEntryPoint::class.java
@@ -94,8 +113,11 @@ class ReminderReceiver : BroadcastReceiver() {
             // 一次性闹钟已被系统消费且无自身重试。数据库仍在启动（STARTING）或需要前台
             // 恢复（RECOVERY_REQUIRED）时，都把完整 Key 交给 WorkManager 持久重试，就绪后
             // 再按同一显式 Intent 补投；启动对账只重排 triggerAt > now 的触发器，无法恢复
-            // 已错过但仍有效的本次提醒。
-            entryPoint.triggerReadinessRetryScheduler().enqueue(key)
+            // 已错过但仍有效的本次提醒。随任务保存下发精度：注册表记录可能在补投前被对账
+            // 清除，届时只能靠它判定迟到宽限。
+            val precision = precisionHint ?: runCatching { entryPoint.scheduledTriggerRegistry().read() }
+                .getOrNull()?.records?.firstOrNull { it.key == key }?.precision
+            entryPoint.triggerReadinessRetryScheduler().enqueue(key, precision)
             return
         }
         val candidate = entryPoint.courseRepository().getCourseById(key.courseId) ?: return
@@ -114,9 +136,11 @@ class ReminderReceiver : BroadcastReceiver() {
             if (currentWeek !in 1..semester.weekCount) return@executeIfActive
             val now = Instant.now()
             // 下发时记录为 INEXACT 的触发器可能被系统批处理到课程开始之后，放宽迟到宽限，
-            // 避免无精确闹钟权限的用户在 Doze 下稳定漏提醒。读注册表失败时按精确窗口处理。
-            val scheduledPrecision = runCatching { entryPoint.scheduledTriggerRegistry().read() }
-                .getOrNull()?.records?.firstOrNull { it.key == key }?.precision
+            // 避免无精确闹钟权限的用户在 Doze 下稳定漏提醒。优先用补投 extra 里的精度，
+            // 其次读注册表；两者都拿不到时按精确窗口处理。
+            val scheduledPrecision = precisionHint
+                ?: runCatching { entryPoint.scheduledTriggerRegistry().read() }
+                    .getOrNull()?.records?.firstOrNull { it.key == key }?.precision
             val latenessGraceMinutes = if (scheduledPrecision == TriggerPrecision.INEXACT) {
                 INEXACT_REMINDER_LATENESS_GRACE_MINUTES
             } else {

@@ -561,7 +561,9 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     private val recoveryFiles: AndroidDatabaseRecoveryFiles,
     private val installer: DatabaseRecoveryBootstrapInstaller,
     private val reader: DatabaseRecoveryBackupReader = DatabaseRecoveryBackupReader(context),
-    private val journal: AndroidDatabaseRecoveryInstallJournal = AndroidDatabaseRecoveryInstallJournal(context)
+    private val journal: AndroidDatabaseRecoveryInstallJournal = AndroidDatabaseRecoveryInstallJournal(context),
+    /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除备份恢复补偿失败标记。 */
+    private val clearBackupRecoveryRequired: () -> Unit = {}
 ) {
     suspend fun restoreLocal(uri: Uri): DatabaseRecoveryActionResult = withContext(Dispatchers.IO) {
         val validated = reader.readLocal(uri).getOrElse { error ->
@@ -664,6 +666,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
                 recoveryFiles.clearMarkerAfterExplicitDecision()
+                clearBackupRecoveryRequired()
                 journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
                 true
             }.getOrElse {
@@ -712,6 +715,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
             }
             recoveryFiles.clearMarkerAfterExplicitDecision()
+            clearBackupRecoveryRequired()
             journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
         }.isSuccess
         if (finished) return DatabaseRecoveryInstallRecovery.COMMITTED

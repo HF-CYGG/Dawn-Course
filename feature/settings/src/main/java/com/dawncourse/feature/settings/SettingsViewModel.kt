@@ -804,11 +804,14 @@ internal fun credentialBindingUiEvent(
  * @property isProcessing 是否正在执行导入/导出
  * @property success 结果是否成功（null 表示尚未执行）
  * @property message 当前提示文案
+ * @property recoveryRequired 还原失败且补偿也失败，当前数据库内容已不一致，
+ *   必须重启进入 Recovery 引导，不能继续使用
  */
 data class LocalBackupUiState(
     val isProcessing: Boolean = false,
     val success: Boolean? = null,
-    val message: String = ""
+    val message: String = "",
+    val recoveryRequired: Boolean = false
 )
 
 /**
@@ -844,7 +847,10 @@ private fun LocalBackupResult.toUiState(): LocalBackupUiState {
     return LocalBackupUiState(
         isProcessing = false,
         success = success,
-        message = message
+        message = message,
+        // 必须透传：补偿失败意味着数据库内容已不一致，UI 需明确要求用户立即重启进入
+        // Recovery，而不是只显示一条普通错误文案后让用户继续使用。
+        recoveryRequired = recoveryRequired
     )
 }
 

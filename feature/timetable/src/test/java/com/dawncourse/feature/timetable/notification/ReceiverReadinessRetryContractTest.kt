@@ -23,7 +23,7 @@ class ReceiverReadinessRetryContractTest {
             )
             assertTrue(
                 "$fileName 未就绪分支应入队持久重试",
-                text.contains("triggerReadinessRetryScheduler().enqueue(key)")
+                text.contains("triggerReadinessRetryScheduler().enqueue(key")
             )
             // 未就绪分支不得再按具体状态收窄入队条件：STARTING 与 RECOVERY_REQUIRED
             // 都会让一次性广播丢事件，都必须入队。
@@ -47,6 +47,16 @@ class ReceiverReadinessRetryContractTest {
         assertTrue(
             "补投 Intent 必须显式指向 Receiver",
             worker.contains("Intent(applicationContext, receiver)")
+        )
+        // 精度必须随任务持久保存并随补投广播下传：就绪后启动对账可能已清掉注册表记录，
+        // 届时只能靠它判定非精确迟到宽限。
+        assertTrue(
+            "补投任务应持久保存原始闹钟精度",
+            worker.contains("INPUT_PRECISION") && worker.contains("decodePrecision")
+        )
+        assertTrue(
+            "补投广播应携带原始精度 extra",
+            worker.contains("ReminderReceiver.EXTRA_TRIGGER_PRECISION")
         )
         assertTrue(
             "UNMUTE 不进入本 Worker",
