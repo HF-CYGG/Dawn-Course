@@ -56,7 +56,15 @@ object TriggerOccurrencePolicy {
         return localEnd.atZone(zoneId).toInstant()
     }
 
-    /** 判断当前时刻是否位于该 occurrence 的 `[reminderAt, courseStart]` 投递窗口。 */
+    /**
+     * 判断当前时刻是否位于该 occurrence 的 `[reminderAt, courseStart + 迟到宽限]` 投递窗口。
+     *
+     * [latenessGraceMinutes] 用于非精确闹钟：无 SCHEDULE_EXACT_ALARM 权限或精确调用失败时，
+     * `setAndAllowWhileIdle` / `set` 可能被系统批处理到课程开始之后。若仍以 courseStart 作为
+     * 硬截止，这些本已成功下发的提醒会在 Receiver 里被静默丢弃，导致此类用户在 Doze 下稳定
+     * 漏提醒。调用方按记录的 [com.dawncourse.core.domain.model.TriggerPrecision] 传入宽限；
+     * 精确闹钟传 0，保持原有紧窗口。
+     */
     fun isInReminderWindow(
         course: Course,
         occurrenceDate: LocalDate,
@@ -64,13 +72,15 @@ object TriggerOccurrencePolicy {
         now: Instant,
         zoneId: ZoneId,
         reminderMinutes: Int,
-        sectionTimes: List<SectionTime>
+        sectionTimes: List<SectionTime>,
+        latenessGraceMinutes: Int = 0
     ): Boolean {
         if (!occursOn(course, occurrenceDate, currentWeek)) return false
         val start = sectionTimes.timeAt(course.startSection, useEnd = false) ?: return false
         val startAt = LocalDateTime.of(occurrenceDate, start).atZone(zoneId).toInstant()
         val reminderAt = startAt.minusSeconds(reminderMinutes.coerceAtLeast(0).toLong() * 60L)
-        return !now.isBefore(reminderAt) && !now.isAfter(startAt)
+        val deadline = startAt.plusSeconds(latenessGraceMinutes.coerceAtLeast(0).toLong() * 60L)
+        return !now.isBefore(reminderAt) && !now.isAfter(deadline)
     }
 
     /** 安全解析节次时间。 */

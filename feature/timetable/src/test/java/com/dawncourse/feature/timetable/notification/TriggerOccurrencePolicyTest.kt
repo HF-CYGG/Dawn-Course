@@ -91,6 +91,54 @@ class TriggerOccurrencePolicyTest {
     }
 
     @Test
+    fun `非精确闹钟的迟到宽限允许 courseStart 之后仍投递`() {
+        val occurrenceDate = LocalDate.of(2026, 8, 25)
+        val midnightCourse = course(dayOfWeek = occurrenceDate.dayOfWeek.value)
+        val sectionTimes = listOf(SectionTime("00:30", "01:30"))
+        // courseStart = 2026-08-24T16:30:00Z，晚 10 分钟。
+        val tenMinutesLate = Instant.parse("2026-08-24T16:40:00Z")
+
+        // 精确窗口（grace=0）已过 courseStart，丢弃。
+        assertFalse(
+            TriggerOccurrencePolicy.isInReminderWindow(
+                course = midnightCourse,
+                occurrenceDate = occurrenceDate,
+                currentWeek = 1,
+                now = tenMinutesLate,
+                zoneId = zoneId,
+                reminderMinutes = 60,
+                sectionTimes = sectionTimes
+            )
+        )
+        // INEXACT 给 15 分钟宽限，10 分钟迟到仍投递。
+        assertTrue(
+            TriggerOccurrencePolicy.isInReminderWindow(
+                course = midnightCourse,
+                occurrenceDate = occurrenceDate,
+                currentWeek = 1,
+                now = tenMinutesLate,
+                zoneId = zoneId,
+                reminderMinutes = 60,
+                sectionTimes = sectionTimes,
+                latenessGraceMinutes = 15
+            )
+        )
+        // 超过宽限（16 分钟迟到）仍丢弃。
+        assertFalse(
+            TriggerOccurrencePolicy.isInReminderWindow(
+                course = midnightCourse,
+                occurrenceDate = occurrenceDate,
+                currentWeek = 1,
+                now = Instant.parse("2026-08-24T16:46:01Z"),
+                zoneId = zoneId,
+                reminderMinutes = 60,
+                sectionTimes = sectionTimes,
+                latenessGraceMinutes = 15
+            )
+        )
+    }
+
+    @Test
     fun `课程结束时刻可独立持久且正确跨日`() {
         val overnight = course(dayOfWeek = date.dayOfWeek.value)
 

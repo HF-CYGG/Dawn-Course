@@ -110,15 +110,15 @@ class TriggerReadinessRetryWorker @AssistedInject constructor(
                     redeliver(key)
                     Result.success()
                 }
-                OperationalDataReadiness.STARTING -> {
-                    // 启动仍在进行：交给 WorkManager 退避重试；超过上限后收敛为 success，
-                    // 避免数据库长期卡在 STARTING 时无限占用后台配额。
-                    if (runAttemptCount + 1 >= MAX_ATTEMPTS) Result.success() else Result.retry()
-                }
-                OperationalDataReadiness.RECOVERY_REQUIRED -> {
-                    // 需要前台恢复流程，补投一次性广播无意义；等恢复完成后由启动对账处理。
-                    Result.success()
-                }
+                // 数据库仍在启动、或需要前台恢复：一次性 Alarm 已被系统消费，启动后的
+                // 常规对账只会重排 triggerAt > now 的触发器，无法恢复“已错过但课程仍在
+                // 进行”的 REMINDER/MUTE。因此保留可重试的持久责任，交给 WorkManager 退避
+                // 重试直到 READY——不设尝试上限。一旦 READY，redeliver 会让 Receiver 做
+                // 完整领域二次校验：occurrence 已彻底过期就自然不投递并收敛为 success，
+                // 不会无限重试有效工作；只有设备长期无法就绪时才持续退避（间隔可达数小时，
+                // 单次工作极小）。
+                OperationalDataReadiness.STARTING,
+                OperationalDataReadiness.RECOVERY_REQUIRED -> Result.retry()
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -147,7 +147,5 @@ class TriggerReadinessRetryWorker @AssistedInject constructor(
         const val TAG = "TriggerReadinessRetry"
         /** Worker 自身有独立生命周期，可用比 Receiver goAsync 窗口更长的等待。 */
         const val READINESS_AWAIT_TIMEOUT_MS = 20_000L
-        /** 含首次共 5 次尝试；超过后不再重试。 */
-        const val MAX_ATTEMPTS = 5
     }
 }

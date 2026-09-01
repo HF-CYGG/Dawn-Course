@@ -1,6 +1,7 @@
 package com.dawncourse.feature.timetable.notification
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -13,7 +14,7 @@ class ReceiverReadinessRetryContractTest {
         File("src/main/java/com/dawncourse/feature/timetable/notification/$fileName").readText()
 
     @Test
-    fun `Reminder 与 Silence 在未就绪时改走持久重试而非直接返回`() {
+    fun `Reminder 与 Silence 在任何未就绪状态下都入队持久重试而非直接返回`() {
         listOf("ReminderReceiver.kt", "SilenceReceiver.kt").forEach { fileName ->
             val text = source(fileName)
             assertTrue(
@@ -21,20 +22,26 @@ class ReceiverReadinessRetryContractTest {
                 text.contains("triggerReadinessRetryScheduler()")
             )
             assertTrue(
-                "$fileName 应在 STARTING 时入队持久重试",
-                text.contains("OperationalDataReadiness.STARTING") &&
-                    text.contains("triggerReadinessRetryScheduler().enqueue(key)")
+                "$fileName 未就绪分支应入队持久重试",
+                text.contains("triggerReadinessRetryScheduler().enqueue(key)")
+            )
+            // 未就绪分支不得再按具体状态收窄入队条件：STARTING 与 RECOVERY_REQUIRED
+            // 都会让一次性广播丢事件，都必须入队。
+            assertFalse(
+                "$fileName 不应只在 STARTING 时入队",
+                text.contains("readiness == OperationalDataReadiness.STARTING) {")
             )
         }
     }
 
     @Test
-    fun `重试 Worker 对无上限启动路径设有尝试上限并在就绪后补投`() {
+    fun `重试 Worker 未就绪时不设尝试上限并在就绪后显式补投`() {
         val worker = source("TriggerReadinessRetryWorker.kt")
-        assertTrue("应有尝试次数上限", worker.contains("MAX_ATTEMPTS"))
+        assertFalse("不得再有尝试次数上限", worker.contains("MAX_ATTEMPTS"))
         assertTrue(
-            "达到上限后应收敛为 success 而非无限重试",
-            worker.contains("runAttemptCount + 1 >= MAX_ATTEMPTS")
+            "STARTING 与 RECOVERY_REQUIRED 都应交给 WorkManager 退避重试",
+            worker.contains("OperationalDataReadiness.STARTING,") &&
+                worker.contains("OperationalDataReadiness.RECOVERY_REQUIRED -> Result.retry()")
         )
         assertTrue("就绪后应重新广播补投", worker.contains("sendBroadcast(intent)"))
         assertTrue(

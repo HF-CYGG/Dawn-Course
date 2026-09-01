@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.dawncourse.core.domain.model.TriggerKey
+import com.dawncourse.core.domain.model.TriggerPrecision
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.ActiveTimetableActionGate
 import com.dawncourse.core.domain.repository.SettingsRepository
@@ -32,6 +33,15 @@ class ReminderReceiver : BroadcastReceiver() {
 
         /** goAsync 窗口内可等待数据库就绪的上限；避免进程刚被拉起时因 STARTING 直接丢弃闹钟。 */
         private const val DATABASE_READY_AWAIT_TIMEOUT_MS = 8_000L
+
+        /**
+         * 非精确闹钟的迟到宽限（分钟）。
+         *
+         * 缺少 SCHEDULE_EXACT_ALARM 权限时 AlarmManager 会降级到 setAndAllowWhileIdle/set，
+         * 可能被系统批处理到课程开始之后。此时若仍以 courseStart 硬截止，这些提醒会被静默
+         * 丢弃。对记录为 INEXACT 的触发器放宽到 courseStart 之后一段时间仍可投递。
+         */
+        private const val INEXACT_REMINDER_LATENESS_GRACE_MINUTES = 15
     }
 
     /** Receiver 在应用单例组件中需要的领域依赖。 */
@@ -42,6 +52,8 @@ class ReminderReceiver : BroadcastReceiver() {
         fun operationalDataGate(): OperationalDataGate
         /** 启动窗口内没等到数据库就绪时，改由持久任务补投的调度器。 */
         fun triggerReadinessRetryScheduler(): TriggerReadinessRetryScheduler
+        /** 读取本 occurrence 下发时记录的实际精度，用于决定迟到宽限。 */
+        fun scheduledTriggerRegistry(): ScheduledTriggerRegistry
         /** 课程仓库。 */
         fun courseRepository(): CourseRepository
         /** 与 Profile 切换共用的最终动作线性化门。 */
@@ -79,12 +91,11 @@ class ReminderReceiver : BroadcastReceiver() {
         val readiness = entryPoint.operationalDataGate()
             .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
         if (readiness != OperationalDataReadiness.READY) {
-            // 一次性闹钟已被系统消费且无自身重试。启动仍在进行时，把完整 Key 交给
-            // WorkManager 持久重试，就绪后再按同一显式 Intent 补投，避免提醒永久丢失。
-            // RECOVERY_REQUIRED 需要前台恢复流程，补投一次性广播无意义，交由启动对账处理。
-            if (readiness == OperationalDataReadiness.STARTING) {
-                entryPoint.triggerReadinessRetryScheduler().enqueue(key)
-            }
+            // 一次性闹钟已被系统消费且无自身重试。数据库仍在启动（STARTING）或需要前台
+            // 恢复（RECOVERY_REQUIRED）时，都把完整 Key 交给 WorkManager 持久重试，就绪后
+            // 再按同一显式 Intent 补投；启动对账只重排 triggerAt > now 的触发器，无法恢复
+            // 已错过但仍有效的本次提醒。
+            entryPoint.triggerReadinessRetryScheduler().enqueue(key)
             return
         }
         val candidate = entryPoint.courseRepository().getCourseById(key.courseId) ?: return
@@ -102,6 +113,15 @@ class ReminderReceiver : BroadcastReceiver() {
             val currentWeek = entryPoint.calculateWeekUseCase().invoke(semester.startDate, occurrenceMillis)
             if (currentWeek !in 1..semester.weekCount) return@executeIfActive
             val now = Instant.now()
+            // 下发时记录为 INEXACT 的触发器可能被系统批处理到课程开始之后，放宽迟到宽限，
+            // 避免无精确闹钟权限的用户在 Doze 下稳定漏提醒。读注册表失败时按精确窗口处理。
+            val scheduledPrecision = runCatching { entryPoint.scheduledTriggerRegistry().read() }
+                .getOrNull()?.records?.firstOrNull { it.key == key }?.precision
+            val latenessGraceMinutes = if (scheduledPrecision == TriggerPrecision.INEXACT) {
+                INEXACT_REMINDER_LATENESS_GRACE_MINUTES
+            } else {
+                0
+            }
             if (!TriggerOccurrencePolicy.isInReminderWindow(
                     course = course,
                     occurrenceDate = key.occurrenceDate,
@@ -109,7 +129,8 @@ class ReminderReceiver : BroadcastReceiver() {
                     now = now,
                     zoneId = zoneId,
                     reminderMinutes = settings.reminderMinutes,
-                    sectionTimes = settings.sectionTimes
+                    sectionTimes = settings.sectionTimes,
+                    latenessGraceMinutes = latenessGraceMinutes
                 )
             ) return@executeIfActive
             val dedupeKey = "${key.profileId}_${key.courseId}_${key.occurrenceDate}_${key.kind.name}"

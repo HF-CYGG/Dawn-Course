@@ -92,10 +92,11 @@ class SilenceReceiver : BroadcastReceiver() {
                                 .awaitReadiness(DATABASE_READY_AWAIT_TIMEOUT_MS)
                             if (readiness == OperationalDataReadiness.READY) {
                                 muteIfStillValid(context, key, entryPoint)
-                            } else if (readiness == OperationalDataReadiness.STARTING) {
-                                // 一次性静音闹钟已被系统消费且无自身重试。启动仍在进行时，
-                                // 把完整 Key 交给 WorkManager 持久重试，就绪后按同一显式 Intent
-                                // 补投，避免自动静音永久丢失。
+                            } else {
+                                // 一次性静音闹钟已被系统消费且无自身重试。数据库仍在启动
+                                // （STARTING）或需要前台恢复（RECOVERY_REQUIRED）时，都把完整
+                                // Key 交给 WorkManager 持久重试，就绪后按同一显式 Intent 补投，
+                                // 避免自动静音永久丢失。
                                 entryPoint.triggerReadinessRetryScheduler().enqueue(key)
                             }
                         }
