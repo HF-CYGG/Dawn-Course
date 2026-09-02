@@ -28,6 +28,10 @@ class DatabaseRecoveryInstallRecoveryPolicyTest {
             DatabaseRecoveryInstallRecoveryPolicy.action(DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
         )
         assertEquals(
+            DatabaseRecoveryInstallResumeAction.FINISH_SETTINGS_AND_COMMIT,
+            DatabaseRecoveryInstallRecoveryPolicy.action(DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED)
+        )
+        assertEquals(
             DatabaseRecoveryInstallResumeAction.KEEP_COMMITTED,
             DatabaseRecoveryInstallRecoveryPolicy.action(DatabaseRecoveryInstallStage.COMMITTED)
         )

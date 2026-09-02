@@ -26,20 +26,10 @@ class AtomicDatabaseMigrationFiles(
     }
     private val journalFile = File(databaseDirectory, "${databaseFile.name}.sqlcipher-migration.journal")
     private val lockFile = File(databaseDirectory, "${databaseFile.name}.sqlcipher-migration.lock")
-    private val localLock = processLocks.computeIfAbsent(lockFile.absolutePath) { ReentrantLock() }
+    private val fileTransaction = AtomicDatabaseFileTransaction(databaseFile, lockFile)
 
     /** 先串行化同进程线程，再获取同目录 FileChannel 锁串行化其它进程。 */
-    override fun <T> withExclusiveLock(block: () -> T): T {
-        databaseDirectory.mkdirs()
-        localLock.lock()
-        try {
-            return FileOutputStream(lockFile, true).channel.use { channel ->
-                channel.lock().use { block() }
-            }
-        } finally {
-            localLock.unlock()
-        }
-    }
+    override fun <T> withExclusiveLock(block: () -> T): T = fileTransaction.withExclusiveLock(block)
 
     /** 未完成 journal 一律优先恢复明文 pre-image；损坏 journal 安全失败且不改主库。 */
     override fun recoverIncompleteMigration(): DatabaseMigrationRecovery {
@@ -89,16 +79,7 @@ class AtomicDatabaseMigrationFiles(
         validateAttempt(attempt)
         require(databaseFile.isFile) { "明文数据库不存在" }
         require(!attempt.plaintextPreimage.exists()) { "明文 pre-image 已存在" }
-        val copyingPreimage = File(attempt.plaintextPreimage.path + ".copying")
-        require(!copyingPreimage.exists()) { "明文 pre-image 临时文件已存在" }
-        Files.copy(
-            databaseFile.toPath(),
-            copyingPreimage.toPath(),
-            StandardCopyOption.COPY_ATTRIBUTES
-        )
-        forceFile(copyingPreimage)
-        atomicMove(copyingPreimage, attempt.plaintextPreimage, replaceExisting = false)
-        forceDirectoryBestEffort(databaseDirectory)
+        fileTransaction.copyImmutable(databaseFile, attempt.plaintextPreimage)
     }
 
     /** 仅允许同一 attempt 的单向阶段转换，journal 写入本身使用 fsync + 原子移动。 */
@@ -298,13 +279,7 @@ class AtomicDatabaseMigrationFiles(
             append(STAGE_PREFIX)
             append(journal.stage.name)
         }.toByteArray(Charsets.UTF_8)
-        val temporaryJournal = File(databaseDirectory, "${journalFile.name}.tmp")
-        FileOutputStream(temporaryJournal, false).use { output ->
-            output.write(encoded)
-            output.fd.sync()
-        }
-        atomicMove(temporaryJournal, journalFile, replaceExisting = true)
-        forceDirectoryBestEffort(databaseDirectory)
+        fileTransaction.writeAtomically(journalFile, encoded)
     }
 
     /** 禁止退化为非原子替换；不支持 ATOMIC_MOVE 的文件系统直接失败并由上层恢复。 */
@@ -352,9 +327,6 @@ class AtomicDatabaseMigrationFiles(
     }
 
     private companion object {
-        /** 同一进程不同实例先通过可重入锁串行化，避免 FileChannel 的重叠锁异常。 */
-        val processLocks = ConcurrentHashMap<String, ReentrantLock>()
-
         /** journal 格式魔数。 */
         const val JOURNAL_MAGIC = "DAWN_SQLCIPHER_MIGRATION_V1"
 

@@ -147,6 +147,8 @@ internal enum class DatabaseRecoveryInstallStage {
     STAGING_VERIFIED,
     MAIN_SWAPPED,
     SETTINGS_APPLIED,
+    /** 新恢复 pair 已提交，旧 SQLCipher rekey journal/pre-image 已永久退休。 */
+    LEGACY_REKEY_RETIRED,
     COMMITTED,
     ROLLED_BACK
 }
@@ -182,7 +184,8 @@ internal object DatabaseRecoveryInstallRecoveryPolicy {
             DatabaseRecoveryInstallResumeAction.ROLLBACK_NEW_REPLACEMENT
         }
         DatabaseRecoveryInstallStage.MAIN_SWAPPED,
-        DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> {
+        DatabaseRecoveryInstallStage.SETTINGS_APPLIED,
+        DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED -> {
             DatabaseRecoveryInstallResumeAction.FINISH_SETTINGS_AND_COMMIT
         }
         DatabaseRecoveryInstallStage.COMMITTED -> DatabaseRecoveryInstallResumeAction.KEEP_COMMITTED
@@ -336,7 +339,8 @@ internal class AndroidDatabaseRecoveryInstallJournal(
             DatabaseRecoveryInstallStage.NEW_ENVELOPE_READY -> next == DatabaseRecoveryInstallStage.STAGING_VERIFIED
             DatabaseRecoveryInstallStage.STAGING_VERIFIED -> next == DatabaseRecoveryInstallStage.MAIN_SWAPPED
             DatabaseRecoveryInstallStage.MAIN_SWAPPED -> next == DatabaseRecoveryInstallStage.SETTINGS_APPLIED
-            DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> next == DatabaseRecoveryInstallStage.COMMITTED
+            DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> next == DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED
+            DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED -> next == DatabaseRecoveryInstallStage.COMMITTED
             DatabaseRecoveryInstallStage.COMMITTED,
             DatabaseRecoveryInstallStage.ROLLED_BACK -> false
         }
@@ -436,15 +440,15 @@ internal class DatabaseRecoveryBootstrapInstaller(
 
     fun cleanupCommittedOldKeyMaterial(): Boolean = keyMaterial.cleanupOldQuarantine()
 
-    private fun provisionRecoveryPassphrase(): SqlCipherPassphrase {
+    private fun provisionRecoveryPassphrase(): DatabaseKeyMaterial {
         val store = AndroidDatabasePassphraseEnvelopeStore(context)
         return when (val result = store.createNew()) {
-            is NewPassphraseResult.Available -> result.passphrase
+            is NewPassphraseResult.Available -> result.keyMaterial
             NewPassphraseResult.ExistingEnvelope -> error("旧信封未完成隔离")
             is NewPassphraseResult.Failed -> {
                 keyMaterial.deleteCurrentAliasAfterExplicitRecovery()
                 when (val retried = store.createNew()) {
-                    is NewPassphraseResult.Available -> retried.passphrase
+                    is NewPassphraseResult.Available -> retried.keyMaterial
                     else -> error("无法创建恢复密钥")
                 }
             }
@@ -574,6 +578,8 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     private val installer: DatabaseRecoveryBootstrapInstaller,
     private val reader: DatabaseRecoveryBackupReader = DatabaseRecoveryBackupReader(context),
     private val journal: AndroidDatabaseRecoveryInstallJournal = AndroidDatabaseRecoveryInstallJournal(context),
+    /** 新恢复 pair 换入后，提交 marker 前永久丢弃此前未完成 rekey 的反向恢复能力。 */
+    private val retireLegacyRekey: () -> Boolean = { true },
     /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除全部在线恢复责任。 */
     private val clearRecoveryResponsibilities: () -> Unit = {}
 ) {
@@ -678,6 +684,11 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
                 commitExplicitRecoveryDecision(
+                    legacyRekeyAlreadyRetired = false,
+                    retireLegacyRekey = retireLegacyRekey,
+                    recordLegacyRekeyRetired = {
+                        journal.record(attempt, DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED)
+                    },
                     clearRecoveryResponsibilities = clearRecoveryResponsibilities,
                     clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
                     recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
@@ -735,6 +746,12 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
             }
             commitExplicitRecoveryDecision(
+                legacyRekeyAlreadyRetired =
+                    attempt.stage == DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED,
+                retireLegacyRekey = retireLegacyRekey,
+                recordLegacyRekeyRetired = {
+                    journal.record(attempt, DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED)
+                },
                 clearRecoveryResponsibilities = clearRecoveryResponsibilities,
                 clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
                 recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
@@ -797,11 +814,18 @@ internal class RecoveryResponsibilitiesPendingException(cause: Throwable) : Ille
  * COMMITTED。任一 marker 故障绝不允许越过 COMMITTED，journal 保留为可机械重试的状态。
  */
 internal fun commitExplicitRecoveryDecision(
+    legacyRekeyAlreadyRetired: Boolean,
+    retireLegacyRekey: () -> Boolean,
+    recordLegacyRekeyRetired: () -> Unit,
     clearRecoveryResponsibilities: () -> Unit,
     clearRecoveryStateMarker: () -> Unit,
     recordCommitted: () -> Unit,
 ) {
     try {
+        if (!legacyRekeyAlreadyRetired) {
+            check(retireLegacyRekey()) { "旧 rekey 恢复责任未能退休" }
+            recordLegacyRekeyRetired()
+        }
         clearRecoveryResponsibilities()
         clearRecoveryStateMarker()
     } catch (failure: Throwable) {

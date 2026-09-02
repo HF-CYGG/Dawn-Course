@@ -7,6 +7,45 @@ import org.junit.Test
 class PostMigrationRecoveryFinalizerTest {
 
     @Test
+    fun `迁移 journal 提交后才允许清除启动责任`() {
+        val events = mutableListOf<String>()
+
+        val result = finalizeSuccessfulPostMigration(
+            commitMigration = { events += "commit-migration"; true },
+            completeIntegrityStartup = { events += "complete-integrity"; true },
+        )
+
+        assertEquals(PostMigrationSuccessResult.COMPLETE, result)
+        assertEquals(listOf("commit-migration", "complete-integrity"), events)
+    }
+
+    @Test
+    fun `迁移 journal 提交失败时保留启动责任`() {
+        val events = mutableListOf<String>()
+
+        val result = finalizeSuccessfulPostMigration(
+            commitMigration = { events += "commit-migration"; false },
+            completeIntegrityStartup = { events += "complete-integrity"; true },
+        )
+
+        assertEquals(PostMigrationSuccessResult.MIGRATION_COMMIT_FAILED, result)
+        assertEquals(listOf("commit-migration"), events)
+    }
+
+    @Test
+    fun `迁移已提交但启动责任提交失败时禁止反向回滚`() {
+        val events = mutableListOf<String>()
+
+        val result = finalizeSuccessfulPostMigration(
+            commitMigration = { events += "commit-migration"; true },
+            completeIntegrityStartup = { events += "complete-integrity"; false },
+        )
+
+        assertEquals(PostMigrationSuccessResult.INTEGRITY_COMPLETION_FAILED, result)
+        assertEquals(listOf("commit-migration", "complete-integrity"), events)
+    }
+
+    @Test
     fun `Room 已打开但 COMPLETE 写入失败时先关闭并回滚再进入恢复`() {
         val events = mutableListOf<String>()
 

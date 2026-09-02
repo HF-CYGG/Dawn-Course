@@ -48,6 +48,10 @@ class DatabaseStartupRuntime @Inject constructor(
 ) : OperationalDataGate {
     private val databaseFile = context.getDatabasePath(DATABASE_NAME)
     private val migrationFiles = AtomicDatabaseMigrationFiles(databaseFile)
+    private val rekeyFiles = AtomicSqlCipherRekeyFiles(
+        databaseFile = databaseFile,
+        activeEnvelopeFile = databaseKeyEnvelopeFile(context),
+    )
     private val recoveryFiles = AndroidDatabaseRecoveryFiles(context, databaseFile)
     private val roomFactory = SqlCipherRoomDatabaseFactory(context)
     private val integrityVerificationStateStore = IntegrityVerificationStateStore(
@@ -85,6 +89,9 @@ class DatabaseStartupRuntime @Inject constructor(
             recoveryFiles = recoveryFiles,
             roomFactory = roomFactory
         ),
+        retireLegacyRekey = {
+            rekeyFiles.withExclusiveLock { rekeyFiles.retireAfterExplicitRecovery() }
+        },
         // 两种在线恢复责任与 recoveryFiles 标记同生命周期：显式恢复或放弃提交后一起清除。
         clearRecoveryResponsibilities = {
             backupRecoveryRequiredStore.clearRequired()
@@ -194,6 +201,7 @@ class DatabaseStartupRuntime @Inject constructor(
         // StartupBlocked，绝不能在缺少崩溃证据时继续发布 Ready。
         val integrityStartupSnapshot = integrityVerificationStateStore.beginStartup()
         var recoveredIncompleteMigrationThisRun = false
+        var rekeyOrKeyModeChangedThisRun = false
         val recoveryMarkerSnapshot = DatabaseStartupRecoveryMarkerSnapshot.capture(
             noBackupFilesDirectory = context.noBackupFilesDir,
             databaseFile = databaseFile,
@@ -222,6 +230,16 @@ class DatabaseStartupRuntime @Inject constructor(
                         reason
                     }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
                     return DatabaseStartupInitialization.RecoveryRequired(reconciled)
+                }
+                when (rekeyFiles.withExclusiveLock { rekeyFiles.recoverIncompleteRekey() }) {
+                    SqlCipherRekeyRecovery.Failed -> {
+                        return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+                    }
+                    SqlCipherRekeyRecovery.RecoveredToRaw -> {
+                        rekeyOrKeyModeChangedThisRun = true
+                    }
+                    SqlCipherRekeyRecovery.RecoveredToLegacy,
+                    SqlCipherRekeyRecovery.NoWork -> Unit
                 }
                 when (migrationFiles.recoverIncompleteMigration()) {
                     DatabaseMigrationRecovery.Failed -> {
@@ -257,23 +275,34 @@ class DatabaseStartupRuntime @Inject constructor(
         return when (val plan = coordinator.prepare()) {
             is DatabaseStartupPlan.RecoveryRequired -> enterRecovery(plan.reason)
             is DatabaseStartupPlan.CreateNewEncryptedDatabase -> openAndPublish(
-                passphrase = plan.passphrase,
+                keyMaterial = plan.keyMaterial,
                 migratedPlaintextThisRun = false,
+                rekeyOrKeyModeChangedThisRun = true,
                 recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
                 integrityStartupSnapshot = integrityStartupSnapshot,
                 recoveryResponsibilityMarkerPresent =
                     recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
             )
-            is DatabaseStartupPlan.OpenEncryptedDatabase -> openAndPublish(
-                passphrase = plan.passphrase,
-                migratedPlaintextThisRun = false,
-                recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
-                integrityStartupSnapshot = integrityStartupSnapshot,
-                recoveryResponsibilityMarkerPresent =
-                    recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
-            )
+            is DatabaseStartupPlan.OpenEncryptedDatabase -> when (val material = plan.keyMaterial) {
+                is DatabaseKeyMaterial.LegacyPassphrase -> rekeyOpenAndPublish(
+                    legacy = material,
+                    recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                    integrityStartupSnapshot = integrityStartupSnapshot,
+                    recoveryResponsibilityMarkerPresent =
+                        recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
+                )
+                is DatabaseKeyMaterial.RawKeyLiteral -> openAndPublish(
+                    keyMaterial = material,
+                    migratedPlaintextThisRun = false,
+                    rekeyOrKeyModeChangedThisRun = rekeyOrKeyModeChangedThisRun,
+                    recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                    integrityStartupSnapshot = integrityStartupSnapshot,
+                    recoveryResponsibilityMarkerPresent =
+                        recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
+                )
+            }
             is DatabaseStartupPlan.EncryptPlaintextDatabase -> migrateOpenAndPublish(
-                passphrase = plan.passphrase,
+                keyMaterial = plan.keyMaterial,
                 recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
                 integrityStartupSnapshot = integrityStartupSnapshot,
                 recoveryResponsibilityMarkerPresent =
@@ -282,9 +311,76 @@ class DatabaseStartupRuntime @Inject constructor(
         }
     }
 
+    /** v1 数据库先独立 rekey，Room 用 raw key 验证后才提交活动 v2 信封。 */
+    private fun rekeyOpenAndPublish(
+        legacy: DatabaseKeyMaterial.LegacyPassphrase,
+        recoveredIncompleteMigrationThisRun: Boolean,
+        integrityStartupSnapshot: IntegrityVerificationStartupSnapshot,
+        recoveryResponsibilityMarkerPresent: Boolean,
+    ): DatabaseStartupInitialization<AppDatabase> {
+        val migrator = SqlCipherRekeyMigrator(
+            files = rekeyFiles,
+            backend = AndroidSqlCipherRekeyBackend(),
+        )
+        return when (val rekey = migrator.rekey(legacy)) {
+            SqlCipherRekeyResult.RecoveryRequired -> {
+                legacy.close()
+                enterRecovery(DatabaseRecoveryReason.MigrationFailed)
+            }
+            is SqlCipherRekeyResult.Success -> {
+                legacy.close()
+                when (
+                    val opened = openAndPublish(
+                        keyMaterial = rekey.rawKeyMaterial,
+                        migratedPlaintextThisRun = false,
+                        rekeyOrKeyModeChangedThisRun = true,
+                        deferRecoveryQuarantine = true,
+                        deferIntegrityCompletion = true,
+                        recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                        integrityStartupSnapshot = integrityStartupSnapshot,
+                        recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
+                    )
+                ) {
+                    is DatabaseStartupInitialization.Ready -> {
+                        when (
+                            finalizeSuccessfulPostMigration(
+                                commitMigration = {
+                                    migrator.confirmRoomVerifiedAndCommit(rekey.attempt)
+                                },
+                                completeIntegrityStartup = {
+                                    integrityCoordinator.completeBeforeReady(
+                                        requireNotNull(opened.deferredIntegrityCompletionMode),
+                                    )
+                                },
+                            )
+                        ) {
+                            PostMigrationSuccessResult.COMPLETE -> opened.copy(
+                                deferredIntegrityCompletionMode = null,
+                            )
+                            PostMigrationSuccessResult.MIGRATION_COMMIT_FAILED -> {
+                                opened.handle.close()
+                                migrator.rollback(rekey.attempt)
+                                enterRecovery(DatabaseRecoveryReason.MigrationFailed)
+                            }
+                            PostMigrationSuccessResult.INTEGRITY_COMPLETION_FAILED -> {
+                                // v2 envelope/journal 已提交，禁止再反向覆盖 raw 数据库。
+                                opened.handle.close()
+                                enterRecovery(DatabaseRecoveryReason.IntegrityVerificationFailed)
+                            }
+                        }
+                    }
+                    is DatabaseStartupInitialization.RecoveryRequired -> {
+                        migrator.rollback(rekey.attempt)
+                        enterRecovery(opened.reason)
+                    }
+                }
+            }
+        }
+    }
+
     /** 明文换入成功后同一次启动仍保留 pre-image，下一次成功冷开才清理。 */
     private fun migrateOpenAndPublish(
-        passphrase: SqlCipherPassphrase,
+        keyMaterial: DatabaseKeyMaterial,
         recoveredIncompleteMigrationThisRun: Boolean,
         integrityStartupSnapshot: IntegrityVerificationStartupSnapshot,
         recoveryResponsibilityMarkerPresent: Boolean,
@@ -293,7 +389,7 @@ class DatabaseStartupRuntime @Inject constructor(
             files = migrationFiles,
             backend = AndroidPlaintextToSqlCipherMigrationBackend()
         )
-        return when (val migration = migrator.migrate(passphrase)) {
+        return when (val migration = migrator.migrate(keyMaterial)) {
             is PlaintextToSqlCipherMigrationResult.Success -> {
                 // migrate() 只把 journal 推进到 SWAPPED_NOT_VERIFIED；只有 Room 也完整打开
                 // （含 v5->v6 schema 迁移）成功后，才提交 COMPLETE。Room 这一步失败时，
@@ -301,25 +397,43 @@ class DatabaseStartupRuntime @Inject constructor(
                 // 不能让用户仍然完好的旧数据被锁死在一个未经验证的加密库里。
                 when (
                     val opened = openAndPublish(
-                        passphrase = passphrase,
+                        keyMaterial = keyMaterial,
                         migratedPlaintextThisRun = true,
                         deferRecoveryQuarantine = true,
+                        deferIntegrityCompletion = true,
                         recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
                         integrityStartupSnapshot = integrityStartupSnapshot,
                         recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
                     )
                 ) {
                     is DatabaseStartupInitialization.Ready -> {
-                        if (migrator.confirmComplete(migration.attempt)) {
-                            opened
-                        } else {
-                            finalizeFailedPostMigration(
-                                closeOpenedHandle = opened.handle::close,
-                                rollbackPlaintextPreimage = {
-                                    migrator.abandonAfterOpenFailure(migration.attempt)
+                        when (
+                            finalizeSuccessfulPostMigration(
+                                commitMigration = { migrator.confirmComplete(migration.attempt) },
+                                completeIntegrityStartup = {
+                                    integrityCoordinator.completeBeforeReady(
+                                        requireNotNull(opened.deferredIntegrityCompletionMode),
+                                    )
                                 },
-                                enterRecovery = ::enterRecovery,
                             )
+                        ) {
+                            PostMigrationSuccessResult.COMPLETE -> opened.copy(
+                                deferredIntegrityCompletionMode = null,
+                            )
+                            PostMigrationSuccessResult.MIGRATION_COMMIT_FAILED -> {
+                                finalizeFailedPostMigration(
+                                    closeOpenedHandle = opened.handle::close,
+                                    rollbackPlaintextPreimage = {
+                                        migrator.abandonAfterOpenFailure(migration.attempt)
+                                    },
+                                    enterRecovery = ::enterRecovery,
+                                )
+                            }
+                            PostMigrationSuccessResult.INTEGRITY_COMPLETION_FAILED -> {
+                                // COMPLETE 已持久化，回滚明文会让 journal 与主库语义冲突。
+                                opened.handle.close()
+                                enterRecovery(DatabaseRecoveryReason.IntegrityVerificationFailed)
+                            }
                         }
                     }
                     is DatabaseStartupInitialization.RecoveryRequired -> {
@@ -333,7 +447,7 @@ class DatabaseStartupRuntime @Inject constructor(
                 }
             }
             is PlaintextToSqlCipherMigrationResult.RecoveryRequired -> {
-                passphrase.close()
+                keyMaterial.close()
                 enterRecovery(DatabaseRecoveryReason.MigrationFailed)
             }
         }
@@ -341,9 +455,11 @@ class DatabaseStartupRuntime @Inject constructor(
 
     /** Room 完整打开后按策略同步校验或附带 Ready 后后台校验责任。 */
     private fun openAndPublish(
-        passphrase: SqlCipherPassphrase,
+        keyMaterial: DatabaseKeyMaterial,
         migratedPlaintextThisRun: Boolean,
+        rekeyOrKeyModeChangedThisRun: Boolean = false,
         deferRecoveryQuarantine: Boolean = false,
+        deferIntegrityCompletion: Boolean = false,
         recoveredIncompleteMigrationThisRun: Boolean,
         integrityStartupSnapshot: IntegrityVerificationStartupSnapshot,
         recoveryResponsibilityMarkerPresent: Boolean,
@@ -364,8 +480,7 @@ class DatabaseStartupRuntime @Inject constructor(
                 previousDatabaseStartupIncomplete =
                     integrityStartupSnapshot.previousDatabaseStartupIncomplete,
                 migratedPlaintextThisRun = migratedPlaintextThisRun,
-                // 当前版本没有 rekey/raw-key 切换；保留显式输入，后续接入时不能被新时间戳绕过。
-                rekeyOrKeyModeChangedThisRun = false,
+                rekeyOrKeyModeChangedThisRun = rekeyOrKeyModeChangedThisRun,
                 persistentStateUnreadable = integrityStartupSnapshot.persistentStateUnreadable,
                 nowEpochMillis = System.currentTimeMillis(),
                 lastSuccessfulVerificationEpochMillis =
@@ -373,15 +488,15 @@ class DatabaseStartupRuntime @Inject constructor(
             ),
         )
         val database = try {
-            roomFactory.open(DATABASE_NAME, passphrase)
+            roomFactory.open(DATABASE_NAME, keyMaterial)
         } catch (_: Throwable) {
-            passphrase.close()
+            keyMaterial.close()
             return fail(DatabaseRecoveryReason.DatabaseOpenFailed)
         }
         // 同步模式保持既有 fail-closed：首次连接后立即扫描，任何 Profile 初始化或清理写入
         // 都不得先于完整性结论。成功责任仍延迟到全部 Ready 条件完成后原子提交。
         if (!integrityCoordinator.verifyBeforeReady(verificationMode, database)) {
-            passphrase.close()
+            keyMaterial.close()
             database.close()
             return fail(DatabaseRecoveryReason.IntegrityVerificationFailed)
         }
@@ -401,7 +516,7 @@ class DatabaseStartupRuntime @Inject constructor(
                 }
             }
         }.isSuccess
-        passphrase.close()
+        keyMaterial.close()
         if (!profileReady) {
             database.close()
             return fail(DatabaseRecoveryReason.DatabaseOpenFailed)
@@ -422,13 +537,21 @@ class DatabaseStartupRuntime @Inject constructor(
             database.close()
             return fail(DatabaseRecoveryReason.RecoveryStateCorrupt)
         }
-        if (!integrityCoordinator.completeBeforeReady(verificationMode)) {
+        val rekeyArtifactsCleaned = rekeyOrKeyModeChangedThisRun || rekeyFiles.withExclusiveLock {
+            rekeyFiles.cleanupAfterVerifiedColdOpen()
+        }
+        if (!rekeyArtifactsCleaned) {
+            database.close()
+            return fail(DatabaseRecoveryReason.RecoveryStateCorrupt)
+        }
+        if (!deferIntegrityCompletion && !integrityCoordinator.completeBeforeReady(verificationMode)) {
             database.close()
             return fail(DatabaseRecoveryReason.IntegrityVerificationFailed)
         }
         return DatabaseStartupInitialization.Ready(
             handle = database,
             migratedPlaintextThisRun = migratedPlaintextThisRun,
+            deferredIntegrityCompletionMode = verificationMode.takeIf { deferIntegrityCompletion },
             postReadyAction = integrityCoordinator.postReadyAction(verificationMode, database),
         )
     }
@@ -450,6 +573,22 @@ class DatabaseStartupRuntime @Inject constructor(
     }
 }
 
+/** 迁移提交与启动责任提交的不可交换顺序。 */
+internal enum class PostMigrationSuccessResult {
+    COMPLETE,
+    MIGRATION_COMMIT_FAILED,
+    INTEGRITY_COMPLETION_FAILED,
+}
+
+internal fun finalizeSuccessfulPostMigration(
+    commitMigration: () -> Boolean,
+    completeIntegrityStartup: () -> Boolean,
+): PostMigrationSuccessResult {
+    if (!commitMigration()) return PostMigrationSuccessResult.MIGRATION_COMMIT_FAILED
+    if (!completeIntegrityStartup()) return PostMigrationSuccessResult.INTEGRITY_COMPLETION_FAILED
+    return PostMigrationSuccessResult.COMPLETE
+}
+
 /**
  * 恢复检查的常态快速路径。
  *
@@ -468,21 +607,40 @@ internal data class DatabaseStartupRecoveryMarkerSnapshot(
         ): DatabaseStartupRecoveryMarkerSnapshot {
             val recoveryEntries = readDirectoryNames(File(noBackupFilesDirectory, "database-recovery"))
             val backupEntries = readDirectoryNames(File(noBackupFilesDirectory, "recovery"))
+            val keyEnvelopeEntries = readDirectoryNames(File(noBackupFilesDirectory, "database"))
             val databaseEntries = readDirectoryNames(requireNotNull(databaseFile.parentFile))
-            if (recoveryEntries == null || backupEntries == null || databaseEntries == null) {
+            if (
+                recoveryEntries == null || backupEntries == null ||
+                keyEnvelopeEntries == null || databaseEntries == null
+            ) {
                 return DatabaseStartupRecoveryMarkerSnapshot(
                     requiresFullRecoveryCheck = true,
                     recoveryResponsibilityMarkerPresent = true,
                 )
             }
             val migrationJournalPresent =
-                "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries
+                "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries ||
+                    "${databaseFile.name}.sqlcipher-rekey.journal" in databaseEntries ||
+                    "${databaseFile.name}.sqlcipher-rekey.journal.tmp" in databaseEntries
+            val databaseRekeyArtifactPresent = databaseEntries.any { name ->
+                SqlCipherRekeyArtifactPolicy.isDatabaseArtifact(databaseFile.name, name)
+            }
+            val keyEnvelopeRekeyArtifactPresent = keyEnvelopeEntries.any { name ->
+                name == "dawn_course_key_envelope.bin.bak" ||
+                    name == "dawn_course_key_envelope.bin.new" ||
+                    SqlCipherRekeyArtifactPolicy.isEnvelopeArtifact(
+                        "dawn_course_key_envelope.bin",
+                        name,
+                    )
+            }
             val recoveryResponsibilityMarkerPresent =
                 hasAtomicMarkerArtifact(recoveryEntries, "bootstrap-install-v1") ||
                     hasAtomicMarkerArtifact(recoveryEntries, "recovery-state-v1") ||
                     hasAtomicMarkerArtifact(backupEntries, "backup_restore_required") ||
                     hasAtomicMarkerArtifact(backupEntries, "integrity_verification_required_v1") ||
-                    migrationJournalPresent
+                    migrationJournalPresent ||
+                    databaseRekeyArtifactPresent ||
+                    keyEnvelopeRekeyArtifactPresent
             return DatabaseStartupRecoveryMarkerSnapshot(
                 requiresFullRecoveryCheck = recoveryResponsibilityMarkerPresent,
                 recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
@@ -567,12 +725,12 @@ internal class SqlCipherRoomDatabaseFactory(
     /** 构建 Room 并强制取得首次可写连接；本方法不执行耗时双完整性扫描。 */
     fun open(
         databaseName: String,
-        passphrase: SqlCipherPassphrase
+        keyMaterial: DatabaseKeyMaterial
     ): AppDatabase {
         DawnStartupTrace.section(DawnStartupTrace.LOAD_LIBRARY) {
             SqlCipherNativeLoader.ensureLoaded()
         }
-        val openHelperFactory = passphrase.useBytes(::ClearingSupportOpenHelperFactory)
+        val openHelperFactory = keyMaterial.useSqlCipherBytes(::ClearingSupportOpenHelperFactory)
         val database = DawnStartupTrace.section(DawnStartupTrace.ROOM_BUILD) {
             buildWithOpenHelperFactoryCleanup(openHelperFactory) {
                 Room.databaseBuilder(context, AppDatabase::class.java, databaseName)

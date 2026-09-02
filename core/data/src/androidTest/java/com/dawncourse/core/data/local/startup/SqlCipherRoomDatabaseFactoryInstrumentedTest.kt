@@ -20,7 +20,9 @@ class SqlCipherRoomDatabaseFactoryInstrumentedTest {
     @Test
     fun firstOpenAndIntegrityVerifierCanRunAsSeparateReusableSteps() {
         context.deleteDatabase(DATABASE_NAME)
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { index -> (index + 1).toByte() })
+        val passphrase = DatabaseKeyMaterial.RawKeyLiteral.fromBytes(
+            ByteArray(32) { index -> (index + 1).toByte() }
+        )
         val factory = SqlCipherRoomDatabaseFactory(context)
         val database = factory.open(DATABASE_NAME, passphrase)
         try {

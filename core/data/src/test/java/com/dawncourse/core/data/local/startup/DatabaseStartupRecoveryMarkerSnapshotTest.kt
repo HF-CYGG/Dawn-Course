@@ -93,4 +93,35 @@ class DatabaseStartupRecoveryMarkerSnapshotTest {
                 .requiresFullRecoveryCheck,
         )
     }
+
+    @Test
+    fun strictRekeyArtifactsForceRecoveryButUnknownNeighborsDoNot() {
+        val noBackupDirectory = temporaryFolder.newFolder("no-backup-rekey-artifacts")
+        val databaseFile = File(temporaryFolder.newFolder("databases-rekey-artifacts"), "dawn_course.db")
+        val envelopeDirectory = File(noBackupDirectory, "database").apply { mkdirs() }
+        val attemptId = "00000000-0000-0000-0000-000000000001"
+        val known = listOf(
+            File(databaseFile.parentFile, "${databaseFile.name}.raw-temp.$attemptId-wal.at-rekey"),
+            File(envelopeDirectory, "dawn_course_key_envelope.bin.raw-staged.$attemptId.new"),
+        )
+
+        known.forEach { artifact ->
+            artifact.writeText("known")
+            assertTrue(
+                DatabaseStartupRecoveryMarkerSnapshot.capture(noBackupDirectory, databaseFile)
+                    .requiresFullRecoveryCheck,
+            )
+            assertTrue(artifact.delete())
+        }
+
+        File(databaseFile.parentFile, "${databaseFile.name}.raw-temp.$attemptId-user-file")
+            .writeText("unknown")
+        File(envelopeDirectory, "dawn_course_key_envelope.bin.raw-staged.$attemptId-user-file")
+            .writeText("unknown")
+
+        assertFalse(
+            DatabaseStartupRecoveryMarkerSnapshot.capture(noBackupDirectory, databaseFile)
+                .requiresFullRecoveryCheck,
+        )
+    }
 }

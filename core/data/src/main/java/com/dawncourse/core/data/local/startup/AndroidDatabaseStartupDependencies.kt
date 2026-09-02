@@ -137,7 +137,11 @@ class AndroidAtomicByteStore(
 /** 为应用上下文创建默认信封文件位置；放入 noBackupFilesDir 避免系统迁移敏感元数据。 */
 class AndroidDatabasePassphraseEnvelopeStore(context: Context) : DatabasePassphraseEnvelopeStore by DatabaseKeyEnvelopeStore(
     atomicByteStore = AndroidAtomicByteStore(
-        File(context.noBackupFilesDir, "database/dawn_course_key_envelope.bin")
+        databaseKeyEnvelopeFile(context)
     ),
     keyProvider = AndroidKeystoreAesGcmKeyProvider()
 )
+
+/** 活动数据库密钥信封的唯一生产路径。 */
+internal fun databaseKeyEnvelopeFile(context: Context): File =
+    File(context.noBackupFilesDir, "database/dawn_course_key_envelope.bin")

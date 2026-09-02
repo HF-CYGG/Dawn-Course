@@ -196,13 +196,13 @@ class AndroidDatabaseStartupDependenciesTest {
         assertTrue(created is NewPassphraseResult.Available)
         assertTrue(loaded is ExistingPassphraseResult.Available)
         if (created is NewPassphraseResult.Available && loaded is ExistingPassphraseResult.Available) {
-            val createdBytes = created.passphrase.useBytes { it.copyOf() }
-            loaded.passphrase.useBytes { loadedBytes ->
+            val createdBytes = created.keyMaterial.useStoredBytes { it.copyOf() }
+            loaded.keyMaterial.useStoredBytes { loadedBytes ->
                 assertTrue(loadedBytes.contentEquals(createdBytes))
             }
             createdBytes.fill(0)
-            created.passphrase.close()
-            loaded.passphrase.close()
+            created.keyMaterial.close()
+            loaded.keyMaterial.close()
         }
     }
 

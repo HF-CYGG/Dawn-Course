@@ -59,6 +59,8 @@ sealed interface DatabaseStartupInitialization<out T : Any> {
     data class Ready<T : Any>(
         val handle: T,
         val migratedPlaintextThisRun: Boolean,
+        /** 迁移/rekey journal 最终提交后才可执行的启动完整性责任；普通路径必须为 null。 */
+        val deferredIntegrityCompletionMode: IntegrityVerificationMode? = null,
         /** 非 null 时只能在发布 Ready 后执行，失败结果会单向进入在线恢复。 */
         val postReadyAction: DatabasePostReadyAction? = null,
     ) : DatabaseStartupInitialization<T>
