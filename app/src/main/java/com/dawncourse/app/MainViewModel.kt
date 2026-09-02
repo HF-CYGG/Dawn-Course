@@ -9,15 +9,16 @@ import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.model.ActiveTimetableContext
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
-import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.WidgetUpdateRepository
+import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.domain.model.createStartupSnapshot
 import com.dawncourse.feature.timetable.notification.MuteRecoveryUserActionController
 import com.dawncourse.feature.timetable.notification.MuteSessionRecord
 import com.dawncourse.core.domain.model.TriggerKey
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -221,7 +223,7 @@ class MainViewModel @Inject constructor(
     profileRepository: TimetableProfileRepository,
     courseRepository: CourseRepository,
     private val muteRecoveryController: MuteRecoveryUserActionController,
-    private val startupSnapshotRepository: StartupSnapshotRepository,
+    private val startupSnapshotRuntime: StartupSnapshotRuntime,
     private val widgetUpdateRepository: WidgetUpdateRepository,
 ) : ViewModel() {
     init {
@@ -278,24 +280,26 @@ class MainViewModel @Inject constructor(
      * 实时 Root 已取得完整且同一次发射的 Profile、学期、课程、视觉设置后，异步原子替换
      * 冷启动文件。失败仅放弃下一次加速，绝不影响当前 UI 或数据库状态。
      */
-    fun refreshStartupSnapshot(successState: MainUiState.Success) {
+    suspend fun refreshStartupSnapshot(successState: MainUiState.Success) {
         val context = successState.activeTimetableContext ?: return
-        viewModelScope.launch(Dispatchers.Default) {
-            val replaced = runCatching {
-                startupSnapshotRepository.replace(
-                    createStartupSnapshot(
-                        activeContext = context,
-                        courses = successState.activeCourses,
-                        settings = successState.settings,
-                        createdAtEpochMillis = System.currentTimeMillis(),
-                        zoneId = java.time.ZoneId.systemDefault().id,
-                    )
+        val snapshot = try {
+            withContext(Dispatchers.Default) {
+                createStartupSnapshot(
+                    activeContext = context,
+                    courses = successState.activeCourses,
+                    settings = successState.settings,
+                    createdAtEpochMillis = System.currentTimeMillis(),
+                    zoneId = java.time.ZoneId.systemDefault().id,
                 )
-            }.getOrDefault(false)
-            if (replaced) {
-                // 沿用既有更新广播；Widget 的快照读取改造仍留给下一阶段。
-                widgetUpdateRepository.triggerUpdate()
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Throwable) {
+            return
+        }
+        startupSnapshotRuntime.replaceLatest(snapshot) {
+            // Widget 更新独立于快照持久化，广播异常只能放弃本次旁路同步。
+            runCatching { widgetUpdateRepository.triggerUpdate() }
         }
     }
 }

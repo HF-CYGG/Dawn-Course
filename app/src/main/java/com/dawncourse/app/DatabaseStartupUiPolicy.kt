@@ -7,8 +7,10 @@ import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
 data class DatabaseStartupUiDecision(
     val keepSplash: Boolean,
     val createDatabaseViewModels: Boolean,
-    /** 仅 Database Starting 且已校验快照时展示；Ready 必须整包切回实时 Root。 */
+    /** Database Starting 或实时 Root 仍 Loading 时展示已校验快照；不得与实时 UI 合并。 */
     val showSnapshot: Boolean,
+    /** 仅数据库 Ready 且实时 MainUiState.Success 时允许创建 NavHost/ReportDrawn 的 live Root。 */
+    val showLiveRoot: Boolean = false,
     val showRecovery: Boolean,
     val showBlocked: Boolean,
 )
@@ -23,6 +25,7 @@ object DatabaseStartupUiPolicy {
     fun decide(
         databaseState: DatabaseRuntimeState,
         snapshotState: StartupSnapshotRuntimeState,
+        liveRootReady: Boolean = false,
     ): DatabaseStartupUiDecision = when (databaseState) {
         DatabaseRuntimeState.Starting -> when (snapshotState) {
             is StartupSnapshotRuntimeState.Available -> DatabaseStartupUiDecision(
@@ -41,13 +44,30 @@ object DatabaseStartupUiPolicy {
                 showBlocked = false,
             )
         }
-        DatabaseRuntimeState.Ready -> DatabaseStartupUiDecision(
-            keepSplash = false,
-            createDatabaseViewModels = true,
-            showSnapshot = false,
-            showRecovery = false,
-            showBlocked = false,
-        )
+        DatabaseRuntimeState.Ready -> when {
+            liveRootReady -> DatabaseStartupUiDecision(
+                keepSplash = false,
+                createDatabaseViewModels = true,
+                showSnapshot = false,
+                showLiveRoot = true,
+                showRecovery = false,
+                showBlocked = false,
+            )
+            snapshotState is StartupSnapshotRuntimeState.Available -> DatabaseStartupUiDecision(
+                keepSplash = false,
+                createDatabaseViewModels = true,
+                showSnapshot = true,
+                showRecovery = false,
+                showBlocked = false,
+            )
+            else -> DatabaseStartupUiDecision(
+                keepSplash = true,
+                createDatabaseViewModels = true,
+                showSnapshot = false,
+                showRecovery = false,
+                showBlocked = false,
+            )
+        }
         is DatabaseRuntimeState.RecoveryRequired -> DatabaseStartupUiDecision(
             keepSplash = false,
             createDatabaseViewModels = false,

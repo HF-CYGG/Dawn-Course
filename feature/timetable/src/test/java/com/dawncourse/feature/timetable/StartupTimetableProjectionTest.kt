@@ -53,6 +53,21 @@ class StartupTimetableProjectionTest {
         assertEquals(0, presentation.currentWeek)
     }
 
+    @Test
+    fun `missing semester projects to an explicit neutral no semester state`() {
+        val snapshot = snapshot(
+            startDate = LocalDate.of(2026, 9, 7)
+                .atStartOfDay(ZoneId.of("Asia/Shanghai"))
+                .toInstant()
+                .toEpochMilli(),
+        ).copy(semester = null, courses = emptyList())
+
+        val presentation = snapshot.toStartupTimetablePresentation(LocalDate.of(2026, 9, 6))
+
+        assertEquals(-1, presentation.currentWeek)
+        assertEquals(StartupTimetablePresentationMode.NoSemester, presentation.mode)
+    }
+
     private fun snapshot(startDate: Long): StartupSnapshot = StartupSnapshot(
         protocolVersion = StartupSnapshot.CURRENT_PROTOCOL_VERSION,
         profile = StartupSnapshotProfile(id = 7L, uuid = "profile-7"),

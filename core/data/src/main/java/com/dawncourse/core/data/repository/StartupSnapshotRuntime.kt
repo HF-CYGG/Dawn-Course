@@ -4,16 +4,22 @@ import com.dawncourse.core.domain.model.StartupSnapshot
 import com.dawncourse.core.domain.repository.StartupSnapshotReadResult
 import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** 冷启动快照的稳定可观察状态；它与数据库 Runtime 平行且不持有数据库句柄。 */
 sealed interface StartupSnapshotRuntimeState {
@@ -38,6 +44,11 @@ class StartupSnapshotRuntime(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val started = AtomicBoolean(false)
     private val invalidated = AtomicBoolean(false)
+    private val visibleSnapshotReleased = AtomicBoolean(false)
+    /** 新请求先登记 generation，再排队进入写入 mutex，保证 B 可以淘汰仍在执行的 A。 */
+    private val mutationGeneration = AtomicLong(0L)
+    /** replace 与 Recovery 删除共用同一串行区，删除一定发生在已开始的写入之后。 */
+    private val mutationMutex = Mutex()
     @Volatile private var readJob: Job? = null
     private val mutableState = MutableStateFlow<StartupSnapshotRuntimeState>(StartupSnapshotRuntimeState.Loading)
 
@@ -57,7 +68,7 @@ class StartupSnapshotRuntime(
             }.getOrDefault(StartupSnapshotReadResult.Missing)
             // Recovery/Blocked 可能在 Keystore/文件读取期间到达。此时晚到的可用结果绝不能
             // 重新暴露已撤下的快照，即使底层读取实现没有协作响应 cancel。
-            if (!invalidated.get()) {
+            if (!invalidated.get() && !visibleSnapshotReleased.get()) {
                 mutableState.value = when (result) {
                     is StartupSnapshotReadResult.Available -> StartupSnapshotRuntimeState.Available(result.snapshot)
                     StartupSnapshotReadResult.Missing -> StartupSnapshotRuntimeState.Missing
@@ -66,11 +77,57 @@ class StartupSnapshotRuntime(
         }
     }
 
-    /** Recovery/Blocked 时先撤下画面，再在后台尽力删除不可再信任的加速文件。 */
-    fun invalidate() {
+    /**
+     * 只提交调用时仍为 latest 的完整快照。回调位于同一代际/mutex 检查后，调用方可将
+     * Widget 广播作为 best-effort 放入其中；其异常不会影响已成功的快照替换。
+     */
+    suspend fun replaceLatest(
+        snapshot: StartupSnapshot,
+        onLatestCommitted: () -> Unit = {},
+    ): Boolean {
+        if (invalidated.get()) return false
+        val requestGeneration = mutationGeneration.incrementAndGet()
+        if (invalidated.get()) return false
+        return mutationMutex.withLock {
+            if (invalidated.get() || mutationGeneration.get() != requestGeneration) {
+                return@withLock false
+            }
+            val replaced = try {
+                repository.replace(snapshot)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                false
+            }
+            if (!replaced || invalidated.get() || mutationGeneration.get() != requestGeneration) {
+                return@withLock false
+            }
+            // Widget 只是旁路同步；广播异常绝不能把成功替换升级为进程级崩溃。
+            runCatching { onLatestCommitted() }
+            true
+        }
+    }
+
+    /**
+     * Recovery/Blocked 的写入否决。先同步关闭未来 replace、递增代际并撤下 UI，再在与
+     * replace 同一 mutex 中完成删除；已进入 repository.replace 的旧请求也不能在删除后重写。
+     */
+    suspend fun invalidate() {
         invalidated.set(true)
+        visibleSnapshotReleased.set(true)
+        mutationGeneration.incrementAndGet()
         readJob?.cancel()
         mutableState.value = StartupSnapshotRuntimeState.Missing
-        scope.launch { runCatching { repository.invalidate() } }
+        withContext(NonCancellable) {
+            mutationMutex.withLock {
+                runCatching { repository.invalidate() }
+            }
+        }
+    }
+
+    /** 实时 Root 已稳定渲染后释放大快照引用；绝不删除刚刚替换的 no-backup 文件。 */
+    fun releaseVisibleSnapshot() {
+        visibleSnapshotReleased.set(true)
+        mutableState.value = StartupSnapshotRuntimeState.Missing
     }
 }

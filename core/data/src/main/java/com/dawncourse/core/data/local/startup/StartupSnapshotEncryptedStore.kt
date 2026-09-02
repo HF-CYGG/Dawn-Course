@@ -33,6 +33,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** 独立启动快照文件的最小原子存储边界，读取路径不接触 Room。 */
 interface StartupSnapshotArtifactStore {
+    /** 读取、校验失败后的删除与写入必须共享这一跨进程互斥区。 */
     fun <T> withExclusiveLock(block: () -> T): T
     fun readOrNull(): ByteArray?
     fun writeAtomically(bytes: ByteArray)
@@ -68,34 +69,46 @@ open class StartupSnapshotEncryptedStore(
         expectedProfileId: Long?,
         nowEpochMillis: Long,
         expectedZoneId: String,
+    ): StartupSnapshotReadResult = try {
+        // 不能在锁外先判坏、再锁内删除：另一个进程可能恰好在这段间隙提交新的 base 文件。
+        artifactStore.withExclusiveLock {
+            readLocked(expectedProfileId, nowEpochMillis, expectedZoneId)
+        }
+    } catch (_: Throwable) {
+        // 锁本身不可用时没有可靠的删除时机，只能 fail-closed 为 cache miss。
+        StartupSnapshotReadResult.Missing
+    }
+
+    /** 调用方已持有 artifact 锁；所有无效分支在同一临界区内删除。 */
+    private fun readLocked(
+        expectedProfileId: Long?,
+        nowEpochMillis: Long,
+        expectedZoneId: String,
     ): StartupSnapshotReadResult {
-        val encrypted = try {
-            artifactStore.readOrNull()
-        } catch (_: Throwable) {
-            invalidateBestEffort()
-            return StartupSnapshotReadResult.Missing
-        } ?: return StartupSnapshotReadResult.Missing
+        var encrypted: ByteArray? = null
         var plaintext: ByteArray? = null
         try {
+            encrypted = artifactStore.readOrNull() ?: return StartupSnapshotReadResult.Missing
             val key = (keyProvider.getExisting(STARTUP_SNAPSHOT_KEY_ALIAS) as? KeyEncryptionKeyResult.Available)
-                ?.key ?: return invalidRead()
-            plaintext = StartupSnapshotEnvelope.decrypt(encrypted, key, aad) ?: return invalidRead()
-            val snapshot = StartupSnapshotPayloadCodec.decode(plaintext) ?: return invalidRead()
+                ?.key ?: return invalidReadLocked()
+            plaintext = StartupSnapshotEnvelope.decrypt(encrypted, key, aad) ?: return invalidReadLocked()
+            val snapshot = StartupSnapshotPayloadCodec.decode(plaintext) ?: return invalidReadLocked()
             if (snapshot.validateForStartup(expectedProfileId, nowEpochMillis, expectedZoneId) != StartupSnapshotValidity.VALID) {
-                return invalidRead()
+                return invalidReadLocked()
             }
             return StartupSnapshotReadResult.Available(snapshot)
+        } catch (_: Throwable) {
+            return invalidReadLocked()
         } finally {
-            encrypted.fill(0)
+            encrypted?.fill(0)
             plaintext?.fill(0)
         }
     }
 
     /** 完整重新加密后通过 AtomicFile 一次替换；旧文件在任意异常下保留。 */
     fun replace(snapshot: StartupSnapshot): Boolean {
-        if (!snapshot.isStartupSnapshotSemanticallyValid() ||
-            snapshot.revision != StartupSnapshotRevision.create(snapshot)
-        ) return false
+        // 在申请/创建 Keystore key 之前完成严格 wire 预检，避免超量输入触发密文或大数组分配。
+        if (!StartupSnapshotPayloadCodec.canEncode(snapshot)) return false
         return try {
             artifactStore.withExclusiveLock {
                 val key = (keyProvider.getOrCreate(STARTUP_SNAPSHOT_KEY_ALIAS) as? KeyEncryptionKeyResult.Available)
@@ -115,8 +128,8 @@ open class StartupSnapshotEncryptedStore(
 
     fun invalidate() = invalidateBestEffort()
 
-    private fun invalidRead(): StartupSnapshotReadResult {
-        invalidateBestEffort()
+    private fun invalidReadLocked(): StartupSnapshotReadResult {
+        runCatching { artifactStore.deleteAtomically() }
         return StartupSnapshotReadResult.Missing
     }
 
@@ -134,19 +147,18 @@ class AndroidStartupSnapshotStore(context: Context) : StartupSnapshotEncryptedSt
 /** 明确的二进制 payload 格式；不使用 JSON/Kotlin data class 序列化。 */
 object StartupSnapshotPayloadCodec {
     fun encode(snapshot: StartupSnapshot): ByteArray {
-        require(snapshot.protocolVersion == StartupSnapshot.CURRENT_PROTOCOL_VERSION)
-        require(snapshot.isStartupSnapshotSemanticallyValid())
-        return ByteArrayOutputStream().use { bytes ->
+        val payloadBytes = checkedPayloadBytes(snapshot)
+        return ByteArrayOutputStream(payloadBytes).use { bytes ->
             DataOutputStream(bytes).use { output ->
                 output.write(MAGIC)
                 output.writeInt(snapshot.protocolVersion)
                 output.writeLong(snapshot.profile.id)
-                output.writeText(snapshot.profile.uuid)
+                output.writeText(snapshot.profile.uuid, MAX_UUID_BYTES)
                 output.writePresence(snapshot.semester != null)
                 snapshot.semester?.let { semester ->
                     output.writeLong(semester.id)
                     output.writeLong(semester.profileId)
-                    output.writeText(semester.name)
+                    output.writeText(semester.name, MAX_TEXT_BYTES)
                     output.writeLong(semester.startDateEpochMillis)
                     output.writeInt(semester.weekCount)
                 }
@@ -157,12 +169,51 @@ object StartupSnapshotPayloadCodec {
                 output.writeVisual(snapshot.visualSettings)
                 output.writeLong(snapshot.createdAtEpochMillis)
                 output.writeLong(snapshot.expiresAtEpochMillis)
-                output.writeText(snapshot.zoneId)
-                output.writeText(snapshot.revision.value)
+                output.writeText(snapshot.zoneId, MAX_ZONE_BYTES)
+                output.writeText(snapshot.revision.value, REVISION_HEX_BYTES)
                 output.flush()
             }
             bytes.toByteArray()
         }
+    }
+
+    /** `replace` 在接触 Keystore 前调用；与 decoder 使用相同 UTF-8 字节上限和总量。 */
+    fun canEncode(snapshot: StartupSnapshot): Boolean = runCatching {
+        checkedPayloadBytes(snapshot)
+    }.isSuccess
+
+    /**
+     * 先逐字段计算严格 UTF-8 长度，再允许分配完整 payload。`SnapshotWireSizer` 每次累加都
+     * 立即检查 512 KiB 上限，因此 2000 门超长课程不会形成巨大的明文或密文数组。
+     */
+    private fun checkedPayloadBytes(snapshot: StartupSnapshot): Int {
+        require(snapshot.protocolVersion == StartupSnapshot.CURRENT_PROTOCOL_VERSION)
+        require(snapshot.isStartupSnapshotSemanticallyValid())
+        val sizer = SnapshotWireSizer()
+        sizer.raw(MAGIC.size)
+        sizer.int()
+        sizer.long()
+        sizer.text(snapshot.profile.uuid, MAX_UUID_BYTES)
+        sizer.presence()
+        snapshot.semester?.let { semester ->
+            sizer.long()
+            sizer.long()
+            sizer.text(semester.name, MAX_TEXT_BYTES)
+            sizer.long()
+            sizer.int()
+        }
+        sizer.int()
+        snapshot.courses.sortedWith(STARTUP_SNAPSHOT_COURSE_WIRE_ORDER).forEach { course ->
+            sizer.course(course)
+        }
+        sizer.visual(snapshot.visualSettings)
+        sizer.long()
+        sizer.long()
+        sizer.text(snapshot.zoneId, MAX_ZONE_BYTES)
+        sizer.text(snapshot.revision.value, REVISION_HEX_BYTES)
+        require(snapshot.revision.value.matches(REVISION_HEX_REGEX))
+        require(snapshot.revision == StartupSnapshotRevision.create(snapshot))
+        return sizer.totalBytes
     }
 
     /** 长度、计数、枚举和字段语义任一不满足时拒绝，不为损坏输入补默认值。 */
@@ -203,33 +254,33 @@ object StartupSnapshotPayloadCodec {
 
     private fun DataOutputStream.writeCourse(course: StartupSnapshotCourse) {
         writeLong(course.id)
-        writeText(course.name)
-        writeText(course.teacher)
-        writeText(course.location)
+        writeText(course.name, MAX_TEXT_BYTES)
+        writeText(course.teacher, MAX_TEXT_BYTES)
+        writeText(course.location, MAX_TEXT_BYTES)
         writeInt(course.dayOfWeek)
         writeInt(course.startSection)
         writeInt(course.duration)
         writeInt(course.startWeek)
         writeInt(course.endWeek)
         writeInt(course.weekType.toWireCode())
-        writeText(course.color)
+        writeText(course.color, MAX_COLOR_BYTES)
     }
 
     private fun DataOutputStream.writeVisual(settings: StartupSnapshotVisualSettings) {
         writePresence(settings.dynamicColor)
-        writeNullableText(settings.wallpaperUri)
+        writeNullableText(settings.wallpaperUri, MAX_URI_BYTES)
         writeInt(settings.transparency.toRawBits())
         writeInt(settings.fontStyle.toWireCode())
         writeInt(settings.dividerType.toWireCode())
         writeInt(settings.dividerWidthDp.toRawBits())
-        writeText(settings.dividerColor)
+        writeText(settings.dividerColor, MAX_COLOR_BYTES)
         writeInt(settings.dividerAlpha.toRawBits())
         writeInt(settings.courseItemHeightDp)
         writeInt(settings.maxDailySections)
         writeInt(settings.sectionTimes.size)
         settings.sectionTimes.forEach { section ->
-            writeText(section.startTime)
-            writeText(section.endTime)
+            writeText(section.startTime, MAX_TIME_BYTES)
+            writeText(section.endTime, MAX_TIME_BYTES)
         }
         writeInt(settings.cardCornerRadius)
         writeInt(settings.cardAlpha.toRawBits())
@@ -246,15 +297,15 @@ object StartupSnapshotPayloadCodec {
     }
 
     private fun DataOutputStream.writePresence(value: Boolean) = writeByte(if (value) 1 else 0)
-    private fun DataOutputStream.writeText(value: String) {
+    private fun DataOutputStream.writeText(value: String, maxBytes: Int) {
+        require(value.strictUtf8ByteLength() <= maxBytes)
         val encoded = value.toByteArray(Charsets.UTF_8)
-        require(encoded.size <= MAX_TEXT_BYTES)
         writeInt(encoded.size)
         write(encoded)
     }
-    private fun DataOutputStream.writeNullableText(value: String?) {
+    private fun DataOutputStream.writeNullableText(value: String?, maxBytes: Int) {
         writePresence(value != null)
-        value?.let { text -> writeText(text) }
+        value?.let { text -> writeText(text, maxBytes) }
     }
 
     private fun StrictSnapshotInput.course(): StartupSnapshotCourse = StartupSnapshotCourse(
@@ -352,6 +403,90 @@ object StartupSnapshotPayloadCodec {
         1 -> StartupSnapshotThemeMode.LIGHT
         2 -> StartupSnapshotThemeMode.DARK
         else -> throw IllegalArgumentException("unknown theme mode")
+    }
+
+    /** 不分配完整 byte array 的 wire 长度计数器；每一步都确认 decoder 同一上限。 */
+    private class SnapshotWireSizer {
+        var totalBytes: Int = 0
+            private set
+
+        fun raw(bytes: Int) {
+            require(bytes >= 0)
+            totalBytes = Math.addExact(totalBytes, bytes)
+            require(totalBytes <= MAX_PAYLOAD_BYTES) { "启动快照 payload 超过 512 KiB" }
+        }
+
+        fun int() = raw(Int.SIZE_BYTES)
+        fun long() = raw(Long.SIZE_BYTES)
+        fun presence() = raw(1)
+
+        fun text(value: String, maxBytes: Int) {
+            val encodedBytes = value.strictUtf8ByteLength()
+            require(encodedBytes <= maxBytes) { "启动快照文本字段超过 UTF-8 上限" }
+            int()
+            raw(encodedBytes)
+        }
+
+        fun nullableText(value: String?, maxBytes: Int) {
+            presence()
+            value?.let { text(it, maxBytes) }
+        }
+
+        fun course(course: StartupSnapshotCourse) {
+            long()
+            text(course.name, MAX_TEXT_BYTES)
+            text(course.teacher, MAX_TEXT_BYTES)
+            text(course.location, MAX_TEXT_BYTES)
+            repeat(6) { int() }
+            text(course.color, MAX_COLOR_BYTES)
+        }
+
+        fun visual(settings: StartupSnapshotVisualSettings) {
+            presence()
+            nullableText(settings.wallpaperUri, MAX_URI_BYTES)
+            // transparency、fontStyle、dividerType、dividerWidth
+            repeat(4) { int() }
+            text(settings.dividerColor, MAX_COLOR_BYTES)
+            // dividerAlpha、courseItemHeight、maxDailySections、sectionTimes count
+            repeat(4) { int() }
+            settings.sectionTimes.forEach { section ->
+                text(section.startTime, MAX_TIME_BYTES)
+                text(section.endTime, MAX_TIME_BYTES)
+            }
+            int()
+            int()
+            presence()
+            int()
+            int()
+            repeat(5) { presence() }
+            int()
+            int()
+        }
+    }
+
+    /** 与严格 decoder 相同的 UTF-8 语义，拒绝未配对 surrogate，且不为长度计算分配数组。 */
+    private fun String.strictUtf8ByteLength(): Int {
+        var length = 0
+        var index = 0
+        while (index < this.length) {
+            val char = this[index]
+            val encodedBytes = when {
+                char.code < 0x80 -> 1
+                char.code < 0x800 -> 2
+                char.isHighSurrogate() -> {
+                    require(index + 1 < this.length && this[index + 1].isLowSurrogate()) {
+                        "启动快照文本包含未配对 high surrogate"
+                    }
+                    index += 1
+                    4
+                }
+                char.isLowSurrogate() -> throw IllegalArgumentException("启动快照文本包含未配对 low surrogate")
+                else -> 3
+            }
+            length = Math.addExact(length, encodedBytes)
+            index += 1
+        }
+        return length
     }
 
     /** payload 与 revision 对课程集采用同一显式全字段排序，避免输入列表顺序影响密文。 */

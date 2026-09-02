@@ -65,10 +65,15 @@ class DatabaseStartupUiPolicyTest {
                 keepSplash = false,
                 createDatabaseViewModels = true,
                 showSnapshot = false,
+                showLiveRoot = true,
                 showRecovery = false,
                 showBlocked = false,
             ),
-            DatabaseStartupUiPolicy.decide(DatabaseRuntimeState.Ready, StartupSnapshotRuntimeState.Available(snapshot()))
+            DatabaseStartupUiPolicy.decide(
+                DatabaseRuntimeState.Ready,
+                StartupSnapshotRuntimeState.Available(snapshot()),
+                liveRootReady = true,
+            )
         )
     }
 
@@ -84,6 +89,68 @@ class DatabaseStartupUiPolicyTest {
             ),
             DatabaseStartupUiPolicy.decide(DatabaseRuntimeState.StartupBlocked, StartupSnapshotRuntimeState.Available(snapshot()))
         )
+    }
+
+    @Test
+    fun readyKeepsSnapshotOrSplashUntilTheLiveRootActuallySucceeds() {
+        assertEquals(
+            DatabaseStartupUiDecision(
+                keepSplash = false,
+                createDatabaseViewModels = true,
+                showSnapshot = true,
+                showRecovery = false,
+                showBlocked = false,
+            ),
+            DatabaseStartupUiPolicy.decide(
+                DatabaseRuntimeState.Ready,
+                StartupSnapshotRuntimeState.Available(snapshot()),
+            ),
+        )
+        assertEquals(
+            DatabaseStartupUiDecision(
+                keepSplash = true,
+                createDatabaseViewModels = true,
+                showSnapshot = false,
+                showRecovery = false,
+                showBlocked = false,
+            ),
+            DatabaseStartupUiPolicy.decide(
+                DatabaseRuntimeState.Ready,
+                StartupSnapshotRuntimeState.Missing,
+            ),
+        )
+    }
+
+    @Test
+    fun startingSnapshotReadyLoadingAndReadySuccessNeverExposeABlankOrPrematureLiveRoot() {
+        val snapshotState = StartupSnapshotRuntimeState.Available(snapshot())
+        val starting = DatabaseStartupUiPolicy.decide(
+            DatabaseRuntimeState.Starting,
+            snapshotState,
+            liveRootReady = false,
+        )
+        val readyLoading = DatabaseStartupUiPolicy.decide(
+            DatabaseRuntimeState.Ready,
+            snapshotState,
+            liveRootReady = false,
+        )
+        val readySuccess = DatabaseStartupUiPolicy.decide(
+            DatabaseRuntimeState.Ready,
+            snapshotState,
+            liveRootReady = true,
+        )
+
+        assertEquals(false, starting.keepSplash)
+        assertEquals(true, starting.showSnapshot)
+        assertEquals(false, starting.createDatabaseViewModels)
+        assertEquals(false, readyLoading.keepSplash)
+        assertEquals(true, readyLoading.showSnapshot)
+        assertEquals(true, readyLoading.createDatabaseViewModels)
+        assertEquals(false, readyLoading.showLiveRoot)
+        assertEquals(false, readySuccess.keepSplash)
+        assertEquals(false, readySuccess.showSnapshot)
+        assertEquals(true, readySuccess.createDatabaseViewModels)
+        assertEquals(true, readySuccess.showLiveRoot)
     }
 
     private fun snapshot() = com.dawncourse.core.domain.model.StartupSnapshot(

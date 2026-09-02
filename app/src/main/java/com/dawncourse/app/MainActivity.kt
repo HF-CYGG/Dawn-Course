@@ -119,6 +119,7 @@ class MainActivity : ComponentActivity() {
             DatabaseStartupUiPolicy.decide(
                 databaseStartupRuntime.state.value,
                 startupSnapshotRuntime.state.value,
+                liveRootReady = mainViewModel?.uiState?.value is MainUiState.Success,
             ).keepSplash
         }
 
@@ -137,7 +138,31 @@ class MainActivity : ComponentActivity() {
         setContent {
             val databaseState by databaseStartupRuntime.state.collectAsState()
             val snapshotState by startupSnapshotRuntime.state.collectAsState()
-            val decision = DatabaseStartupUiPolicy.decide(databaseState, snapshotState)
+            // DB Ready 后先创建 MainViewModel 以收集真实 live readiness；但在它 Success 前仍由
+            // 同一 policy 保持快照或 Splash，不能提前构造 NavHost/ReportDrawn 的实时 Root。
+            val preparationDecision = DatabaseStartupUiPolicy.decide(
+                databaseState = databaseState,
+                snapshotState = snapshotState,
+            )
+            val databaseViewModel = if (preparationDecision.createDatabaseViewModels) {
+                remember {
+                    ViewModelProvider(this@MainActivity)[MainViewModel::class.java].also {
+                        mainViewModel = it
+                    }
+                }
+            } else {
+                null
+            }
+            val liveUiState = if (databaseViewModel == null) {
+                MainUiState.Loading
+            } else {
+                databaseViewModel.uiState.collectAsState().value
+            }
+            val decision = DatabaseStartupUiPolicy.decide(
+                databaseState = databaseState,
+                snapshotState = snapshotState,
+                liveRootReady = liveUiState is MainUiState.Success,
+            )
             var automaticRecoveryRestartAttempted by rememberSaveable { mutableStateOf(false) }
             when {
                 decision.showRecovery -> {
@@ -172,13 +197,9 @@ class MainActivity : ComponentActivity() {
                         StartupTimetableContent(snapshot = snapshot)
                     }
                 }
-                decision.createDatabaseViewModels -> {
-            val viewModel = remember {
-                ViewModelProvider(this@MainActivity)[MainViewModel::class.java].also {
-                    mainViewModel = it
-                }
-            }
-            val uiState by viewModel.uiState.collectAsState()
+                decision.showLiveRoot -> {
+            val viewModel = requireNotNull(databaseViewModel)
+            val uiState = liveUiState
             val exhaustedMuteRecoveries by viewModel.exhaustedMuteRecoveries.collectAsState()
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
@@ -225,6 +246,8 @@ class MainActivity : ComponentActivity() {
                 // 只在实时 Root 已取得完整稳定聚合后替换整包快照；不和快照 UI 合并状态。
                 LaunchedEffect(successState) {
                     viewModel.refreshStartupSnapshot(successState)
+                    // 释放 Runtime 中的首帧大对象，不删除刚刚提交的加密快照文件。
+                    startupSnapshotRuntime.releaseVisibleSnapshot()
                 }
 
                 // 监听设置变化，调度每日闹钟计算任务（WorkManager）
