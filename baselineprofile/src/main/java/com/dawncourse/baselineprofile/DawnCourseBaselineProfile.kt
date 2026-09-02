@@ -112,12 +112,11 @@ class DawnCourseBaselineProfile {
     }
 
     /**
-     * 只保留 Dawn Course 的生产规则。Widget journey 通过 benchmark-only Provider 触发，
-     * 但 Provider 自身不得进入最终 Profile。
+     * 仅排除 benchmark-only Provider 规则。AndroidX、Compose、Room、Hilt 与协程等依赖
+     * 规则同样属于应用启动和交互热路径，必须保留。
      */
     private fun isDawnCourseProductionRule(rule: String): Boolean {
-        return rule.contains(DAWN_COURSE_RULE_PREFIX) &&
-            !rule.contains(BENCHMARK_RULE_PREFIX)
+        return !rule.contains(BENCHMARK_RULE_PREFIX)
     }
 
     private companion object {
@@ -127,7 +126,6 @@ class DawnCourseBaselineProfile {
         const val UI_TIMEOUT_MS = 10_000L
         const val SWIPE_STEPS = 12
         const val MINIMUM_COURSE_COUNT = 120
-        const val DAWN_COURSE_RULE_PREFIX = "Lcom/dawncourse/"
         const val BENCHMARK_RULE_PREFIX = "Lcom/dawncourse/app/benchmark/"
         val WEEK_SEQUENCE = listOf(1, 2, 3, 4, 5)
 

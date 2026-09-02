@@ -15,6 +15,9 @@ val releaseSmokeEnabled = providers.gradleProperty("dawn.releaseSmoke")
     .map { it.toBooleanStrict() }
     .orElse(false)
 
+val DAWN_COURSE_RULE_PREFIX = "Lcom/dawncourse/"
+val BENCHMARK_RULE_PREFIX = "Lcom/dawncourse/app/benchmark/"
+
 android {
     namespace = "com.dawncourse.app"
     compileSdk = 37
@@ -198,10 +201,10 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             }
             val rules = profile.readLines().filter(String::isNotBlank)
             check(rules.isNotEmpty()) { "生成 Profile 没有规则：${profile.name}" }
-            check(rules.all { it.contains("Lcom/dawncourse/") }) {
-                "生成 Profile 含非 Dawn Course 规则：${profile.name}"
+            check(rules.any { it.contains(DAWN_COURSE_RULE_PREFIX) && !it.contains(BENCHMARK_RULE_PREFIX) }) {
+                "生成 Profile 缺少 Dawn Course 的生产规则：${profile.name}"
             }
-            check(rules.none { it.contains("Lcom/dawncourse/app/benchmark/") }) {
+            check(rules.none { it.contains(BENCHMARK_RULE_PREFIX) }) {
                 "生成 Profile 泄漏 benchmark-only 规则：${profile.name}"
             }
             check(mergedProfile.isFile && mergedProfile.length() > 0L) {
