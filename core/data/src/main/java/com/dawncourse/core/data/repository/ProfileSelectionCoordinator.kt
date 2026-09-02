@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import androidx.room.withTransaction
 import com.dawncourse.core.data.local.AppDatabase
+import com.dawncourse.core.data.local.startup.DawnStartupTrace
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.local.dao.SyncSourceBindingDao
@@ -565,7 +566,8 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun resolveAndRepairSelectionLocked(rawProfileId: Long?): Long {
+    private suspend fun resolveAndRepairSelectionLocked(rawProfileId: Long?): Long =
+        DawnStartupTrace.section(DawnStartupTrace.RESOLVE_PROFILE_SELECTION) {
         var profiles = profileDao.getAllProfilesOnce()
         if (profiles.isEmpty()) {
             val created = TimetableProfileEntity(uuid = UUID.randomUUID().toString(), name = DEFAULT_PROFILE_NAME)

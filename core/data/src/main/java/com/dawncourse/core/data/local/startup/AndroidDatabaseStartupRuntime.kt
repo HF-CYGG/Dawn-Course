@@ -161,37 +161,39 @@ class DatabaseStartupRuntime @Inject constructor(
 
     /** 外层锁已持有；这里不得等待 UI 或发起需要用户输入的操作。 */
     private fun initializeWhileLocked(): DatabaseStartupInitialization<AppDatabase> {
-        when (recoveryBootstrap.recoverInterruptedInstall()) {
-            DatabaseRecoveryInstallRecovery.FAILED -> {
-                return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
-            }
-            DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE -> {
-                if (recoveryFiles.readRecoveryReason() == null) {
+        DawnStartupTrace.section(DawnStartupTrace.RECOVERY_CHECK) {
+            when (recoveryBootstrap.recoverInterruptedInstall()) {
+                DatabaseRecoveryInstallRecovery.FAILED -> {
                     return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
                 }
+                DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE -> {
+                    if (recoveryFiles.readRecoveryReason() == null) {
+                        return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+                    }
+                }
+                DatabaseRecoveryInstallRecovery.NO_WORK,
+                DatabaseRecoveryInstallRecovery.COMMITTED -> Unit
             }
-            DatabaseRecoveryInstallRecovery.NO_WORK,
-            DatabaseRecoveryInstallRecovery.COMMITTED -> Unit
-        }
-        recoveryFiles.readRecoveryReason()?.let { reason ->
-            val reconciled = runCatching {
-                recoveryFiles.ensureQuarantined()
-                reason
-            }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
-            return DatabaseStartupInitialization.RecoveryRequired(reconciled)
-        }
-        if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
-            return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
-        }
-        // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
-        // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
-        //
-        // 位置必须在上面两步之后：先让 readRecoveryReason 的既有恢复原因优先（避免重复
-        // 隔离），再让 recoverIncompleteMigration 把可能半迁移的文件集收敛为一致的主库，
-        // 然后才隔离它。标记在恢复动作提交成功后由 DatabaseRecoveryBootstrapCoordinator
-        // 与 recoveryFiles marker 一并清除。
-        if (backupRecoveryRequiredStore.isRequired()) {
-            return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
+            recoveryFiles.readRecoveryReason()?.let { reason ->
+                val reconciled = runCatching {
+                    recoveryFiles.ensureQuarantined()
+                    reason
+                }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
+                return DatabaseStartupInitialization.RecoveryRequired(reconciled)
+            }
+            if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
+                return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+            }
+            // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
+            // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
+            //
+            // 位置必须在上面两步之后：先让 readRecoveryReason 的既有恢复原因优先（避免重复
+            // 隔离），再让 recoverIncompleteMigration 把可能半迁移的文件集收敛为一致的主库，
+            // 然后才隔离它。标记在恢复动作提交成功后由 DatabaseRecoveryBootstrapCoordinator
+            // 与 recoveryFiles marker 一并清除。
+            if (backupRecoveryRequiredStore.isRequired()) {
+                return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
+            }
         }
 
         val coordinator = DatabaseStartupCoordinator(
@@ -286,7 +288,10 @@ class DatabaseStartupRuntime @Inject constructor(
         }
         val profileReady = runCatching {
             runBlocking {
-                if (database.timetableProfileDao().getFirstProfile() == null) {
+                if (DawnStartupTrace.section(DawnStartupTrace.GET_FIRST_PROFILE) {
+                        database.timetableProfileDao().getFirstProfile()
+                    } == null
+                ) {
                     database.timetableProfileDao().insert(
                         TimetableProfileEntity(
                             id = DEFAULT_PROFILE_ID,
@@ -377,14 +382,16 @@ private class AndroidDatabaseStartupCriticalSection(
     private val localLock = locks.computeIfAbsent(lockFile.absolutePath) { ReentrantLock() }
 
     override fun run(block: () -> Unit) {
-        lockFile.parentFile?.mkdirs()
-        localLock.lock()
-        try {
-            FileOutputStream(lockFile, true).channel.use { channel ->
-                channel.lock().use { block() }
+        DawnStartupTrace.section(DawnStartupTrace.FILE_LOCK) {
+            lockFile.parentFile?.mkdirs()
+            localLock.lock()
+            try {
+                FileOutputStream(lockFile, true).channel.use { channel ->
+                    channel.lock().use { block() }
+                }
+            } finally {
+                localLock.unlock()
             }
-        } finally {
-            localLock.unlock()
         }
     }
 
@@ -402,21 +409,31 @@ internal class SqlCipherRoomDatabaseFactory(
         databaseName: String,
         passphrase: SqlCipherPassphrase
     ): AppDatabase {
-        SqlCipherNativeLoader.ensureLoaded()
+        DawnStartupTrace.section(DawnStartupTrace.LOAD_LIBRARY) {
+            SqlCipherNativeLoader.ensureLoaded()
+        }
         val openHelperFactory = passphrase.useBytes(::ClearingSupportOpenHelperFactory)
-        val database = buildWithOpenHelperFactoryCleanup(openHelperFactory) {
-            Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
-                .openHelperFactory(openHelperFactory)
-                .addMigrations(*AppDatabaseMigrations.ALL)
-                .build()
+        val database = DawnStartupTrace.section(DawnStartupTrace.ROOM_BUILD) {
+            buildWithOpenHelperFactoryCleanup(openHelperFactory) {
+                Room.databaseBuilder(context, AppDatabase::class.java, databaseName)
+                    .openHelperFactory(openHelperFactory)
+                    .addMigrations(*AppDatabaseMigrations.ALL)
+                    .build()
+            }
         }
         return try {
-            val opened = database.openHelper.writableDatabase
-            require(readSingleColumn(opened.query("PRAGMA integrity_check")) == listOf("ok")) {
-                "数据库完整性校验失败"
+            val opened = DawnStartupTrace.section(DawnStartupTrace.KDF_AND_FIRST_OPEN) {
+                database.openHelper.writableDatabase
             }
-            require(readSingleColumn(opened.query("PRAGMA cipher_integrity_check")).isEmpty()) {
-                "SQLCipher 完整性校验失败"
+            DawnStartupTrace.section(DawnStartupTrace.INTEGRITY_CHECK) {
+                require(readSingleColumn(opened.query("PRAGMA integrity_check")) == listOf("ok")) {
+                    "数据库完整性校验失败"
+                }
+            }
+            DawnStartupTrace.section(DawnStartupTrace.CIPHER_INTEGRITY_CHECK) {
+                require(readSingleColumn(opened.query("PRAGMA cipher_integrity_check")).isEmpty()) {
+                    "SQLCipher 完整性校验失败"
+                }
             }
             database
         } catch (failure: Throwable) {

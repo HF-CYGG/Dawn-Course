@@ -159,7 +159,8 @@ class DatabaseKeyEnvelopeStore(
     private val randomByteSource: SecureRandomByteSource = JcaSecureRandomByteSource()
 ) : DatabasePassphraseEnvelopeStore {
     /** 只读取既有信封，不会调用 getOrCreate 或写入存储。 */
-    override fun loadExisting(): ExistingPassphraseResult {
+    override fun loadExisting(): ExistingPassphraseResult =
+        DawnStartupTrace.section(DawnStartupTrace.KEYSTORE_UNSEAL) {
         val serialized = try {
             atomicByteStore.readOrNull()
         } catch (_: Throwable) {
