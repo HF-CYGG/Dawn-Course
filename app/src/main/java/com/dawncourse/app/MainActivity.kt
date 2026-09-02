@@ -90,19 +90,30 @@ class MainActivity : ComponentActivity() {
     /** 只有数据库 Ready 后才允许创建，RecoveryRequired 时始终为 null。 */
     private var mainViewModel: MainViewModel? = null
 
-    /** 首次 onStart 与 Success effect 共用 0；回到前台后 effect 使用新 generation 自愈一次。 */
-    private val widgetRefreshDeduplicator = WidgetRefreshDeduplicator()
+    /** 仅由 Activity 主线程读写；onStop 只记录事实，下一次 onStart 才改变 Compose key。 */
+    private var hasWidgetForegroundStarted = false
+    private var hasWidgetStoppedSinceStart = false
     private var widgetForegroundGeneration by mutableLongStateOf(0L)
 
     override fun onStart() {
         super.onStart()
-        // 与首次 Success effect 共用 generation；不在生命周期路径另起一条 Widget 广播。
-        widgetForegroundGeneration = widgetRefreshDeduplicator.onForegroundStarted()
+        when {
+            !hasWidgetForegroundStarted -> {
+                // 首次显式写入初始 key 0，不触发新 effect。
+                hasWidgetForegroundStarted = true
+                widgetForegroundGeneration = 0L
+            }
+            hasWidgetStoppedSinceStart -> {
+                // 只有真正回前台时才让 Compose 看见新 key。
+                hasWidgetStoppedSinceStart = false
+                widgetForegroundGeneration += 1
+            }
+        }
     }
 
     override fun onStop() {
-        // 取消旧前台尚未触发的请求；下一次 onStart 会取得可自愈的新 generation。
-        widgetRefreshDeduplicator.onForegroundStopped()
+        // 不修改 Compose state，避免后台生命周期阶段重启 LaunchedEffect。
+        hasWidgetStoppedSinceStart = true
         super.onStop()
     }
 
@@ -271,8 +282,17 @@ class MainActivity : ComponentActivity() {
                 // - revision 同时包含当前学期及 Widget 显示/筛选字段（含教师、颜色），编辑、导入、还原后都会触发即时收敛
                 if (!isBenchmarkMode) {
                     LaunchedEffect(scheduleRevision, widgetForegroundGeneration) {
-                        val widgetRefreshRequest = widgetRefreshDeduplicator.claim(scheduleRevision)
-                            ?: return@LaunchedEffect
+                        // `updateWidgetNow` 只启动 Widget 自己受 Supervisor/IO 保护的协程；必须在
+                        // 任何后台挂起点前同步调用，Compose key 的取消与重启负责相邻版本线性化。
+                        runCatching {
+                            WidgetSyncManager.updateWidgetNow(applicationContext)
+                        }.onFailure { error ->
+                            android.util.Log.w(
+                                "MainActivity",
+                                "widget refresh failed",
+                                error,
+                            )
+                        }
                         // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
                         // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
                         runCatching {
@@ -281,16 +301,6 @@ class MainActivity : ComponentActivity() {
                                     applicationContext,
                                     forceReplay = false,
                                 )
-                                // 仅最后一代 effect 可以触发 Widget；快照提交路径不会额外广播。
-                                widgetRefreshDeduplicator.runIfCurrentCatching(widgetRefreshRequest) {
-                                    WidgetSyncManager.updateWidgetNow(applicationContext)
-                                }?.let { error ->
-                                    android.util.Log.w(
-                                        "MainActivity",
-                                        "widget refresh failed",
-                                        error,
-                                    )
-                                }
                                 if (scheduleRevision.hasEnabledSystemSchedule) {
                                     ReminderScheduler.scheduleDailyWork(applicationContext)
                                 } else {

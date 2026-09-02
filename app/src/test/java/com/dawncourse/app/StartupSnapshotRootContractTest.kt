@@ -66,18 +66,23 @@ class StartupSnapshotRootContractTest {
     }
 
     @Test
-    fun `Widget only refreshes through the revision effect and never through snapshot or onStart`() {
+    fun `Widget only refreshes through direct revision effect and keeps Reminder independent`() {
         val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
         val onStart = source.substring(source.indexOf("override fun onStart"), source.indexOf("override fun onStop"))
-        val snapshotEffectStart = source.indexOf("LaunchedEffect(successState)")
+        val onStop = source.substring(source.indexOf("override fun onStop"), source.indexOf("override fun onCreate"))
         val revisionEffectStart = source.indexOf("LaunchedEffect(scheduleRevision, widgetForegroundGeneration)")
+        val revisionEffect = source.substring(revisionEffectStart, source.indexOf("// 监听 WebDAV", revisionEffectStart))
+        val widgetCall = revisionEffect.indexOf("WidgetSyncManager.updateWidgetNow(applicationContext)")
+        val reminderWork = revisionEffect.indexOf("runStartupBackgroundWork")
 
         assertTrue("Widget 必须由 revision effect 领取", revisionEffectStart >= 0)
-        assertTrue(source.contains("widgetRefreshDeduplicator.runIfCurrent"))
+        assertTrue("首次 onStart 只能写入初始 generation 0", onStart.contains("widgetForegroundGeneration = 0L"))
+        assertTrue("onStop 后的下一次 onStart 才递增 generation", onStart.contains("widgetForegroundGeneration += 1"))
+        assertTrue("onStop 仅记录生命周期事实", onStop.contains("hasWidgetStoppedSinceStart = true"))
+        assertFalse("onStop 自身不得改变 Compose key 或重启 effect", onStop.contains("widgetForegroundGeneration"))
         assertFalse("首次 onStart 不得直接广播 Widget", onStart.contains("WidgetSyncManager"))
-        assertFalse(
-            "快照写入成功或失败不得成为第二条 Widget 广播路径",
-            source.substring(snapshotEffectStart, revisionEffectStart).contains("WidgetSyncManager"),
-        )
+        assertFalse("不得保留跨 dispatcher 的 Widget 去重状态", source.contains("WidgetRefreshDeduplicator"))
+        assertFalse("Widget 失败不得提前返回并跳过 Reminder", revisionEffect.contains("return@LaunchedEffect"))
+        assertTrue("Widget 必须在进入后台 Reminder 前同步 best-effort 调用", widgetCall in 0 until reminderWork)
     }
 }
