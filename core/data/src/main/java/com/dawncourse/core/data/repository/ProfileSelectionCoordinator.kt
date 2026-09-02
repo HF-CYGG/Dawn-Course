@@ -567,7 +567,7 @@ class ProfileSelectionCoordinator @Inject constructor(
     }
 
     private suspend fun resolveAndRepairSelectionLocked(rawProfileId: Long?): Long =
-        DawnStartupTrace.section(DawnStartupTrace.RESOLVE_PROFILE_SELECTION) {
+        DawnStartupTrace.asyncSection(DawnStartupTrace.RESOLVE_PROFILE_SELECTION) {
         var profiles = profileDao.getAllProfilesOnce()
         if (profiles.isEmpty()) {
             val created = TimetableProfileEntity(uuid = UUID.randomUUID().toString(), name = DEFAULT_PROFILE_NAME)
@@ -603,7 +603,7 @@ class ProfileSelectionCoordinator @Inject constructor(
                 }
             }
         }
-        return resolved
+        resolved
     }
 
     private suspend fun createEmptyLocked(name: String): Pair<TimetableProfileEntity, SemesterEntity?> {
