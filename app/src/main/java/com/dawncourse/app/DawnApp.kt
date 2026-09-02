@@ -7,8 +7,15 @@ import androidx.startup.AppInitializer
 import androidx.work.Configuration
 import com.dawncourse.app.crash.CrashReporter
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
+import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -28,6 +35,12 @@ class DawnApp : Application(), Configuration.Provider {
     /** 主进程唯一数据库启动 Runtime；隔离脚本进程不会启动它。 */
     @Inject
     lateinit var databaseStartupRuntime: DatabaseStartupRuntime
+
+    /** 仅从 DataStore 和 no-backup 文件读取，绝不触发 AppDatabase 或 DAO。 */
+    @Inject
+    lateinit var startupSnapshotRuntime: StartupSnapshotRuntime
+
+    private val startupRuntimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** WorkManager 延迟初始化时读取的应用级配置。 */
     override val workManagerConfiguration: Configuration
@@ -55,8 +68,18 @@ class DawnApp : Application(), Configuration.Provider {
             requireHiltWorkerFactoryInjected()
             val processName = ApplicationProcessNameResolver.resolve(this)
             if (ApplicationProcessPolicy.shouldInitializeSystemSurfaces(packageName, processName)) {
-                // 提交 IO 初始化后立即返回，让 Activity splash/恢复页保持可响应。
+                // 两者各自提交 IO 后立即返回；快照读取从不等待或打开 Room。
+                startupSnapshotRuntime.start()
                 databaseStartupRuntime.start()
+                startupRuntimeScope.launch {
+                    databaseStartupRuntime.state.collect { state ->
+                        if (state is DatabaseRuntimeState.RecoveryRequired ||
+                            state == DatabaseRuntimeState.StartupBlocked
+                        ) {
+                            startupSnapshotRuntime.invalidate()
+                        }
+                    }
+                }
                 // 主进程先恢复 Widget 的 WorkManager 状态，再允许 benchmark Provider 清理和播种。
                 AppInitializer.getInstance(this)
                     .initializeComponent(WidgetSyncInitializer::class.java)

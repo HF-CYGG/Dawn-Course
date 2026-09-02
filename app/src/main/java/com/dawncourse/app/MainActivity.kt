@@ -63,7 +63,11 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.core.data.repository.StartupSnapshotRuntime
+import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
+import com.dawncourse.feature.timetable.StartupTimetableContent
+import com.dawncourse.feature.timetable.toAppSettings
 
 /**
  * 应用程序主 Activity
@@ -78,6 +82,10 @@ class MainActivity : ComponentActivity() {
     /** Activity 注入 Runtime 本身不会解析 AppDatabase。 */
     @Inject
     lateinit var databaseStartupRuntime: DatabaseStartupRuntime
+
+    /** 与数据库 Runtime 并行的 no-backup 加密快照状态；读取路径不解析 Room。 */
+    @Inject
+    lateinit var startupSnapshotRuntime: StartupSnapshotRuntime
 
     /** 只有数据库 Ready 后才允许创建，RecoveryRequired 时始终为 null。 */
     private var mainViewModel: MainViewModel? = null
@@ -106,10 +114,12 @@ class MainActivity : ComponentActivity() {
         // isAppearanceLightStatusBars）单独控制，与这里不冲突。
         enableEdgeToEdge()
 
-        // 数据库仍在 IO 检查时保持 Splash；恢复状态必须释放 Splash 展示可见入口。
+        // Splash、快照和实时 Root 由同一个纯 policy 决定，避免各处分叉条件漂移。
         splashScreen.setKeepOnScreenCondition {
-            databaseStartupRuntime.state.value is DatabaseRuntimeState.Starting ||
-                mainViewModel?.uiState?.value is MainUiState.Loading
+            DatabaseStartupUiPolicy.decide(
+                databaseStartupRuntime.state.value,
+                startupSnapshotRuntime.state.value,
+            ).keepSplash
         }
 
         // 获取当前应用版本号
@@ -126,10 +136,12 @@ class MainActivity : ComponentActivity() {
         // 设置 Compose 内容视图
         setContent {
             val databaseState by databaseStartupRuntime.state.collectAsState()
+            val snapshotState by startupSnapshotRuntime.state.collectAsState()
+            val decision = DatabaseStartupUiPolicy.decide(databaseState, snapshotState)
             var automaticRecoveryRestartAttempted by rememberSaveable { mutableStateOf(false) }
-            when (val startupState = databaseState) {
-                DatabaseRuntimeState.Starting -> Box(modifier = Modifier.fillMaxSize())
-                is DatabaseRuntimeState.RecoveryRequired -> {
+            when {
+                decision.showRecovery -> {
+                    val startupState = databaseState as DatabaseRuntimeState.RecoveryRequired
                     // 只有 marker 已确认落盘时才首次自动交给独立进程重启。启动跳板失败时
                     // 不改变该页状态，用户仍可使用同一页的手动“安全重启”入口重试。
                     if (!automaticRecoveryRestartAttempted &&
@@ -147,8 +159,20 @@ class MainActivity : ComponentActivity() {
                         onRestartRequired = { ControlledProcessRestarter.restart(this@MainActivity) }
                     )
                 }
-                DatabaseRuntimeState.StartupBlocked -> DatabaseStartupBlockedScreen()
-                DatabaseRuntimeState.Ready -> {
+                decision.showBlocked -> DatabaseStartupBlockedScreen()
+                decision.showSnapshot -> {
+                    val snapshot = (snapshotState as StartupSnapshotRuntimeState.Available).snapshot
+                    val snapshotSettings = remember(snapshot.revision) { snapshot.visualSettings.toAppSettings() }
+                    val snapshotDarkTheme = when (snapshotSettings.themeMode) {
+                        AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+                        AppThemeMode.LIGHT -> false
+                        AppThemeMode.DARK -> true
+                    }
+                    DawnTheme(appSettings = snapshotSettings, darkTheme = snapshotDarkTheme) {
+                        StartupTimetableContent(snapshot = snapshot)
+                    }
+                }
+                decision.createDatabaseViewModels -> {
             val viewModel = remember {
                 ViewModelProvider(this@MainActivity)[MainViewModel::class.java].also {
                     mainViewModel = it
@@ -197,6 +221,11 @@ class MainActivity : ComponentActivity() {
                 val successState = uiState as MainUiState.Success
                 val settings = successState.settings
                 val scheduleRevision = successState.scheduleRevision
+
+                // 只在实时 Root 已取得完整稳定聚合后替换整包快照；不和快照 UI 合并状态。
+                LaunchedEffect(successState) {
+                    viewModel.refreshStartupSnapshot(successState)
+                }
 
                 // 监听设置变化，调度每日闹钟计算任务（WorkManager）
                 //
@@ -511,6 +540,7 @@ class MainActivity : ComponentActivity() {
                 Box(modifier = Modifier.fillMaxSize())
             }
                 }
+                else -> Box(modifier = Modifier.fillMaxSize())
             }
         }
     }

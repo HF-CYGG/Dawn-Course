@@ -499,6 +499,7 @@ fun TimetableGrid(
     courses: List<Course>,
     currentWeek: Int,
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
     onCourseClick: (Course) -> Unit
 ) {
     val settings = LocalAppSettings.current
@@ -581,6 +582,7 @@ fun TimetableGrid(
                                 course = course,
                                 isCurrentWeek = item.isCurrentWeek,
                                 isWallpaperSet = isWallpaperSet,
+                                interactive = interactive,
                                 onClick = { onCourseClick(course) }
                             )
                         }
@@ -656,6 +658,7 @@ fun CourseCard(
     course: Course,
     isCurrentWeek: Boolean,
     isWallpaperSet: Boolean,
+    interactive: Boolean = true,
     onClick: () -> Unit
 ) {
     // 1. 动态计算背景颜色
@@ -708,7 +711,7 @@ fun CourseCard(
             .clip(RoundedCornerShape(12.dp)) // 大圆角
             .background(baseColor)
             .then(borderModifier) // 应用边框
-            .clickable(onClick = onClick)
+            .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
         val cardMaxHeight = maxHeight
         // 宽度检测：如果宽度小于 30dp，则隐藏详细信息以避免拥挤

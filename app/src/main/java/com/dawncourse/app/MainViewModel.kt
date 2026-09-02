@@ -9,7 +9,10 @@ import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.model.ActiveTimetableContext
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
+import com.dawncourse.core.domain.repository.WidgetUpdateRepository
+import com.dawncourse.core.domain.model.createStartupSnapshot
 import com.dawncourse.feature.timetable.notification.MuteRecoveryUserActionController
 import com.dawncourse.feature.timetable.notification.MuteSessionRecord
 import com.dawncourse.core.domain.model.TriggerKey
@@ -36,7 +39,10 @@ sealed interface MainUiState {
     data object Loading : MainUiState
     data class Success(
         val settings: AppSettings,
-        val scheduleRevision: ScheduleRevision
+        val scheduleRevision: ScheduleRevision,
+        /** Ready 后构建整包启动快照所需的稳定实时聚合。 */
+        val activeTimetableContext: ActiveTimetableContext? = null,
+        val activeCourses: List<Course> = emptyList(),
     ) : MainUiState
 }
 
@@ -149,7 +155,8 @@ data class ScheduleRevision(
 data class ActiveSemesterSchedule(
     val profileId: Long?,
     val semester: Semester?,
-    val courses: List<Course>
+    val courses: List<Course>,
+    val activeTimetableContext: ActiveTimetableContext? = null,
 )
 
 /**
@@ -166,7 +173,8 @@ internal fun pairActiveSemesterSchedule(
             ActiveSemesterSchedule(
                 profileId = context?.profile?.id,
                 semester = null,
-                courses = emptyList()
+                courses = emptyList(),
+                activeTimetableContext = context,
             )
         )
     } else {
@@ -174,7 +182,8 @@ internal fun pairActiveSemesterSchedule(
             ActiveSemesterSchedule(
                 profileId = context.profile.id,
                 semester = semester,
-                courses = courses
+                courses = courses,
+                activeTimetableContext = context,
             )
         }
     }
@@ -193,7 +202,9 @@ internal fun scheduleRevisionFlow(
             semester = activeSchedule.semester,
             courses = activeSchedule.courses,
             profileId = activeSchedule.profileId,
-        )
+        ),
+        activeTimetableContext = activeSchedule.activeTimetableContext,
+        activeCourses = activeSchedule.courses,
     )
 }.flowOn(computationDispatcher)
 
@@ -209,7 +220,9 @@ class MainViewModel @Inject constructor(
     settingsRepository: SettingsRepository,
     profileRepository: TimetableProfileRepository,
     courseRepository: CourseRepository,
-    private val muteRecoveryController: MuteRecoveryUserActionController
+    private val muteRecoveryController: MuteRecoveryUserActionController,
+    private val startupSnapshotRepository: StartupSnapshotRepository,
+    private val widgetUpdateRepository: WidgetUpdateRepository,
 ) : ViewModel() {
     init {
         // 进程重建时从持久状态补齐专用恢复 Work；不依赖通知权限或触发器注册表。
@@ -258,6 +271,31 @@ class MainViewModel @Inject constructor(
     fun releaseMuteRecovery(key: TriggerKey) {
         viewModelScope.launch {
             muteRecoveryController.release(key)
+        }
+    }
+
+    /**
+     * 实时 Root 已取得完整且同一次发射的 Profile、学期、课程、视觉设置后，异步原子替换
+     * 冷启动文件。失败仅放弃下一次加速，绝不影响当前 UI 或数据库状态。
+     */
+    fun refreshStartupSnapshot(successState: MainUiState.Success) {
+        val context = successState.activeTimetableContext ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val replaced = runCatching {
+                startupSnapshotRepository.replace(
+                    createStartupSnapshot(
+                        activeContext = context,
+                        courses = successState.activeCourses,
+                        settings = successState.settings,
+                        createdAtEpochMillis = System.currentTimeMillis(),
+                        zoneId = java.time.ZoneId.systemDefault().id,
+                    )
+                )
+            }.getOrDefault(false)
+            if (replaced) {
+                // 沿用既有更新广播；Widget 的快照读取改造仍留给下一阶段。
+                widgetUpdateRepository.triggerUpdate()
+            }
         }
     }
 }

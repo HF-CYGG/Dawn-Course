@@ -34,6 +34,19 @@ class DawnAppHiltWorkerContractTest {
     }
 
     @Test
+    fun `主进程并行启动快照读取且恢复状态会撤销快照`() {
+        val source = projectFile("src/main/java/com/dawncourse/app/DawnApp.kt").readText()
+
+        assertTrue(source.contains("StartupSnapshotRuntime"))
+        assertTrue(source.contains("startupSnapshotRuntime.start()"))
+        assertTrue(source.contains("startupSnapshotRuntime.invalidate()"))
+        assertTrue(
+            source.indexOf("startupSnapshotRuntime.start()") <
+                source.indexOf("databaseStartupRuntime.start()")
+        )
+    }
+
+    @Test
     fun `benchmark Provider 在触发 WorkManager 前等待 DawnApp 的 Hilt WorkerFactory 就绪`() {
         val appSource = projectFile("src/main/java/com/dawncourse/app/DawnApp.kt").readText()
         val providerSource = projectFile(
