@@ -123,6 +123,17 @@ data class StartupSnapshotRevision(val value: String) {
     }
 }
 
+/**
+ * 与 [StartupSnapshotRevision] 同源、但剔除了创建与过期时间的内容指纹。
+ *
+ * [StartupSnapshotRevision] 必须覆盖全部持久字段（含时间戳）才能充当读取时的完整性校验，
+ * 因此两份内容完全相同、只是生成时刻不同的快照，其 revision 必然不同，不能用于判重。
+ * 写入方需要的是"课表与视觉设置是否真的变了"，故此处把两个时间字段归零后复用同一编码器。
+ */
+fun StartupSnapshot.contentIdentity(): StartupSnapshotRevision = StartupSnapshotRevision.create(
+    copy(createdAtEpochMillis = 0L, expiresAtEpochMillis = 0L),
+)
+
 /** 版本摘要使用的私有 canonical wire encoder。 */
 private object StartupSnapshotCanonicalEncoder {
     fun encode(snapshot: StartupSnapshot): ByteArray = ByteArrayOutputStream().use { bytes ->

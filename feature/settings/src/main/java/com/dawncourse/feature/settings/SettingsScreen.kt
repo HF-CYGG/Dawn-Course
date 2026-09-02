@@ -1041,10 +1041,13 @@ private fun NotificationSection(
                     capability = autoMuteDndCapability,
                 )
             ) {
-                AutoMuteAvailability.DISABLED -> "上课期间自动开启免打扰模式"
+                AutoMuteAvailability.DISABLED -> "上课期间自动静音"
                 AutoMuteAvailability.ENABLED_DND_AVAILABLE -> "已开启；课程期间使用 Dawn Course 应用级勿扰"
-                AutoMuteAvailability.ENABLED_DND_UNAVAILABLE_VIBRATE_FALLBACK ->
-                    "期望开启、勿扰当前不可用；课程期间将降级为震动"
+                // 低于 Android 15 是永久的平台事实，不能说成"当前不可用"，否则用户会一直找修复入口。
+                AutoMuteAvailability.ENABLED_DND_UNSUPPORTED_VIBRATE ->
+                    "已开启；本机系统不支持应用级勿扰，课程期间自动切换为震动"
+                AutoMuteAvailability.ENABLED_DND_PERMISSION_REQUIRED_VIBRATE ->
+                    "已开启；尚未授予勿扰权限，课程期间先降级为震动"
             },
             icon = { Icon(Icons.Default.DoNotDisturb, null) },
             checked = settings.enableAutoMute,
@@ -1061,6 +1064,17 @@ private fun NotificationSection(
             },
             showDivider = true,
         )
+        if (autoMuteDndCapability.shouldRequestPolicyAccess) {
+            // 权限只在"打开开关那一刻"申请过一次；用户当时取消或事后撤销都必须仍有入口。
+            SettingRow(
+                title = "勿扰权限",
+                description = "未授予；授予后课程期间将使用应用级勿扰而不是仅震动",
+                icon = { Icon(Icons.Default.DoNotDisturb, null) },
+                onClick = onRequestAutoMutePermission,
+                showArrow = true,
+                showDivider = true,
+            )
+        }
         SettingRow(
             title = "精确闹钟",
             description = if (scheduleReliabilityAvailability.exactAlarmAvailable) {

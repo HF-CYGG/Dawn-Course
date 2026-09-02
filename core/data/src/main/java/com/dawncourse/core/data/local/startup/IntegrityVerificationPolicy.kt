@@ -19,7 +19,7 @@ data class IntegrityVerificationPolicyInput(
     val previousDatabaseStartupIncomplete: Boolean,
     /** 本次是否刚完成明文数据库加密换入。 */
     val migratedPlaintextThisRun: Boolean,
-    /** 预留给后续 rekey 或密钥模式切换的显式输入。 */
+    /** 本次是否完成了 SQLCipher rekey 或密钥模式切换（v1 派生口令 -> v2 raw key）。 */
     val rekeyOrKeyModeChangedThisRun: Boolean,
     /** 持久状态是否损坏或无法可靠读取。 */
     val persistentStateUnreadable: Boolean,

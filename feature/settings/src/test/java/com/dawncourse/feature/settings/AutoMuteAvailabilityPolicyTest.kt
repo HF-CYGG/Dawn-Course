@@ -19,7 +19,7 @@ class AutoMuteAvailabilityPolicyTest {
     }
 
     @Test
-    fun `期望开启时区分 DND 可用与震动降级`() {
+    fun `期望开启且权限齐备时报告 DND 可用`() {
         assertEquals(
             AutoMuteAvailability.ENABLED_DND_AVAILABLE,
             AutoMuteAvailabilityPolicy.resolve(
@@ -27,11 +27,32 @@ class AutoMuteAvailabilityPolicyTest {
                 capability = AutoMuteDndCapability(isSupported = true, hasPolicyAccess = true),
             ),
         )
+    }
+
+    @Test
+    fun `震动降级必须区分平台不支持与权限未授予`() {
+        // 平台支持但缺权：用户可以自己修复，文案与入口都应指向授权。
         assertEquals(
-            AutoMuteAvailability.ENABLED_DND_UNAVAILABLE_VIBRATE_FALLBACK,
+            AutoMuteAvailability.ENABLED_DND_PERMISSION_REQUIRED_VIBRATE,
             AutoMuteAvailabilityPolicy.resolve(
                 desiredEnabled = true,
                 capability = AutoMuteDndCapability(isSupported = true, hasPolicyAccess = false),
+            ),
+        )
+        // 平台不支持：这是永久事实，不能与"当前不可用"共用同一状态。
+        assertEquals(
+            AutoMuteAvailability.ENABLED_DND_UNSUPPORTED_VIBRATE,
+            AutoMuteAvailabilityPolicy.resolve(
+                desiredEnabled = true,
+                capability = AutoMuteDndCapability(isSupported = false, hasPolicyAccess = false),
+            ),
+        )
+        // 平台不支持时即使 hasPolicyAccess 为真也不得报告 DND 可用。
+        assertEquals(
+            AutoMuteAvailability.ENABLED_DND_UNSUPPORTED_VIBRATE,
+            AutoMuteAvailabilityPolicy.resolve(
+                desiredEnabled = true,
+                capability = AutoMuteDndCapability(isSupported = false, hasPolicyAccess = true),
             ),
         )
     }

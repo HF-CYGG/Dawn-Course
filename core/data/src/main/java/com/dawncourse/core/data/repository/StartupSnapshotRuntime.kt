@@ -1,6 +1,8 @@
 package com.dawncourse.core.data.repository
 
 import com.dawncourse.core.domain.model.StartupSnapshot
+import com.dawncourse.core.domain.model.StartupSnapshotRevision
+import com.dawncourse.core.domain.model.contentIdentity
 import com.dawncourse.core.domain.repository.StartupSnapshotReadResult
 import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import java.util.concurrent.atomic.AtomicBoolean
@@ -50,6 +52,8 @@ class StartupSnapshotRuntime(
     /** replace 与 Recovery 删除共用同一串行区，删除一定发生在已开始的写入之后。 */
     private val mutationMutex = Mutex()
     @Volatile private var readJob: Job? = null
+    /** 只在 [mutationMutex] 内读写；用于跳过内容未变的重复加密写入。 */
+    private var lastCommitted: CommittedSnapshot? = null
     private val mutableState = MutableStateFlow<StartupSnapshotRuntimeState>(StartupSnapshotRuntimeState.Loading)
 
     /** UI 与 Splash 只订阅这个稳定 StateFlow，不直接访问文件或 Keystore。 */
@@ -74,6 +78,15 @@ class StartupSnapshotRuntime(
                     StartupSnapshotReadResult.Missing -> StartupSnapshotRuntimeState.Missing
                 }
             }
+            // 磁盘上已存在的快照同样是"已提交内容"。不播种的话，实时 Root 首次 Success 必然
+            // 触发一次内容完全相同的加密重写。
+            if (result is StartupSnapshotReadResult.Available) {
+                mutationMutex.withLock {
+                    if (lastCommitted == null && !invalidated.get()) {
+                        lastCommitted = CommittedSnapshot.of(result.snapshot)
+                    }
+                }
+            }
         }
     }
 
@@ -86,6 +99,16 @@ class StartupSnapshotRuntime(
             if (invalidated.get() || mutationGeneration.get() != requestGeneration) {
                 return@withLock false
             }
+            // 内容未变时不重复付出 Keystore + AES-GCM + 原子写的代价；但仍必须在既有快照
+            // 临近过期前续写一次，否则长期不改课表的用户会在 TTL 到期后失去冷启动加速。
+            val identity = snapshot.contentIdentity()
+            val committed = lastCommitted
+            if (committed != null &&
+                committed.identity == identity &&
+                nowEpochMillis() < committed.refreshAfterEpochMillis
+            ) {
+                return@withLock true
+            }
             val replaced = try {
                 repository.replace(snapshot)
             } catch (cancellation: CancellationException) {
@@ -96,6 +119,7 @@ class StartupSnapshotRuntime(
             if (!replaced || invalidated.get() || mutationGeneration.get() != requestGeneration) {
                 return@withLock false
             }
+            lastCommitted = CommittedSnapshot.of(snapshot)
             true
         }
     }
@@ -113,7 +137,24 @@ class StartupSnapshotRuntime(
         withContext(NonCancellable) {
             mutationMutex.withLock {
                 runCatching { repository.invalidate() }
+                // 文件已删除；即使后续内容相同也不能再判重跳过。
+                lastCommitted = null
             }
+        }
+    }
+
+    /** 已落盘快照的内容指纹与续写时刻；不持有快照本体，避免延长大对象生命周期。 */
+    private data class CommittedSnapshot(
+        val identity: StartupSnapshotRevision,
+        val refreshAfterEpochMillis: Long,
+    ) {
+        companion object {
+            /** 过半 TTL 后允许续写，使未变更内容最多每半个 TTL 重写一次。 */
+            fun of(snapshot: StartupSnapshot): CommittedSnapshot = CommittedSnapshot(
+                identity = snapshot.contentIdentity(),
+                refreshAfterEpochMillis =
+                    snapshot.expiresAtEpochMillis - StartupSnapshot.TTL_MILLIS / 2,
+            )
         }
     }
 

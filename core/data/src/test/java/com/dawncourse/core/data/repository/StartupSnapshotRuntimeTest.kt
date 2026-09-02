@@ -248,6 +248,101 @@ class StartupSnapshotRuntimeTest {
         zoneId = { "UTC" },
     )
 
+    @Test
+    fun `内容未变时不重复写入加密快照`() = runBlocking {
+        val repository = CountingRepository()
+        val runtime = StartupSnapshotRuntime(
+            repository = repository,
+            activeProfileSelectionStore = ActiveProfileSelectionStore(InMemoryPreferencesDataStore()),
+            nowEpochMillis = { CREATED_AT },
+            zoneId = { "Asia/Shanghai" },
+        )
+
+        assertTrue(runtime.replaceLatest(signedSnapshot()))
+        assertEquals(1, repository.replaceCount)
+
+        // 同一内容、仅生成时刻不同（revision 因此不同）也必须判为无需重写。
+        val restamped = resign(signedSnapshot().copy(createdAtEpochMillis = CREATED_AT + 1_000L))
+        assertTrue(runtime.replaceLatest(restamped))
+        assertEquals(1, repository.replaceCount)
+    }
+
+    @Test
+    fun `内容变化仍然立即写入`() = runBlocking {
+        val repository = CountingRepository()
+        val runtime = StartupSnapshotRuntime(
+            repository = repository,
+            activeProfileSelectionStore = ActiveProfileSelectionStore(InMemoryPreferencesDataStore()),
+            nowEpochMillis = { CREATED_AT },
+            zoneId = { "Asia/Shanghai" },
+        )
+
+        assertTrue(runtime.replaceLatest(signedSnapshot()))
+        assertTrue(runtime.replaceLatest(signedSnapshot(profileUuid = "profile-changed")))
+
+        assertEquals(2, repository.replaceCount)
+    }
+
+    @Test
+    fun `既有快照过半 TTL 后即使内容未变也必须续写`() = runBlocking {
+        val repository = CountingRepository()
+        var now = CREATED_AT
+        val runtime = StartupSnapshotRuntime(
+            repository = repository,
+            activeProfileSelectionStore = ActiveProfileSelectionStore(InMemoryPreferencesDataStore()),
+            nowEpochMillis = { now },
+            zoneId = { "Asia/Shanghai" },
+        )
+
+        assertTrue(runtime.replaceLatest(signedSnapshot()))
+        assertEquals(1, repository.replaceCount)
+
+        // 越过 expires - TTL/2 的续写点后，必须重新落盘以延长有效期，否则用户会静默失去加速。
+        now = EXPIRES_AT - StartupSnapshot.TTL_MILLIS / 2
+        assertTrue(runtime.replaceLatest(resign(signedSnapshot().copy(createdAtEpochMillis = now))))
+        assertEquals(2, repository.replaceCount)
+    }
+
+    @Test
+    fun `启动读到的既有快照会播种判重记账`() = runBlocking {
+        val repository = CountingRepository(StartupSnapshotReadResult.Available(signedSnapshot()))
+        val runtime = StartupSnapshotRuntime(
+            repository = repository,
+            activeProfileSelectionStore = ActiveProfileSelectionStore(InMemoryPreferencesDataStore()),
+            nowEpochMillis = { CREATED_AT },
+            zoneId = { "Asia/Shanghai" },
+        )
+
+        runtime.start()
+        runtime.state.first { it is StartupSnapshotRuntimeState.Available }
+
+        // 磁盘上已经是同一内容，实时 Root 首次 Success 不应触发任何重写。
+        assertTrue(runtime.replaceLatest(signedSnapshot()))
+        assertEquals(0, repository.replaceCount)
+    }
+
+    @Test
+    fun `失效后判重不得成为绕过写入否决的路径`() = runBlocking {
+        val repository = CountingRepository()
+        val runtime = StartupSnapshotRuntime(
+            repository = repository,
+            activeProfileSelectionStore = ActiveProfileSelectionStore(InMemoryPreferencesDataStore()),
+            nowEpochMillis = { CREATED_AT },
+            zoneId = { "Asia/Shanghai" },
+        )
+
+        assertTrue(runtime.replaceLatest(signedSnapshot()))
+        runtime.invalidate()
+
+        // 内容与已提交的一致，但 invalidate 已删除文件：必须返回 false（写入被否决），
+        // 绝不能因为判重命中而返回 true 谎称"已持久化"。
+        assertFalse(runtime.replaceLatest(signedSnapshot()))
+        assertEquals(1, repository.replaceCount)
+    }
+
+    private fun resign(snapshot: StartupSnapshot): StartupSnapshot =
+        snapshot.copy(revision = StartupSnapshotRevision.create(snapshot))
+
     private fun signedSnapshot(profileUuid: String = "profile-seven"): StartupSnapshot {
         val unsigned = StartupSnapshot(
             protocolVersion = StartupSnapshot.CURRENT_PROTOCOL_VERSION,
@@ -289,6 +384,26 @@ class StartupSnapshotRuntimeTest {
 
     private fun snapshot(profileUuid: String): StartupSnapshot = signedSnapshot(profileUuid)
 
+    /** 只统计写入次数，read 结果可控，用于验证判重与临期续写。 */
+    private class CountingRepository(
+        private val result: StartupSnapshotReadResult = StartupSnapshotReadResult.Missing,
+    ) : StartupSnapshotRepository {
+        var replaceCount = 0
+
+        override suspend fun read(
+            expectedProfileId: Long?,
+            nowEpochMillis: Long,
+            expectedZoneId: String,
+        ): StartupSnapshotReadResult = result
+
+        override suspend fun replace(snapshot: StartupSnapshot): Boolean {
+            replaceCount += 1
+            return true
+        }
+
+        override suspend fun invalidate() = Unit
+    }
+
     private class RecordingRepository(
         private val result: StartupSnapshotReadResult,
     ) : StartupSnapshotRepository {
@@ -301,6 +416,11 @@ class StartupSnapshotRuntimeTest {
 
         override suspend fun replace(snapshot: StartupSnapshot): Boolean = true
         override suspend fun invalidate() = Unit
+    }
+
+    private companion object {
+        const val CREATED_AT = 1_749_999_999_999L
+        const val EXPIRES_AT = 1_750_604_800_000L
     }
 
     private class InMemoryPreferencesDataStore : DataStore<Preferences> {

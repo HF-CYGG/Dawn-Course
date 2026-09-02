@@ -188,6 +188,8 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
     group = "verification"
     description = "确认生成规则进入 release Profile 合并输入，并验证测试组件隔离。"
     dependsOn(
+        // 门禁自身的规则策略必须先被夹具钉住，否则下面的 isValidReleaseProfile 可以静默漂移。
+        "verifyBaselineProfileRulePolicyFixtures",
         "mergeReleaseArtProfile",
         "mergeReleaseStartupProfile",
         "processBenchmarkReleaseManifestForPackage",
