@@ -453,8 +453,8 @@ class DatabaseStartupRuntime @Inject constructor(
 /**
  * 恢复检查的常态快速路径。
  *
- * 只识别既有启动顺序会读取的 base marker；AtomicFile 的残留备份从未被旧逻辑单独视为
- * 有效 marker，因此不能在这里扩大恢复条件。目录不可读取时保守回退完整检查。
+ * 识别既有启动顺序会读取的 marker 及其 AtomicFile base/.bak/.new 恢复产物；
+ * 任一产物都表示上次原子读写可能未收敛，必须保守进入完整恢复检查。目录不可读取时同样回退完整检查。
  */
 internal data class DatabaseStartupRecoveryMarkerSnapshot(
     val requiresFullRecoveryCheck: Boolean,
