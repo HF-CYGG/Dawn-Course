@@ -90,6 +90,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.PathEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 /**
  * 设置主页面
  *
@@ -124,6 +126,7 @@ fun SettingsScreen(
     val localBackupPreviewState by viewModel.localBackupPreviewState.collectAsState()
     // 日历导出状态
     val calendarExportState by viewModel.calendarExportState.collectAsState()
+    val autoMuteDndCapability by viewModel.autoMuteDndCapability.collectAsState()
     
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -133,6 +136,10 @@ fun SettingsScreen(
     var showWebDavSheet by remember { mutableStateOf(false) }
     // 本地备份弹窗显示状态
     var showLocalBackupSheet by remember { mutableStateOf(false) }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshAutoMuteDndAvailability()
+    }
     
     val calendarExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/calendar")
@@ -299,6 +306,7 @@ fun SettingsScreen(
                 settings = settings,
                 context = context,
                 viewModel = viewModel,
+                autoMuteDndCapability = autoMuteDndCapability,
                 onRequestNotificationPermission = { onGranted ->
                     checkAndRequestNotificationPermission(onGranted)
                 },
@@ -946,6 +954,7 @@ private fun NotificationSection(
     settings: AppSettings,
     context: Context,
     viewModel: SettingsViewModel,
+    autoMuteDndCapability: AutoMuteDndCapability,
     onRequestNotificationPermission: ((() -> Unit) -> Unit),
     onRequestAutoMutePermission: () -> Unit
 ) {
@@ -1022,16 +1031,25 @@ private fun NotificationSection(
         )
         SwitchSetting(
             title = "自动静音",
-            description = "上课期间自动开启免打扰模式",
+            description = when (
+                AutoMuteAvailabilityPolicy.resolve(
+                    desiredEnabled = settings.enableAutoMute,
+                    capability = autoMuteDndCapability,
+                )
+            ) {
+                AutoMuteAvailability.DISABLED -> "上课期间自动开启免打扰模式"
+                AutoMuteAvailability.ENABLED_DND_AVAILABLE -> "已开启；课程期间使用 Dawn Course 应用级勿扰"
+                AutoMuteAvailability.ENABLED_DND_UNAVAILABLE_VIBRATE_FALLBACK ->
+                    "期望开启、勿扰当前不可用；课程期间将降级为震动"
+            },
             icon = { Icon(Icons.Default.DoNotDisturb, null) },
             checked = settings.enableAutoMute,
             onCheckedChange = {
                 if (it) {
-                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !notificationManager.isNotificationPolicyAccessGranted) {
+                    // 偏好表达用户期望，必须先保存；权限只决定 DND/震动运行时能力。
+                    viewModel.setEnableAutoMute(true)
+                    if (autoMuteDndCapability.shouldRequestPolicyAccess) {
                         onRequestAutoMutePermission()
-                    } else {
-                        viewModel.setEnableAutoMute(true)
                     }
                 } else {
                     viewModel.setEnableAutoMute(false)
@@ -1314,7 +1332,7 @@ private fun SettingsDialogManager(
                 AlertDialog(
                     onDismissRequest = onDismiss,
                     title = { Text("需要权限") },
-                    text = { Text("开启自动静音需要授予“勿扰权限”，以便在上课时自动切换静音模式。") },
+                    text = { Text("自动静音期望已保存。授予“勿扰权限”后会使用 Dawn Course 应用级勿扰；暂不授权时将降级为震动。") },
                     confirmButton = {
                         TextButton(onClick = {
                             onDismiss()
