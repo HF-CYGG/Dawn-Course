@@ -12,6 +12,7 @@ import com.dawncourse.core.data.local.entity.CourseEntity
 import com.dawncourse.core.data.local.entity.toDomain
 import com.dawncourse.core.data.local.entity.SemesterEntity
 import com.dawncourse.core.data.local.entity.TimetableProfileEntity
+import com.dawncourse.core.domain.model.ActiveTimetableContext
 import com.dawncourse.core.domain.model.NewSemesterSpec
 import com.dawncourse.core.domain.model.ImportCommitRequest
 import com.dawncourse.core.domain.model.ImportCommitResult
@@ -29,16 +30,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -129,30 +131,38 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         database.timetableProfileDao().updateActiveSemesterId(first, 999L)
         activeStore.selectProfile(first)
         val transactionsBeforeObservation = repairTransactionRunner.transactionCount
-        val firstInitial = CompletableDeferred<Unit>()
-        val secondInitial = CompletableDeferred<Unit>()
-
-        val firstSubscriber = async(Dispatchers.Default) {
-            coordinator.observeActiveContext().onEach { firstInitial.complete(Unit) }.take(3).toList()
+        val firstObserver = ActiveContextObserver(first, second, secondSemester)
+        val secondObserver = ActiveContextObserver(first, second, secondSemester)
+        val firstSubscription = launch(Dispatchers.Default) {
+            coordinator.observeActiveContext().collect(firstObserver::record)
         }
-        val secondSubscriber = async(Dispatchers.Default) {
-            coordinator.observeActiveContext().onEach { secondInitial.complete(Unit) }.take(3).toList()
+        val secondSubscription = launch(Dispatchers.Default) {
+            coordinator.observeActiveContext().collect(secondObserver::record)
         }
-        firstInitial.await()
-        secondInitial.await()
 
-        assertEquals(transactionsBeforeObservation + 1, repairTransactionRunner.transactionCount)
-        assertEquals(null, database.timetableProfileDao().getProfileById(first)?.activeSemesterId)
+        try {
+            awaitWithTimeout("第一个订阅者的初始修复", firstObserver.initial)
+            awaitWithTimeout("第二个订阅者的初始修复", secondObserver.initial)
+            assertEquals(transactionsBeforeObservation + 1, repairTransactionRunner.transactionCount)
+            assertEquals(null, database.timetableProfileDao().getProfileById(first)?.activeSemesterId)
 
-        coordinator.switch(second)
-        coordinator.setActiveSemester(second, secondSemester)
+            coordinator.switch(second)
+            val firstSwitched = awaitWithTimeout("第一个订阅者的 Profile 切换", firstObserver.switched)
+            val secondSwitched = awaitWithTimeout("第二个订阅者的 Profile 切换", secondObserver.switched)
+            assertEquals(second, firstSwitched?.profile?.id)
+            assertEquals(second, secondSwitched?.profile?.id)
+            assertEquals(null, firstSwitched?.semester)
+            assertEquals(null, secondSwitched?.semester)
 
-        val firstContexts = firstSubscriber.await()
-        val secondContexts = secondSubscriber.await()
-        assertEquals(first, firstContexts.first()?.profile?.id)
-        assertEquals(first, secondContexts.first()?.profile?.id)
-        assertEquals(secondSemester, firstContexts.last()?.semester?.id)
-        assertEquals(secondSemester, secondContexts.last()?.semester?.id)
+            coordinator.setActiveSemester(second, secondSemester)
+            val firstFinal = awaitWithTimeout("第一个订阅者的活动学期更新", firstObserver.final)
+            val secondFinal = awaitWithTimeout("第二个订阅者的活动学期更新", secondObserver.final)
+            assertEquals(secondSemester, firstFinal?.semester?.id)
+            assertEquals(secondSemester, secondFinal?.semester?.id)
+        } finally {
+            firstSubscription.cancelAndJoin()
+            secondSubscription.cancelAndJoin()
+        }
     }
 
     @Test
@@ -494,5 +504,39 @@ class ProfileSelectionCoordinatorInstrumentedTest {
             transactionCount++
             return super.run(block)
         }
+    }
+
+    /** 两个独立订阅者按状态谓词确认完整路径，不依赖 Room 是否合并中间无效化回调。 */
+    private class ActiveContextObserver(
+        private val initialProfileId: Long,
+        private val switchedProfileId: Long,
+        private val switchedSemesterId: Long,
+    ) {
+        val initial = CompletableDeferred<ActiveTimetableContext?>()
+        val switched = CompletableDeferred<ActiveTimetableContext?>()
+        val final = CompletableDeferred<ActiveTimetableContext?>()
+
+        fun record(context: ActiveTimetableContext?) {
+            when {
+                context?.profile?.id == initialProfileId && context.semester == null -> initial.complete(context)
+                context?.profile?.id == switchedProfileId && context.semester == null -> switched.complete(context)
+                context?.profile?.id == switchedProfileId && context.semester?.id == switchedSemesterId -> {
+                    final.complete(context)
+                }
+            }
+        }
+    }
+
+    private suspend fun <T> awaitWithTimeout(
+        phase: String,
+        deferred: CompletableDeferred<T>,
+    ): T = try {
+        withTimeout(OBSERVATION_TIMEOUT_MS) { deferred.await() }
+    } catch (failure: TimeoutCancellationException) {
+        throw AssertionError("$phase 未在 $OBSERVATION_TIMEOUT_MS ms 内出现", failure)
+    }
+
+    private companion object {
+        const val OBSERVATION_TIMEOUT_MS = 10_000L
     }
 }
