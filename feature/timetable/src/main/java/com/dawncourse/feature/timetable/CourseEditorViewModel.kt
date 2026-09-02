@@ -96,7 +96,7 @@ class CourseEditorViewModel @Inject constructor(
     init {
         if (courseId != 0L) {
             viewModelScope.launch {
-                val activeContext = timetableProfileRepository.observeActiveContext().first()
+                val activeContext = timetableProfileRepository.getActiveContext()
                 val loadedCourse = repository.getCourseById(courseId)
                 if (loadedCourse != null && activeContext?.semester?.id == loadedCourse.semesterId) {
                     editingProfileId.value = activeContext.profile.id
@@ -150,7 +150,7 @@ class CourseEditorViewModel @Inject constructor(
         viewModelScope.launch {
             val semesterId = courses.first().semesterId
             val capturedProfileId = editingProfileId.value
-                ?: timetableProfileRepository.observeActiveContext().first()?.profile?.id
+                ?: timetableProfileRepository.getActiveContext()?.profile?.id
                 ?: run {
                     onConflict(PROFILE_SCOPE_CHANGED_MESSAGE)
                     return@launch
@@ -306,7 +306,7 @@ class CourseEditorViewModel @Inject constructor(
     /** 只允许把编辑结果写入开始编辑时仍处于活动状态的学期。 */
     private suspend fun isTargetStillActive(semesterId: Long, profileId: Long?): Boolean {
         if (profileId == null || semesterId <= 0L) return false
-        val current = timetableProfileRepository.observeActiveContext().first() ?: return false
+        val current = timetableProfileRepository.getActiveContext() ?: return false
         return current.profile.id == profileId && current.semester?.id == semesterId
     }
 

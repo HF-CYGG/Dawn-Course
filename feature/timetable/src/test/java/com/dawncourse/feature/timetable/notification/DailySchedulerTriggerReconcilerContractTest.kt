@@ -17,7 +17,7 @@ class DailySchedulerTriggerReconcilerContractTest {
         assertTrue(source.contains("private val triggerReconciler: TriggerReconciler"))
         assertTrue(source.contains("private val generateTriggerHorizonUseCase"))
         assertTrue(source.contains("profileId = snapshot.profileId"))
-        assertTrue(source.contains("observeActiveContext().first()"))
+        assertTrue(source.contains("getActiveContext()"))
         assertTrue(source.contains("const val TRIGGER_HORIZON_DAYS = 2"))
         assertTrue(source.contains("record.status == MuteSessionStatus.ACTIVE"))
         assertTrue(source.contains("retainedUnmuteAlarmKeys"))

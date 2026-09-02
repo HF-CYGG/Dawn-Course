@@ -1436,7 +1436,7 @@ class ImportViewModel @Inject constructor(
     fun beginImport(targetProfileId: Long? = null) {
         if (_uiState.value.destination != null) return
         viewModelScope.launch {
-            val active = timetableProfileRepository.observeActiveContext().first()
+            val active = timetableProfileRepository.getActiveContext()
                 ?: run {
                     _uiState.update { it.copy(resultText = "无法确定导入目标课表") }
                     return@launch

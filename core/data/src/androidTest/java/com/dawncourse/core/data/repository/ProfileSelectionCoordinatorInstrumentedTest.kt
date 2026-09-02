@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -37,6 +38,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -58,6 +60,7 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     private lateinit var activeStore: ActiveProfileSelectionStore
     private lateinit var failingDataStore: WriteThenThrowDataStore
     private lateinit var coordinator: ProfileSelectionCoordinator
+    private lateinit var mutationGate: OperationalDataMutationGate
     private lateinit var repairTransactionRunner: CountingProfileSelectionRepairTransactionRunner
 
     @Before
@@ -81,7 +84,7 @@ class ProfileSelectionCoordinatorInstrumentedTest {
             activeSelectionStore = activeStore,
             legacySemesterSelectionStore = SemesterSelectionStore(failingDataStore),
             credentialsRepository = FakeCredentialsRepository(),
-            mutationGate = OperationalDataMutationGate(),
+            mutationGate = OperationalDataMutationGate().also { mutationGate = it },
             repairTransactionRunner = repairTransactionRunner,
         )
     }
@@ -197,6 +200,120 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         coordinator.setActiveSemester(second, secondSemester)
 
         assertEquals(secondSemester, coordinator.observeActiveContext().firstValue()?.semester?.id)
+    }
+
+    @Test
+    fun activeSubscriberDoesNotLetImmediateFreshReadUseStaleSharedReplay() = runBlocking {
+        val first = insertProfile("A", 0)
+        val second = insertProfile("B", 1)
+        val secondSemester = insertSemester(second)
+        activeStore.selectProfile(first)
+        val initial = CompletableDeferred<ActiveTimetableContext?>()
+        val subscription = launch(Dispatchers.Default) {
+            coordinator.observeActiveContext().collect { context ->
+                if (context?.profile?.id == first) initial.complete(context)
+            }
+        }
+
+        try {
+            awaitWithTimeout("共享上游初始上下文", initial)
+            coordinator.switch(second)
+            assertEquals(second, coordinator.getActiveContext()?.profile?.id)
+
+            coordinator.setActiveSemester(second, secondSemester)
+            assertEquals(secondSemester, coordinator.getActiveContext()?.semester?.id)
+        } finally {
+            subscription.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun dataStoreFallbackInitializationFailureIsSurfacedInsteadOfRetryingForever() = runBlocking {
+        val profile = insertProfile("A", 0)
+        val failingStore = AlwaysFailingReadDataStore()
+        val localCoordinator = createCoordinator(
+            activeStore = ActiveProfileSelectionStore(failingStore),
+            dataStore = failingStore,
+        )
+
+        val failure = runCatching {
+            withTimeout(1_500) { localCoordinator.observeActiveContext().firstValue() }
+        }.exceptionOrNull()
+
+        assertTrue("应直接向订阅者暴露初始化失败，实际为 $failure", failure is IllegalStateException)
+        assertTrue((failure as? IllegalStateException)?.cause is IOException)
+        val readsAfterFailure = failingStore.readCount
+        delay(1_100)
+        assertEquals(readsAfterFailure, failingStore.readCount)
+        assertTrue(readsAfterFailure in 1..2)
+        assertTrue(profile > 0L)
+    }
+
+    @Test
+    fun initializationWriteFailureIsSurfacedWithoutBusyRetry() = runBlocking {
+        insertProfile("A", 0)
+        val failingStore = AlwaysFailingWriteDataStore()
+        val localCoordinator = createCoordinator(
+            activeStore = ActiveProfileSelectionStore(failingStore),
+            dataStore = failingStore,
+        )
+
+        val failure = runCatching {
+            withTimeout(1_500) { localCoordinator.observeActiveContext().firstValue() }
+        }.exceptionOrNull()
+
+        assertTrue("初始化失败应可见，实际为 $failure", failure is IllegalStateException)
+        assertTrue((failure as? IllegalStateException)?.cause is IOException)
+        assertEquals(1, failingStore.writeCount)
+    }
+
+    @Test
+    fun permanentlyBlockedGateFailsFreshReadWithinBoundedTime() = runBlocking {
+        insertProfile("A", 0)
+        val lease = mutationGate.acquireLease()
+        lease.blockPermanently()
+        lease.release()
+
+        val failure = runCatching {
+            withTimeout(1_500) { coordinator.getActiveContext() }
+        }.exceptionOrNull()
+
+        assertTrue(failure is OperationalDataMutationBlockedException)
+    }
+
+    @Test
+    fun permanentlyBlockedGateFailsSharedObserverInsteadOfRetryingForever() = runBlocking {
+        insertProfile("A", 0)
+        val blockedGate = OperationalDataMutationGate()
+        val lease = blockedGate.acquireLease()
+        lease.blockPermanently()
+        lease.release()
+        val localCoordinator = createCoordinator(
+            activeStore = activeStore,
+            dataStore = failingDataStore,
+            mutationGate = blockedGate,
+        )
+
+        val failure = runCatching {
+            withTimeout(1_500) { localCoordinator.observeActiveContext().firstValue() }
+        }.exceptionOrNull()
+
+        assertTrue(failure is OperationalDataMutationBlockedException)
+    }
+
+    @Test
+    fun cancellingObserverDoesNotBecomeSharedFailure() = runBlocking {
+        val profile = insertProfile("A", 0)
+        activeStore.selectProfile(profile)
+        val initial = CompletableDeferred<Unit>()
+        val subscription = launch(Dispatchers.Default) {
+            coordinator.observeActiveContext().collect { initial.complete(Unit) }
+        }
+
+        awaitWithTimeout("取消前的活动上下文", initial)
+        subscription.cancelAndJoin()
+
+        assertEquals(profile, withTimeout(1_500) { coordinator.getActiveContext() }?.profile?.id)
     }
 
     @Test
@@ -468,6 +585,23 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         mutationGate = OperationalDataMutationGate(),
     )
 
+    private fun createCoordinator(
+        activeStore: ActiveProfileSelectionStore,
+        dataStore: DataStore<Preferences>,
+        mutationGate: OperationalDataMutationGate = OperationalDataMutationGate(),
+    ) = ProfileSelectionCoordinator(
+        database = database,
+        profileDao = database.timetableProfileDao(),
+        semesterDao = database.semesterDao(),
+        courseDao = database.courseDao(),
+        bindingDao = database.syncSourceBindingDao(),
+        activeSelectionStore = activeStore,
+        legacySemesterSelectionStore = SemesterSelectionStore(dataStore),
+        credentialsRepository = FakeCredentialsRepository(),
+        mutationGate = mutationGate,
+        repairTransactionRunner = CountingProfileSelectionRepairTransactionRunner(database),
+    )
+
     private class FakeCredentialsRepository : CredentialsRepository {
         override suspend fun getCredentials(profileId: Long): SyncCredentials? = null
         override suspend fun saveCredentials(profileId: Long, credentials: SyncCredentials) = Unit
@@ -491,6 +625,31 @@ class ProfileSelectionCoordinatorInstrumentedTest {
                 throw failure
             }
             return updated
+        }
+    }
+
+    private class AlwaysFailingReadDataStore : DataStore<Preferences> {
+        var readCount = 0
+            private set
+
+        override val data: Flow<Preferences> = flow {
+            readCount++
+            throw IOException("DataStore read failed")
+        }
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences =
+            throw IOException("DataStore write failed")
+    }
+
+    private class AlwaysFailingWriteDataStore : DataStore<Preferences> {
+        var writeCount = 0
+            private set
+
+        override val data: Flow<Preferences> = flowOf(emptyPreferences())
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+            writeCount++
+            throw IOException("DataStore write failed")
         }
     }
 

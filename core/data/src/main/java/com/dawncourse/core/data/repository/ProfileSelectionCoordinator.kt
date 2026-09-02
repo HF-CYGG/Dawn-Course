@@ -34,9 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
@@ -44,7 +45,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -55,6 +55,12 @@ open class ProfileSelectionRepairTransactionRunner @Inject constructor(
     private val database: AppDatabase,
 ) {
     open suspend fun <T> run(block: suspend () -> T): T = database.withTransaction(block)
+}
+
+/** 共享上游把失败也建模为事件，避免 [shareIn] 吞掉上游异常而让订阅者永久等待。 */
+private sealed interface ActiveContextEvent {
+    data class Value(val context: ActiveTimetableContext?) : ActiveContextEvent
+    data class Failure(val cause: Throwable) : ActiveContextEvent
 }
 
 /** 串行化 Profile、学期选择与跨存储补偿，确保运行时只有一套选择事实。 */
@@ -79,14 +85,11 @@ class ProfileSelectionCoordinator @Inject constructor(
      * Room 与 DataStore 仍是唯一事实源，replay 只复用其最近一次自然发射。
      */
     private val activeContextScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val sharedActiveContext = activeContextSource()
-        .retryWhen { failure, _ ->
-            if (failure is CancellationException) {
-                false
-            } else {
-                delay(ACTIVE_CONTEXT_RETRY_DELAY_MS)
-                true
-            }
+    private val sharedActiveContextEvents = activeContextSource()
+        .map<ActiveTimetableContext?, ActiveContextEvent> { ActiveContextEvent.Value(it) }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            emit(ActiveContextEvent.Failure(failure))
         }
         .shareIn(
             scope = activeContextScope,
@@ -133,8 +136,23 @@ class ProfileSelectionCoordinator @Inject constructor(
         block(success(profile, validSemester(profile)).activeContext)
     }
 
+    /** 单次读取直接解析当前 DataStore/Room 事实，不能复用共享观察流的 replay。 */
+    suspend fun getActiveContext(): ActiveTimetableContext? = withOperationalProfileMutation {
+        val profileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
+        profileDao.getProfileById(profileId)?.let { profile ->
+            success(profile, validSemester(profile)).activeContext
+        }
+    }
+
     /** 首次仅从遗留学期键桥接；之后无效 ID 稳定回退到排序第一项。 */
-    fun observeActiveContext(): Flow<ActiveTimetableContext?> = sharedActiveContext
+    fun observeActiveContext(): Flow<ActiveTimetableContext?> = flow {
+        sharedActiveContextEvents.collect { event ->
+            when (event) {
+                is ActiveContextEvent.Value -> emit(event.context)
+                is ActiveContextEvent.Failure -> throw event.cause
+            }
+        }
+    }
 
     /** 共享流的唯一上游，订阅者仅消费 Room/DataStore 的自然变更。 */
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -855,6 +873,5 @@ class ProfileSelectionCoordinator @Inject constructor(
     private companion object {
         const val DEFAULT_PROFILE_NAME = "默认课表"
         const val ACTIVE_CONTEXT_STOP_TIMEOUT_MS = 5_000L
-        const val ACTIVE_CONTEXT_RETRY_DELAY_MS = 1_000L
     }
 }

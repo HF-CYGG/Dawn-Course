@@ -194,6 +194,7 @@ class ProfileManagementViewModelTest {
 
         override fun observeProfiles(): Flow<List<TimetableProfile>> = profilesFlow
         override fun observeActiveContext(): Flow<ActiveTimetableContext?> = contextFlow
+        override suspend fun getActiveContext(): ActiveTimetableContext? = contextFlow.value
         override fun observeSemesters(profileId: Long): Flow<List<Semester>> =
             semesterFlows.getValue(profileId)
         override fun observeProfileSummaries(): Flow<List<TimetableProfileSummary>> = summariesFlow

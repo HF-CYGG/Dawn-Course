@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
@@ -66,7 +65,7 @@ class CourseRescheduleViewModel @Inject constructor(
 
     fun loadCourse(courseId: Long) {
         viewModelScope.launch {
-            val activeContext = timetableProfileRepository.observeActiveContext().first()
+            val activeContext = timetableProfileRepository.getActiveContext()
             val activeProfileId = activeContext?.profile?.id
             val activeSemester = activeContext?.semester
             val course = repository.getCourseById(courseId)
@@ -413,7 +412,7 @@ class CourseRescheduleViewModel @Inject constructor(
     private suspend fun isCapturedScopeStillActive(state: RescheduleUiState): Boolean {
         val profileId = state.capturedProfileId ?: return false
         val semesterId = state.capturedSemesterId ?: return false
-        val activeContext = timetableProfileRepository.observeActiveContext().first() ?: return false
+        val activeContext = timetableProfileRepository.getActiveContext() ?: return false
         return activeContext.profile.id == profileId && activeContext.semester?.id == semesterId
     }
     

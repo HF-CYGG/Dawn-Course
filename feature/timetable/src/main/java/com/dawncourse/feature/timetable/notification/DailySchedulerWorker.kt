@@ -107,14 +107,14 @@ class DailySchedulerWorker @AssistedInject constructor(
             val settings = settingsRepository.get().settings.first()
             val now = Instant.now()
             val zoneId = ZoneId.systemDefault()
-            // 先捕获同一 Flow 发射的 Profile + Semester，再读取课程；完成后复核，
+            // 先在同一选择锁内捕获 Profile + Semester，再读取课程；完成后复核，
             // Profile 切换竞态时宁可交给下一次 reconcile，也不能注册旧课表的 Desired。
-            val activeContext = timetableProfileRepository.get().observeActiveContext().first()
+            val activeContext = timetableProfileRepository.get().getActiveContext()
             val semester = activeContext?.semester
             val courses = semester?.let { value ->
                 courseRepository.get().getCoursesBySemester(value.id).first()
             }.orEmpty()
-            val verifiedContext = timetableProfileRepository.get().observeActiveContext().first()
+            val verifiedContext = timetableProfileRepository.get().getActiveContext()
             if (activeContext?.profile?.id != verifiedContext?.profile?.id ||
                 activeContext?.semester?.id != verifiedContext?.semester?.id
             ) {

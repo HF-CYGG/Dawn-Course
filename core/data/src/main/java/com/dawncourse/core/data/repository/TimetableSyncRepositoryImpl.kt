@@ -10,7 +10,6 @@ import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.flow.first
 
 /**
  * 课表同步仓库实现（WakeUp 提供者）
@@ -25,7 +24,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
 ) : TimetableSyncRepository {
 
     override suspend fun syncCurrentSemester(): TimetableSyncResult {
-        val capturedContext = profileRepository.observeActiveContext().first()
+        val capturedContext = profileRepository.getActiveContext()
             ?: return TimetableSyncResult.Failure(
                 code = SyncErrorCode.SERVER_ERROR,
                 message = "未设置活动课表",

@@ -2677,7 +2677,7 @@ class QidiSyncViewModel @Inject constructor(
     /** 读取一次活动上下文并固定本次同步的 Profile/学期范围。 */
     private suspend fun resolveCapturedTarget(): QidiSyncTarget {
         capturedTarget?.let { return it }
-        val context = timetableProfileRepository.observeActiveContext().first()
+        val context = timetableProfileRepository.getActiveContext()
             ?: throw IllegalStateException("未选择活动课表")
         val semester = context.semester ?: throw IllegalStateException("活动课表尚未选择学期")
         return QidiSyncTarget(context.profile.id, semester.id).also { capturedTarget = it }

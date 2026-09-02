@@ -769,7 +769,7 @@ class SettingsViewModel @Inject constructor(
 
     /** 获取操作时刻的活动 Profile，避免把凭据写入旧的选择。 */
     private suspend fun activeProfileId(): Long? =
-        timetableProfileRepository.observeActiveContext().first()?.profile?.id
+        timetableProfileRepository.getActiveContext()?.profile?.id
 
     /** ViewModel 只发布语义事件，用户可见文案由 UI 资源层决定。 */
     private suspend fun publishCredentialBindingResult(

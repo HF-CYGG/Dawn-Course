@@ -55,7 +55,7 @@ class WidgetTimelineBuilder @Inject constructor(
         if (isStillCurrent(second.contextKey)) {
             second.timeline
         } else {
-            val latest = timetableProfileRepository.observeActiveContext().first()
+            val latest = timetableProfileRepository.getActiveContext()
             second.timeline.copy(
                 profileId = latest?.profile?.id,
                 displayCourses = emptyList(),
@@ -71,8 +71,8 @@ class WidgetTimelineBuilder @Inject constructor(
         today: LocalDate,
         now: LocalTime
     ): WidgetTimelineAttempt {
-        // Profile 与其活动学期由同一领域 Flow 原子给出，禁止分别读取旧选择状态。
-        val activeContext = timetableProfileRepository.observeActiveContext().first()
+        // Profile 与其活动学期由领域层在同一选择锁内解析，禁止分别读取旧选择状态。
+        val activeContext = timetableProfileRepository.getActiveContext()
         val semester = activeContext?.semester
         val settings = settingsRepository.settings.first()
         val sectionTimes = settings.sectionTimes
@@ -139,7 +139,7 @@ class WidgetTimelineBuilder @Inject constructor(
 
     /** 构建完成后确认 Profile 与学期仍未切换。 */
     private suspend fun isStillCurrent(expected: WidgetContextKey): Boolean {
-        val current = timetableProfileRepository.observeActiveContext().first()
+        val current = timetableProfileRepository.getActiveContext()
         return expected == WidgetContextKey(
             profileId = current?.profile?.id,
             semesterId = current?.semester?.id
