@@ -113,10 +113,7 @@ class AndroidAtomicByteStore(
     }
 
     /** 返回防御性副本，调用方无需接触文件流。 */
-    override fun readOrNull(): ByteArray? {
-        if (!atomicFile.baseFile.exists()) return null
-        return atomicFile.readFully()
-    }
+    override fun readOrNull(): ByteArray? = AtomicFileArtifactProtocol.readOrNull(atomicFile)
 
     /** 通过 AtomicFile 完整写入或回滚；任何写入异常都调用 failWrite。 */
     override fun writeAtomically(bytes: ByteArray) {

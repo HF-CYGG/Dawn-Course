@@ -66,4 +66,15 @@ class OperationalDataMutationGateTest {
         assertTrue(queuedFailure.await() is OperationalDataMutationBlockedException)
         assertFalse("排队写入在门被永久关闭后不得进入业务 block", queuedBlockEntered)
     }
+
+    @Test
+    fun forceBlockPermanentlyRejectsEveryNewMutation() = runBlocking {
+        val gate = OperationalDataMutationGate()
+
+        gate.forceBlockPermanently()
+
+        val failure = runCatching { gate.withMutation { Unit } }.exceptionOrNull()
+
+        assertTrue(failure is OperationalDataMutationBlockedException)
+    }
 }

@@ -66,7 +66,7 @@ class DatabaseStartupRuntime @Inject constructor(
             integrityVerificationStateStore.completeSuccessfulVerification(System.currentTimeMillis())
         },
         persistIntegrityRecoveryMarker = integrityRecoveryRequiredStore::markRequiredAndConfirm,
-        mutationGate = mutationGate,
+        mutationGate = OperationalDataMutationGateIntegrityAdapter(mutationGate),
     )
     private val startupCriticalSection = AndroidDatabaseStartupCriticalSection(databaseFile)
     private val controller = DatabaseStartupRuntimeController(
@@ -478,10 +478,10 @@ internal data class DatabaseStartupRecoveryMarkerSnapshot(
             val migrationJournalPresent =
                 "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries
             val recoveryResponsibilityMarkerPresent =
-                "bootstrap-install-v1" in recoveryEntries ||
-                    "recovery-state-v1" in recoveryEntries ||
-                    "backup_restore_required" in backupEntries ||
-                    "integrity_verification_required_v1" in backupEntries ||
+                hasAtomicMarkerArtifact(recoveryEntries, "bootstrap-install-v1") ||
+                    hasAtomicMarkerArtifact(recoveryEntries, "recovery-state-v1") ||
+                    hasAtomicMarkerArtifact(backupEntries, "backup_restore_required") ||
+                    hasAtomicMarkerArtifact(backupEntries, "integrity_verification_required_v1") ||
                     migrationJournalPresent
             return DatabaseStartupRecoveryMarkerSnapshot(
                 requiresFullRecoveryCheck = recoveryResponsibilityMarkerPresent,
@@ -495,6 +495,10 @@ internal data class DatabaseStartupRecoveryMarkerSnapshot(
             !directory.isDirectory -> null
             else -> directory.listFiles()?.mapTo(mutableSetOf(), File::getName)
         }
+
+        /** base/.bak/.new 均属于已知 marker 的恢复责任，不能由快速路径跳过。 */
+        private fun hasAtomicMarkerArtifact(entries: Set<String>, baseName: String): Boolean =
+            entries.any { name -> name == baseName || name == "$baseName.bak" || name == "$baseName.new" }
     }
 }
 
@@ -677,9 +681,13 @@ internal class AndroidDatabaseRecoveryFiles(
 
     /** 严格读取固定两行标记；损坏标记安全映射为 RecoveryStateCorrupt。 */
     fun readRecoveryReason(): DatabaseRecoveryReason? {
-        if (!marker.baseFile.exists()) return null
         return runCatching {
-            val lines = marker.readFully().toString(Charsets.UTF_8).lines()
+            val bytes = AtomicFileArtifactProtocol.readOrNull(marker) ?: return null
+            val lines = try {
+                bytes.toString(Charsets.UTF_8).lines()
+            } finally {
+                bytes.fill(0)
+            }
             if (lines.size != 2 || lines[0] != MARKER_MAGIC) {
                 DatabaseRecoveryReason.RecoveryStateCorrupt
             } else {
@@ -717,7 +725,7 @@ internal class AndroidDatabaseRecoveryFiles(
 
     /** 用户已作出恢复/放弃决定且新主库成功冷开后，才删除旧隔离文件。 */
     fun cleanupAfterVerifiedColdOpen(): Boolean = runCatching {
-        if (marker.baseFile.exists()) return@runCatching false
+        if (AtomicFileArtifactProtocol.hasAnyArtifact(marker)) return@runCatching false
         listOf(quarantineFile).plus(SIDECARS.map { File(quarantineFile.path + it) })
             .forEach { file ->
                 if (file.exists()) require(file.delete()) { "无法清理旧数据库隔离文件" }
@@ -725,9 +733,9 @@ internal class AndroidDatabaseRecoveryFiles(
         true
     }.getOrDefault(false)
 
-    /** 恢复 Bootstrap 成功后删除标记；隔离文件延迟到下一次冷开验证。 */
+    /** 恢复 Bootstrap 成功后删除 marker 并确认全部残留消失；隔离文件延迟到下一次冷开验证。 */
     fun clearMarkerAfterExplicitDecision() {
-        marker.delete()
+        AtomicFileArtifactProtocol.deleteAndConfirm(marker)
     }
 
     /** 当前隔离主库，仅供显式恢复/放弃事务使用。 */

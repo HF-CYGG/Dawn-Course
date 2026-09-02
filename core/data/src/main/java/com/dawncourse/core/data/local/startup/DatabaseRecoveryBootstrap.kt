@@ -242,10 +242,14 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     }
 
     fun current(): DatabaseRecoveryInstallAttempt? {
-        if (!journal.baseFile.exists()) return null
         return runCatching {
-            if (journal.baseFile.length() !in 1..MAX_JOURNAL_BYTES) error("journal 大小无效")
-            val lines = journal.readFully().toString(Charsets.UTF_8).lines()
+            val bytes = AtomicFileArtifactProtocol.readOrNull(journal) ?: return null
+            if (bytes.size !in 1..MAX_JOURNAL_BYTES) error("journal 大小无效")
+            val lines = try {
+                bytes.toString(Charsets.UTF_8).lines()
+            } finally {
+                bytes.fill(0)
+            }
             require(lines.size == 3 && lines[0] == MAGIC) { "journal 格式无效" }
             val id = lines[1].removePrefix(ID_PREFIX)
             val stage = lines[2].removePrefix(STAGE_PREFIX)
@@ -255,7 +259,7 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     }
 
     /** 区分“没有 journal”与“journal 存在但损坏”。 */
-    fun exists(): Boolean = journal.baseFile.exists()
+    fun exists(): Boolean = AtomicFileArtifactProtocol.hasAnyArtifact(journal)
 
     fun record(attempt: DatabaseRecoveryInstallAttempt, next: DatabaseRecoveryInstallStage) {
         val current = requireNotNull(current()) { "恢复安装 journal 缺失或损坏" }
@@ -273,13 +277,13 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     fun clearCommittedArtifacts(attempt: DatabaseRecoveryInstallAttempt): Boolean = runCatching {
         require(attempt.stage == DatabaseRecoveryInstallStage.COMMITTED)
         deleteExact(settingsFile(attempt.id))
-        journal.delete()
+        AtomicFileArtifactProtocol.deleteAndConfirm(journal)
         true
     }.getOrDefault(false)
 
     private fun cleanupTerminalAttempt(attempt: DatabaseRecoveryInstallAttempt) {
         deleteExact(settingsFile(attempt.id))
-        journal.delete()
+        AtomicFileArtifactProtocol.deleteAndConfirm(journal)
     }
 
     private fun writeSettings(id: String, payload: RecoverySettingsPayload) {
@@ -673,24 +677,32 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                     applyActiveProfileSelection(validated.activeProfileId)
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
-                clearRecoveryResponsibilities()
-                recoveryFiles.clearMarkerAfterExplicitDecision()
-                journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
+                commitExplicitRecoveryDecision(
+                    clearRecoveryResponsibilities = clearRecoveryResponsibilities,
+                    clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
+                    recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
+                )
                 true
-            }.getOrElse {
-                runCatching {
-                    val payload = journal.readSettings(attempt)
-                    runBlocking {
-                        settingsRepository.restoreAllSettingsAndSelection(
-                            payload.oldSettings,
-                            payload.oldSelectedSemesterId
-                        )
-                        activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
+            }.getOrElse { failureCause ->
+                if (failureCause is RecoveryResponsibilitiesPendingException) {
+                    // replacement 与 SETTINGS_APPLIED journal 保留；下一冷启动会重试同一提交步骤，
+                    // 不能因 marker 删除故障伪造 RestartRequired 或回滚到不可判定状态。
+                    false
+                } else {
+                    runCatching {
+                        val payload = journal.readSettings(attempt)
+                        runBlocking {
+                            settingsRepository.restoreAllSettingsAndSelection(
+                                payload.oldSettings,
+                                payload.oldSelectedSemesterId
+                            )
+                            activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
+                        }
                     }
+                    val rolledBack = installer.rollbackNewReplacement(attempt)
+                    if (rolledBack) runCatching { journal.record(attempt, DatabaseRecoveryInstallStage.ROLLED_BACK) }
+                    false
                 }
-                val rolledBack = installer.rollbackNewReplacement(attempt)
-                if (rolledBack) runCatching { journal.record(attempt, DatabaseRecoveryInstallStage.ROLLED_BACK) }
-                false
             }
         }
         return if (succeeded) {
@@ -710,7 +722,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     }
 
     private fun finishOrRollback(attempt: DatabaseRecoveryInstallAttempt): DatabaseRecoveryInstallRecovery {
-        val finished = runCatching {
+        val finished = try {
             val payload = journal.readSettings(attempt)
             runBlocking {
                 settingsRepository.restoreAllSettingsAndSelection(
@@ -722,10 +734,17 @@ internal class DatabaseRecoveryBootstrapCoordinator(
             if (attempt.stage == DatabaseRecoveryInstallStage.MAIN_SWAPPED) {
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
             }
-            clearRecoveryResponsibilities()
-            recoveryFiles.clearMarkerAfterExplicitDecision()
-            journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
-        }.isSuccess
+            commitExplicitRecoveryDecision(
+                clearRecoveryResponsibilities = clearRecoveryResponsibilities,
+                clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
+                recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
+            )
+            true
+        } catch (_: RecoveryResponsibilitiesPendingException) {
+            return DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE
+        } catch (_: Throwable) {
+            false
+        }
         if (finished) return DatabaseRecoveryInstallRecovery.COMMITTED
         return rollback(attempt)
     }
@@ -768,6 +787,27 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         error is IllegalArgumentException -> DatabaseRecoveryActionFailure.BackupInvalid
         else -> DatabaseRecoveryActionFailure.WebDavUnavailable
     }
+}
+
+/** marker 清除未确认时保持 SETTINGS_APPLIED journal，供下次冷启动安全重试。 */
+internal class RecoveryResponsibilitiesPendingException(cause: Throwable) : IllegalStateException(cause)
+
+/**
+ * 显式恢复提交的唯一顺序：先确认全部在线责任 marker，再确认 recovery-state-v1，最后记录
+ * COMMITTED。任一 marker 故障绝不允许越过 COMMITTED，journal 保留为可机械重试的状态。
+ */
+internal fun commitExplicitRecoveryDecision(
+    clearRecoveryResponsibilities: () -> Unit,
+    clearRecoveryStateMarker: () -> Unit,
+    recordCommitted: () -> Unit,
+) {
+    try {
+        clearRecoveryResponsibilities()
+        clearRecoveryStateMarker()
+    } catch (failure: Throwable) {
+        throw RecoveryResponsibilitiesPendingException(failure)
+    }
+    recordCommitted()
 }
 
 /**

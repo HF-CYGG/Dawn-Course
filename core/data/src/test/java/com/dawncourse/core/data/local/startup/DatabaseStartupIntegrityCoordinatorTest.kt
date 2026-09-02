@@ -133,6 +133,47 @@ class DatabaseStartupIntegrityCoordinatorTest {
         Unit
     }
 
+    @Test
+    fun failClosedRemainsStableWhenMarkerOrAnyLeaseStepThrows() = runBlocking {
+        listOf(
+            "marker" to FaultInjectingIntegrityGate.FailurePoint.NONE,
+            "acquire" to FaultInjectingIntegrityGate.FailurePoint.ACQUIRE,
+            "block" to FaultInjectingIntegrityGate.FailurePoint.BLOCK,
+            "release" to FaultInjectingIntegrityGate.FailurePoint.RELEASE,
+        ).forEach { (failurePoint, gateFailure) ->
+            val events = mutableListOf<String>()
+            val gate = FaultInjectingIntegrityGate(events, gateFailure)
+            val coordinator = DatabaseStartupIntegrityCoordinator(
+                verifier = { _: Any -> error("模拟完整性失败") },
+                completeSuccessfulVerification = {},
+                persistIntegrityRecoveryMarker = {
+                    events += "marker"
+                    if (failurePoint == "marker") error("模拟 marker 持久化失败")
+                },
+                mutationGate = gate,
+            )
+
+            val result = requireNotNull(
+                coordinator.postReadyAction(IntegrityVerificationMode.BACKGROUND_AFTER_READY, Any()),
+            ).failClosedAfterUnexpectedException()
+
+            assertEquals(
+                DatabasePostReadyResult.RecoveryRequired(
+                    DatabaseRecoveryReason.IntegrityVerificationFailed,
+                    if (failurePoint == "marker") {
+                        DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED
+                    } else {
+                        DatabaseRecoveryEntryMode.RESTART_REQUIRED
+                    },
+                ),
+                result,
+            )
+            assertTrue("$failurePoint 后必须关闭所有新写入", gate.forceBlocked)
+            assertEquals("marker 必须先于任何 lease 尝试", "marker", events.first())
+            assertTrue("$failurePoint 后必须执行最终 force-block", events.contains("force-block"))
+        }
+    }
+
     private fun coordinator(
         events: MutableList<String>,
         mutationGate: OperationalDataMutationGate = OperationalDataMutationGate(),
@@ -142,6 +183,41 @@ class DatabaseStartupIntegrityCoordinatorTest {
         verifier = verifier,
         completeSuccessfulVerification = { events += "complete-success" },
         persistIntegrityRecoveryMarker = persistMarker,
-        mutationGate = mutationGate,
+        mutationGate = OperationalDataMutationGateIntegrityAdapter(mutationGate),
     )
+
+    private class FaultInjectingIntegrityGate(
+        private val events: MutableList<String>,
+        private val failurePoint: FailurePoint,
+    ) : IntegrityFailureMutationGate {
+        var forceBlocked: Boolean = false
+
+        override suspend fun acquireLease(): IntegrityFailureMutationLease {
+            events += "acquire"
+            if (failurePoint == FailurePoint.ACQUIRE) error("模拟 acquire 异常")
+            return object : IntegrityFailureMutationLease {
+                override fun blockPermanently() {
+                    events += "block"
+                    if (failurePoint == FailurePoint.BLOCK) error("模拟 block 异常")
+                }
+
+                override fun release() {
+                    events += "release"
+                    if (failurePoint == FailurePoint.RELEASE) error("模拟 release 异常")
+                }
+            }
+        }
+
+        override fun forceBlockPermanently() {
+            events += "force-block"
+            forceBlocked = true
+        }
+
+        enum class FailurePoint {
+            NONE,
+            ACQUIRE,
+            BLOCK,
+            RELEASE,
+        }
+    }
 }

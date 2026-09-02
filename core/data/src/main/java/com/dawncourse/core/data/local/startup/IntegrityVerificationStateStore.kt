@@ -3,6 +3,35 @@ package com.dawncourse.core.data.local.startup
 import android.util.AtomicFile
 import java.io.File
 
+/**
+ * Android AtomicFile 的 base/.bak/.new 统一协议。
+ *
+ * `.bak` 是旧版本的可恢复内容，base 缺失时仍必须交给 AtomicFile 读取并恢复；`.new`
+ * 则表示写入中断，不能被误判为首次安装或 marker 缺失。删除也必须确认三种产物均消失。
+ */
+internal object AtomicFileArtifactProtocol {
+    fun readOrNull(atomicFile: AtomicFile): ByteArray? {
+        check(!newFile(atomicFile).exists()) { "AtomicFile 存在未完成写入" }
+        if (!atomicFile.baseFile.exists() && !backupFile(atomicFile).exists()) return null
+        return atomicFile.readFully()
+    }
+
+    fun hasAnyArtifact(atomicFile: AtomicFile): Boolean =
+        atomicFile.baseFile.exists() || backupFile(atomicFile).exists() || newFile(atomicFile).exists()
+
+    fun deleteAndConfirm(
+        atomicFile: AtomicFile,
+        delete: () -> Unit = atomicFile::delete,
+    ) {
+        delete()
+        check(!hasAnyArtifact(atomicFile)) { "AtomicFile 残留未清除" }
+    }
+
+    private fun backupFile(atomicFile: AtomicFile): File = File(atomicFile.baseFile.path + ".bak")
+
+    private fun newFile(atomicFile: AtomicFile): File = File(atomicFile.baseFile.path + ".new")
+}
+
 /** 可替换的 no-backup 原子文件边界，JVM 测试无需依赖 Android 文件 API。 */
 internal interface IntegrityVerificationStatePersistence {
     /** 对读改写和删除提供同一进程/跨进程互斥。 */
@@ -32,8 +61,7 @@ internal class AndroidIntegrityVerificationStatePersistence(
     override fun writeAtomically(bytes: ByteArray) = delegate.writeAtomically(bytes)
 
     override fun deleteAtomically() {
-        atomicFile.delete()
-        check(!atomicFile.baseFile.exists()) { "无法清除完整性恢复责任" }
+        AtomicFileArtifactProtocol.deleteAndConfirm(atomicFile)
     }
 }
 

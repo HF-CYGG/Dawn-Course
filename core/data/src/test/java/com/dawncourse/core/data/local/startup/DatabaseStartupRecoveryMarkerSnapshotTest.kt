@@ -57,4 +57,40 @@ class DatabaseStartupRecoveryMarkerSnapshotTest {
             snapshot.recoveryResponsibilityMarkerPresent,
         )
     }
+
+    @Test
+    fun atomicFileBackupAndInterruptedNewArtifactsAreRecoveryResponsibilities() {
+        val noBackupDirectory = temporaryFolder.newFolder("no-backup-atomic-artifacts")
+        val databaseFile = File(temporaryFolder.newFolder("databases-atomic-artifacts"), "dawn_course.db")
+        val knownMarkers = listOf(
+            "database-recovery/bootstrap-install-v1",
+            "database-recovery/recovery-state-v1",
+            "recovery/backup_restore_required",
+            "recovery/integrity_verification_required_v1",
+        )
+
+        knownMarkers.forEach { relativePath ->
+            val backup = File(noBackupDirectory, "$relativePath.bak")
+            backup.parentFile?.mkdirs()
+            backup.writeText("previous durable marker")
+
+            assertTrue(
+                "仅保留 .bak 的 $relativePath 仍是恢复责任，不能被快速路径遗漏",
+                DatabaseStartupRecoveryMarkerSnapshot.capture(noBackupDirectory, databaseFile)
+                    .recoveryResponsibilityMarkerPresent,
+            )
+
+            assertTrue(backup.delete())
+        }
+
+        val interrupted = File(noBackupDirectory, "database-recovery/recovery-state-v1.new")
+        interrupted.parentFile?.mkdirs()
+        interrupted.writeText("interrupted write")
+
+        assertTrue(
+            "孤立 .new 必须被视为中断状态而非 Missing",
+            DatabaseStartupRecoveryMarkerSnapshot.capture(noBackupDirectory, databaseFile)
+                .requiresFullRecoveryCheck,
+        )
+    }
 }

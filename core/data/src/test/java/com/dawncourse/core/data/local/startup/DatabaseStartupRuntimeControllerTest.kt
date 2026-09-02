@@ -167,11 +167,16 @@ class DatabaseStartupRuntimeControllerTest {
                 DatabaseStartupInitialization.Ready(
                     handle = Any(),
                     migratedPlaintextThisRun = false,
-                    postReadyAction = DatabasePostReadyAction {
-                        assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
-                        events += "post-ready"
-                        DatabasePostReadyResult.Complete
-                    },
+                    postReadyAction = DatabasePostReadyAction(
+                        runAction = {
+                            assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
+                            events += "post-ready"
+                            DatabasePostReadyResult.Complete
+                        },
+                        failClosedAfterUnexpectedException = {
+                            error("成功路径不得进入 fail-closed")
+                        },
+                    ),
                 )
             },
             ioDispatcher = Dispatchers.Unconfined,
@@ -193,15 +198,20 @@ class DatabaseStartupRuntimeControllerTest {
                 DatabaseStartupInitialization.Ready(
                     handle = Any(),
                     migratedPlaintextThisRun = false,
-                    postReadyAction = DatabasePostReadyAction {
-                        assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
-                        events += "marker"
-                        events += "gate"
-                        DatabasePostReadyResult.RecoveryRequired(
-                            DatabaseRecoveryReason.IntegrityVerificationFailed,
-                            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
-                        )
-                    },
+                    postReadyAction = DatabasePostReadyAction(
+                        runAction = {
+                            assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
+                            events += "marker"
+                            events += "gate"
+                            DatabasePostReadyResult.RecoveryRequired(
+                                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                                DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+                            )
+                        },
+                        failClosedAfterUnexpectedException = {
+                            error("稳定结果不得再次进入 fail-closed")
+                        },
+                    ),
                 )
             },
             ioDispatcher = Dispatchers.Unconfined,
@@ -217,6 +227,43 @@ class DatabaseStartupRuntimeControllerTest {
             ),
             controller.state.value,
         )
+    }
+
+    @Test
+    fun unexpectedPostReadyExceptionMustRunFailClosedProtocolBeforePublishingRecovery() {
+        val events = mutableListOf<String>()
+        val controller = DatabaseStartupRuntimeController(
+            criticalSection = DatabaseStartupCriticalSection { block -> block() },
+            initializer = DatabaseStartupInitializer {
+                DatabaseStartupInitialization.Ready(
+                    handle = Any(),
+                    migratedPlaintextThisRun = false,
+                    postReadyAction = DatabasePostReadyAction(
+                        runAction = { error("模拟 post-ready 未预期异常") },
+                        failClosedAfterUnexpectedException = {
+                            events += "fail-closed"
+                            DatabasePostReadyResult.RecoveryRequired(
+                                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                                DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+                            )
+                        },
+                    ),
+                )
+            },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        controller.start(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        assertEquals(
+            DatabaseRuntimeState.RecoveryRequired(
+                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            ),
+            controller.state.value,
+        )
+        assertEquals(OperationalDataReadiness.RECOVERY_REQUIRED, controller.readiness())
+        assertEquals(listOf("fail-closed"), events)
     }
 
     private fun readyController(database: Any): DatabaseStartupRuntimeController<Any> {

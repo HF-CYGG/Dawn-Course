@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -13,16 +14,24 @@ import kotlinx.coroutines.sync.Mutex
 @Singleton
 class OperationalDataMutationGate @Inject constructor() {
     private val mutex = Mutex()
-    private var permanentlyBlocked = false
+    private val permanentlyBlocked = AtomicBoolean(false)
 
     /** 取得独占 lease；已永久关闭时绝不允许进入业务写入。 */
     internal suspend fun acquireLease(): Lease {
         mutex.lock()
-        if (permanentlyBlocked) {
+        if (permanentlyBlocked.get()) {
             mutex.unlock()
             throw OperationalDataMutationBlockedException()
         }
         return Lease(this)
+    }
+
+    /**
+     * 非预期 fail-closed 路径的最后收口：不等待当前 lease，也绝不撤销已经开始的事务；
+     * 仅保证之后取得 lease 的写入全部被拒绝。
+     */
+    internal fun forceBlockPermanently() {
+        permanentlyBlocked.set(true)
     }
 
     /** 普通写入的便捷入口，保证检查状态与实际事务之间不存在 TOCTOU 窗口。 */
@@ -46,7 +55,7 @@ class OperationalDataMutationGate @Inject constructor() {
          */
         fun blockPermanently() {
             check(!released) { "写入 lease 已释放" }
-            gate.permanentlyBlocked = true
+            gate.forceBlockPermanently()
         }
 
         /** 释放独占权；永久阻断状态会保留到进程结束。 */

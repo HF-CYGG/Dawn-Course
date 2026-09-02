@@ -5,10 +5,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** UI 与后台入口共同观察的数据库启动状态，不包含数据库句柄或底层异常。 */
 enum class DatabaseRecoveryEntryMode {
@@ -67,10 +69,17 @@ sealed interface DatabaseStartupInitialization<out T : Any> {
     ) : DatabaseStartupInitialization<Nothing>
 }
 
-/** Ready 发布后的非阻塞完整性责任。 */
-fun interface DatabasePostReadyAction {
+/** Ready 发布后的非阻塞完整性责任；异常回退必须复用同一个 fail-closed 入口。 */
+class DatabasePostReadyAction(
+    private val runAction: suspend () -> DatabasePostReadyResult,
+    private val failClosedAfterUnexpectedException: suspend () -> DatabasePostReadyResult.RecoveryRequired,
+) {
     /** 返回稳定状态转换，不传播底层异常、路径或 SQL 结果。 */
-    suspend fun run(): DatabasePostReadyResult
+    suspend fun run(): DatabasePostReadyResult = runAction()
+
+    /** run 异常时由责任拥有者执行 marker 与写门的不可取消收口。 */
+    suspend fun failClosedAfterUnexpectedException(): DatabasePostReadyResult.RecoveryRequired =
+        failClosedAfterUnexpectedException.invoke()
 }
 
 /** Ready 后动作的稳定结果。 */
@@ -127,18 +136,25 @@ class DatabaseStartupRuntimeController<T : Any>(
                         // 独立协程保证 Ready 发布不等待后台双扫描；action 返回 Recovery 前已经
                         // 完成专用 marker 与写门线性化，Controller 只负责最后的状态切换。
                         scope.launch(ioDispatcher) {
-                            when (val result = runCatching { action.run() }.getOrNull()) {
+                            val result = try {
+                                action.run()
+                            } catch (_: Throwable) {
+                                // Controller 不复制半套 marker/lease 协议；生产 action 自己拥有
+                                // 不可取消的收口入口。若异常来源本身也异常，仍稳定撤销 Ready。
+                                withContext(NonCancellable) {
+                                    runCatching { action.failClosedAfterUnexpectedException() }
+                                        .getOrDefault(
+                                            DatabasePostReadyResult.RecoveryRequired(
+                                                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                                                DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED,
+                                            ),
+                                        )
+                                }
+                            }
+                            when (result) {
                                 DatabasePostReadyResult.Complete -> Unit
                                 is DatabasePostReadyResult.RecoveryRequired -> {
                                     enterRuntimeRecovery(result.reason, result.entryMode)
-                                }
-                                null -> {
-                                    // 生产 action 应把所有异常收敛为稳定结果；不可预期异常至少
-                                    // 撤销 OperationalDataGate，绝不把失败后的 Room 继续视为 Ready。
-                                    enterRuntimeRecovery(
-                                        DatabaseRecoveryReason.IntegrityVerificationFailed,
-                                        DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED,
-                                    )
                                 }
                             }
                         }
