@@ -190,16 +190,16 @@
 - `testDebugUnitTest lintDebug`：通过；其中脚本解析 JavaScript 测试 108/108 通过。
 - `releaseSmoke`：通过；R8、资源压缩、Baseline Profile、APK 大小和 native 门禁均完成。
 - 四种 ABI（`arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64`）的 QuickJS、SQLCipher 及其他要求原生库通过 ELF 16 KB alignment 检查。
-- 最终 `assembleRelease`：通过，352 个任务执行完成。
+- 最终 `assembleRelease`：通过；发布 worktree 明确使用项目根目录正式密钥，成品证书与 v1.0.5.1 完全一致。
 - Android 模拟器：覆盖安装、包信息检查、冷启动和主课表界面烟雾测试通过；未发现启动崩溃。
-- Redmi K90 Pro Max（Android 17）使用相同签名执行 `adb install -r` 覆盖安装：首次安装时间保持不变，活动课表第 1 周由 17 张重复窄卡恢复为 11 张正常宽度课程卡；课程详情、切周返回、刷新和冷启动均保持正确。
+- Redmi K90 Pro Max（Android 17）已使用同代码候选包完成课表回归：活动课表第 1 周由 17 张重复窄卡恢复为 11 张正常宽度课程卡；课程详情、切周返回、刷新和冷启动均保持正确。该设备已安装过误签名候选包，为避免清除用户数据，本轮没有强行覆盖安装重新签名后的正式 APK。
 - 在 Dawn 自建服务关闭的条件下，Redmi K90 Pro Max 的手动检查更新成功回退到 HTTPS 备用节点并展示完整 v1.0.6.0 更新详情，未出现明文流量拒绝或检查失败。
 - 真机安全备份在安装前成功导出并校验（v4，1 个 Profile、1 个学期、23 条课程）；修复不包含 Room 写入或 schema 变更，运行日志未发现应用崩溃、ANR、Room、SQLite、SQLCipher 或迁移异常。
 
 发布前仍需完成以下外部链路验证：
 
 - 在发布级完整验收中继续覆盖 Widget、通知、提醒和自动静音等与本次课表布局修复无直接关系的系统能力。
-- Gitee 发布 APK 已核验为 17,331,080 bytes，SHA-256 与 `version.json` 一致，签名证书与旧版及本地最终构建一致；应用内更新弹窗与主节点失败后的备用链路已完成真机验证。
+- Gitee Release 必须先用本节列出的正式签名 APK 替换旧误签名资产，再更新并推送 `server/version.json`；仅推送 Git 仓库不会自动替换 Gitee Release 资产。
 
 ---
 
@@ -208,9 +208,9 @@
 - **文件名**：`Dawn Course.apk`
 - **applicationId**：`com.dawncourse.app`
 - **versionCode / versionName**：`139 / 1.0.6.0`
-- **文件大小**：17,331,080 bytes
-- **SHA-256**：`8AF04F10094472FE76AD0D701E5BF2E29EE74FF8D1B922B5E69A244F5DA355F5`
-- **签名证书 SHA-256**：`58BB60DD743EB653283B59408E1D78350F27D77CBA3EB7E284168D6BEF34AAFA`
+- **文件大小**：17,351,168 bytes
+- **SHA-256**：`4C1BC33959A4ABA8523A29F98074CAFE30E637E8B36962E32C37946D1857F65F`
+- **签名证书 SHA-256**：`1D4403D318DD5B8B6C2685B5AFB069FB430C6753EBA0DB9B855D4A9BBBC24DE5`
 - **计划下载地址**：<https://gitee.com/YeMiao_cats/Dawn-Course/releases/download/v1.0.6.0/Dawn%20Course.apk>
 
 下载后可使用任意 SHA-256 工具核对文件；只有结果与上面的校验值完全一致时才应安装。
