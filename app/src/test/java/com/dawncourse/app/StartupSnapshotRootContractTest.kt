@@ -43,7 +43,7 @@ class StartupSnapshotRootContractTest {
     }
 
     @Test
-    fun `live refresh delegates latest wins and widget failure handling to StartupSnapshotRuntime`() {
+    fun `snapshot refresh only commits cache and leaves Widget reconciliation to Activity revision effect`() {
         val source = File("src/main/java/com/dawncourse/app/MainViewModel.kt").readText()
         val refreshStart = source.indexOf("suspend fun refreshStartupSnapshot")
         assertTrue("refresh 必须由 LaunchedEffect 结构化等待", refreshStart >= 0)
@@ -51,7 +51,8 @@ class StartupSnapshotRootContractTest {
 
         assertTrue(source.contains("StartupSnapshotRuntime"))
         assertTrue(refresh.contains("startupSnapshotRuntime.replaceLatest"))
-        assertTrue(refresh.contains("runCatching { widgetUpdateRepository.triggerUpdate() }"))
+        assertFalse(refresh.contains("WidgetUpdateRepository"))
+        assertFalse(refresh.contains("triggerUpdate"))
         assertFalse(refresh.contains("viewModelScope.launch"))
     }
 
@@ -62,5 +63,21 @@ class StartupSnapshotRootContractTest {
         assertTrue(source.contains("liveRootReady"))
         assertTrue(source.contains("decision.showLiveRoot"))
         assertTrue(source.contains("startupSnapshotRuntime.releaseVisibleSnapshot()"))
+    }
+
+    @Test
+    fun `Widget only refreshes through the revision effect and never through snapshot or onStart`() {
+        val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
+        val onStart = source.substring(source.indexOf("override fun onStart"), source.indexOf("override fun onStop"))
+        val snapshotEffectStart = source.indexOf("LaunchedEffect(successState)")
+        val revisionEffectStart = source.indexOf("LaunchedEffect(scheduleRevision, widgetForegroundGeneration)")
+
+        assertTrue("Widget 必须由 revision effect 领取", revisionEffectStart >= 0)
+        assertTrue(source.contains("widgetRefreshDeduplicator.runIfCurrent"))
+        assertFalse("首次 onStart 不得直接广播 Widget", onStart.contains("WidgetSyncManager"))
+        assertFalse(
+            "快照写入成功或失败不得成为第二条 Widget 广播路径",
+            source.substring(snapshotEffectStart, revisionEffectStart).contains("WidgetSyncManager"),
+        )
     }
 }

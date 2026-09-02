@@ -13,6 +13,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,7 +66,6 @@ import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
 import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
-import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import com.dawncourse.feature.timetable.StartupTimetableContent
 import com.dawncourse.feature.timetable.toAppSettings
 
@@ -90,14 +90,20 @@ class MainActivity : ComponentActivity() {
     /** 只有数据库 Ready 后才允许创建，RecoveryRequired 时始终为 null。 */
     private var mainViewModel: MainViewModel? = null
 
+    /** 首次 onStart 与 Success effect 共用 0；回到前台后 effect 使用新 generation 自愈一次。 */
+    private val widgetRefreshDeduplicator = WidgetRefreshDeduplicator()
+    private var widgetForegroundGeneration by mutableLongStateOf(0L)
+
     override fun onStart() {
         super.onStart()
-        // 每次回到前台时，强制刷新 Widget，以防系统时间变更或其他状态变化未及时同步
-        if (!isBenchmarkMode &&
-            databaseStartupRuntime.readiness() == OperationalDataReadiness.READY
-        ) {
-            WidgetSyncManager.updateWidgetNow(this)
-        }
+        // 与首次 Success effect 共用 generation；不在生命周期路径另起一条 Widget 广播。
+        widgetForegroundGeneration = widgetRefreshDeduplicator.onForegroundStarted()
+    }
+
+    override fun onStop() {
+        // 取消旧前台尚未触发的请求；下一次 onStart 会取得可自愈的新 generation。
+        widgetRefreshDeduplicator.onForegroundStopped()
+        super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -262,9 +268,11 @@ class MainActivity : ComponentActivity() {
                 // 因此 WorkManager 的调度条件必须与上述“任一功能开关”一致：
                 // - 只要【上课提醒】、【自动静音】或【课程状态通知】任一开启，就需要周期保底
                 // - 三者都关闭时，仍先执行一次即时对账以清理旧 Alarm/通知，再取消周期保底任务
-                // - revision 同时包含当前学期和课程字段，编辑、导入、还原后都会触发即时收敛
+                // - revision 同时包含当前学期及 Widget 显示/筛选字段（含教师、颜色），编辑、导入、还原后都会触发即时收敛
                 if (!isBenchmarkMode) {
-                    LaunchedEffect(scheduleRevision) {
+                    LaunchedEffect(scheduleRevision, widgetForegroundGeneration) {
+                        val widgetRefreshRequest = widgetRefreshDeduplicator.claim(scheduleRevision)
+                            ?: return@LaunchedEffect
                         // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
                         // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
                         runCatching {
@@ -273,8 +281,16 @@ class MainActivity : ComponentActivity() {
                                     applicationContext,
                                     forceReplay = false,
                                 )
-                                // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
-                                WidgetSyncManager.updateWidgetNow(applicationContext)
+                                // 仅最后一代 effect 可以触发 Widget；快照提交路径不会额外广播。
+                                widgetRefreshDeduplicator.runIfCurrentCatching(widgetRefreshRequest) {
+                                    WidgetSyncManager.updateWidgetNow(applicationContext)
+                                }?.let { error ->
+                                    android.util.Log.w(
+                                        "MainActivity",
+                                        "widget refresh failed",
+                                        error,
+                                    )
+                                }
                                 if (scheduleRevision.hasEnabledSystemSchedule) {
                                     ReminderScheduler.scheduleDailyWork(applicationContext)
                                 } else {

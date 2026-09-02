@@ -77,14 +77,8 @@ class StartupSnapshotRuntime(
         }
     }
 
-    /**
-     * 只提交调用时仍为 latest 的完整快照。回调位于同一代际/mutex 检查后，调用方可将
-     * Widget 广播作为 best-effort 放入其中；其异常不会影响已成功的快照替换。
-     */
-    suspend fun replaceLatest(
-        snapshot: StartupSnapshot,
-        onLatestCommitted: () -> Unit = {},
-    ): Boolean {
+    /** 只提交调用时仍为 latest 的完整快照；副作用由调用方之外的单一实时对账路径负责。 */
+    suspend fun replaceLatest(snapshot: StartupSnapshot): Boolean {
         if (invalidated.get()) return false
         val requestGeneration = mutationGeneration.incrementAndGet()
         if (invalidated.get()) return false
@@ -102,8 +96,6 @@ class StartupSnapshotRuntime(
             if (!replaced || invalidated.get() || mutationGeneration.get() != requestGeneration) {
                 return@withLock false
             }
-            // Widget 只是旁路同步；广播异常绝不能把成功替换升级为进程级崩溃。
-            runCatching { onLatestCommitted() }
             true
         }
     }

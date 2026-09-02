@@ -10,7 +10,6 @@ import com.dawncourse.core.domain.model.ActiveTimetableContext
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
-import com.dawncourse.core.domain.repository.WidgetUpdateRepository
 import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.domain.model.createStartupSnapshot
 import com.dawncourse.feature.timetable.notification.MuteRecoveryUserActionController
@@ -75,7 +74,9 @@ data class ScheduleCourseRevision(
     val id: Long,
     val semesterId: Long,
     val name: String,
+    val teacher: String,
     val location: String,
+    val color: String,
     val dayOfWeek: Int,
     val startSection: Int,
     val duration: Int,
@@ -132,7 +133,9 @@ data class ScheduleRevision(
                     id = course.id,
                     semesterId = course.semesterId,
                     name = course.name,
+                    teacher = course.teacher,
                     location = course.location,
+                    color = course.color,
                     dayOfWeek = course.dayOfWeek,
                     startSection = course.startSection,
                     duration = course.duration,
@@ -224,7 +227,6 @@ class MainViewModel @Inject constructor(
     courseRepository: CourseRepository,
     private val muteRecoveryController: MuteRecoveryUserActionController,
     private val startupSnapshotRuntime: StartupSnapshotRuntime,
-    private val widgetUpdateRepository: WidgetUpdateRepository,
 ) : ViewModel() {
     init {
         // 进程重建时从持久状态补齐专用恢复 Work；不依赖通知权限或触发器注册表。
@@ -297,9 +299,7 @@ class MainViewModel @Inject constructor(
         } catch (_: Throwable) {
             return
         }
-        startupSnapshotRuntime.replaceLatest(snapshot) {
-            // Widget 更新独立于快照持久化，广播异常只能放弃本次旁路同步。
-            runCatching { widgetUpdateRepository.triggerUpdate() }
-        }
+        // Widget 仅由 MainActivity 的 scheduleRevision effect 对账，快照成功或失败均不广播。
+        startupSnapshotRuntime.replaceLatest(snapshot)
     }
 }

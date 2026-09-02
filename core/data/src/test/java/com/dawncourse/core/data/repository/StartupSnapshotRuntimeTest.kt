@@ -13,6 +13,7 @@ import com.dawncourse.core.domain.model.StartupSnapshotVisualSettings
 import com.dawncourse.core.domain.model.StartupSnapshotWallpaperMode
 import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import com.dawncourse.core.domain.repository.StartupSnapshotReadResult
+import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -182,7 +183,9 @@ class StartupSnapshotRuntimeTest {
     }
 
     @Test
-    fun latestSnapshotSurvivesThrowingWidgetCallbackWithoutUncaughtException() = runBlocking {
+    fun cancelledOlderGenerationCannotReportLatestCommitAfterNewerRequest() = runBlocking {
+        val firstWriteStarted = CompletableDeferred<Unit>()
+        val allowFirstWrite = CompletableDeferred<Unit>()
         val repository = object : StartupSnapshotRepository {
             var persisted: StartupSnapshot? = null
 
@@ -193,6 +196,10 @@ class StartupSnapshotRuntimeTest {
             ) = StartupSnapshotReadResult.Missing
 
             override suspend fun replace(snapshot: StartupSnapshot): Boolean {
+                if (snapshot.profile.uuid == "A") {
+                    firstWriteStarted.complete(Unit)
+                    withContext(NonCancellable) { allowFirstWrite.await() }
+                }
                 persisted = snapshot
                 return true
             }
@@ -202,21 +209,24 @@ class StartupSnapshotRuntimeTest {
             }
         }
         val runtime = runtime(repository)
-        val uncaught = mutableListOf<Throwable>()
-        val originalHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { _, throwable -> uncaught += throwable }
-        try {
-            val snapshot = snapshot("widget")
-            assertTrue(
-                runtime.replaceLatest(snapshot) {
-                    error("模拟 Widget 广播异常")
-                }
-            )
-            assertEquals(snapshot, repository.persisted)
-            assertTrue("Widget 异常不能逃逸为协程/线程未捕获异常", uncaught.isEmpty())
-        } finally {
-            Thread.setDefaultUncaughtExceptionHandler(originalHandler)
-        }
+        val older = async { runtime.replaceLatest(snapshot("A")) }
+        firstWriteStarted.await()
+        val latest = async(start = CoroutineStart.UNDISPATCHED) { runtime.replaceLatest(snapshot("B")) }
+
+        older.cancel()
+        allowFirstWrite.complete(Unit)
+
+        assertTrue("旧代取消后不得报告成功提交", older.isCancelled)
+        assertTrue(latest.await())
+        assertEquals(snapshot("B"), repository.persisted)
+    }
+
+    @Test
+    fun snapshotRuntimeHasNoWidgetCallbackPath() {
+        val source = File("src/main/java/com/dawncourse/core/data/repository/StartupSnapshotRuntime.kt").readText()
+
+        assertFalse("快照 Runtime 不得拥有第二条 Widget 刷新入口", source.contains("onLatestCommitted"))
+        assertFalse("快照 Runtime 不得引用 Widget", source.contains("Widget"))
     }
 
     @Test

@@ -18,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -30,10 +31,21 @@ class StartupSnapshotEncryptedStoreTest {
     private val now = 1_750_000_000_000L
 
     @Test
-    fun envelopeRejectsMagicVersionAndUnknownPayloadEnum() {
+    fun envelopeRejectsMagicAndProtocolVersion() {
         assertEquals(null, StartupSnapshotPayloadCodec.decode(byteArrayOf(0, 1, 2)))
         assertEquals(null, StartupSnapshotPayloadCodec.decode(payloadWithUnknownProtocolVersion()))
-        assertEquals(null, StartupSnapshotPayloadCodec.decode(payloadWithUnknownThemeEnum()))
+    }
+
+    @Test
+    fun completeLegalPayloadRejectsUnknownVisualEnumCodes() {
+        val payload = StartupSnapshotPayloadCodec.encode(signedSnapshot())
+
+        visualEnumOffsets(payload).forEach { (name, offset) ->
+            val mutated = payload.copyOf()
+            ByteBuffer.wrap(mutated, offset, Int.SIZE_BYTES).putInt(99)
+
+            assertEquals("$name 未知 wire code 必须 fail-closed", null, StartupSnapshotPayloadCodec.decode(mutated))
+        }
     }
 
     @Test
@@ -123,14 +135,15 @@ class StartupSnapshotEncryptedStoreTest {
             assertTrue("replace 应停在 AtomicFile 提交前", artifactStore.commitStarted.await(2, TimeUnit.SECONDS))
 
             val read = executor.submit<StartupSnapshotReadResult> {
+                artifactStore.readTaskStarted.countDown()
                 store.read(expectedProfileId = 7L, nowEpochMillis = now, expectedZoneId = "UTC")
             }
-            // 正确实现会在 artifact 锁外阻塞，因而此处不能触碰 `.new`。旧实现则会锁外
-            // 读取并立即命中该屏障，随后在写入提交后执行迟到删除。
-            assertFalse(
-                "read 不得在 AtomicFile 提交前绕过 artifact 锁",
-                artifactStore.readAttempted.await(200, TimeUnit.MILLISECONDS),
+            assertTrue("reader 任务必须已启动", artifactStore.readTaskStarted.await(2, TimeUnit.SECONDS))
+            assertTrue(
+                "reader 必须已尝试取得 artifact 锁",
+                artifactStore.lockAcquireAttempted.await(2, TimeUnit.SECONDS),
             )
+            assertEquals("读者等待锁时不得触碰 `.new`", 1L, artifactStore.readAttempted.count)
             artifactStore.allowCommit.countDown()
 
             assertTrue(replace.get(2, TimeUnit.SECONDS))
@@ -257,12 +270,39 @@ class StartupSnapshotEncryptedStoreTest {
         0, 0, 0, 2,
     )
 
-    private fun payloadWithUnknownThemeEnum(): ByteArray = byteArrayOf(
-        'D'.code.toByte(), 'S'.code.toByte(), 'S'.code.toByte(), 'P'.code.toByte(),
-        0, 0, 0, 1,
-        // Remaining bytes are deliberately incomplete. Strict decoder must reject rather than infer defaults.
-        0, 0, 0, 99,
-    )
+    /** 仅解析固定合法样本的前缀，精确定位 visual enum，而非用截断字节伪造未知枚举。 */
+    private fun visualEnumOffsets(payload: ByteArray): Map<String, Int> {
+        var offset = 4 + Int.SIZE_BYTES + Long.SIZE_BYTES
+        offset = skipText(payload, offset) // profile uuid
+        offset += 1 // semester presence；signedSnapshot 中明确为 absent
+        offset += Int.SIZE_BYTES // empty course count
+        offset += 1 // dynamicColor
+        offset += 1 // wallpaperUri absence
+        offset += Int.SIZE_BYTES // transparency
+        val fontStyle = offset
+        offset += Int.SIZE_BYTES
+        val dividerType = offset
+        offset += Int.SIZE_BYTES
+        offset += Int.SIZE_BYTES // divider width
+        offset = skipText(payload, offset) // divider color
+        offset += Int.SIZE_BYTES * 4 // divider alpha、course height、max sections、empty time count
+        offset += Int.SIZE_BYTES * 2 // card radius、card alpha
+        offset += 1 // show icons
+        val wallpaperMode = offset
+        offset += Int.SIZE_BYTES
+        val themeMode = offset
+        return linkedMapOf(
+            "fontStyle" to fontStyle,
+            "dividerType" to dividerType,
+            "wallpaperMode" to wallpaperMode,
+            "themeMode" to themeMode,
+        )
+    }
+
+    private fun skipText(payload: ByteArray, offset: Int): Int {
+        val length = ByteBuffer.wrap(payload, offset, Int.SIZE_BYTES).int
+        return offset + Int.SIZE_BYTES + length
+    }
 
     private class FixedKeyProvider(private val key: javax.crypto.SecretKey) : KeyEncryptionKeyProvider {
         override fun getExisting(alias: String) = KeyEncryptionKeyResult.Available(key)
@@ -306,18 +346,23 @@ class StartupSnapshotEncryptedStoreTest {
     private class CommitBarrierArtifactStore : StartupSnapshotArtifactStore {
         private val lock = ReentrantLock()
         private var bytes: ByteArray? = null
-        private var writeInProgress = false
+        @Volatile private var writeInProgress = false
         private var shouldBlockCommit = false
         val commitStarted = CountDownLatch(1)
         val allowCommit = CountDownLatch(1)
         val readAttempted = CountDownLatch(1)
+        val readTaskStarted = CountDownLatch(1)
+        val lockAcquireAttempted = CountDownLatch(1)
 
-        override fun <T> withExclusiveLock(block: () -> T): T = lock.run {
-            lock()
-            try {
-                block()
-            } finally {
-                unlock()
+        override fun <T> withExclusiveLock(block: () -> T): T {
+            if (writeInProgress) lockAcquireAttempted.countDown()
+            return lock.run {
+                lock()
+                try {
+                    block()
+                } finally {
+                    unlock()
+                }
             }
         }
 

@@ -59,7 +59,7 @@ class ScheduleRevisionTest {
     }
 
     @Test
-    fun `课程名称与地点变化都会改变revision`() {
+    fun `Widget 展示字段变化都会改变 revision`() {
         val before = ScheduleRevision.create(settings, semester, listOf(course))
 
         assertNotEquals(
@@ -69,6 +69,14 @@ class ScheduleRevisionTest {
         assertNotEquals(
             before,
             ScheduleRevision.create(settings, semester, listOf(course.copy(location = "B202")))
+        )
+        assertNotEquals(
+            before,
+            ScheduleRevision.create(settings, semester, listOf(course.copy(teacher = "李老师")))
+        )
+        assertNotEquals(
+            before,
+            ScheduleRevision.create(settings, semester, listOf(course.copy(color = "#123456")))
         )
     }
 
