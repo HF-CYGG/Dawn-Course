@@ -14,6 +14,10 @@ android {
 
     targetProjectPath = ":app"
 
+    sourceSets.getByName("main") {
+        kotlin.srcDir("src/shared/kotlin")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

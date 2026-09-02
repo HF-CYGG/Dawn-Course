@@ -15,9 +15,6 @@ val releaseSmokeEnabled = providers.gradleProperty("dawn.releaseSmoke")
     .map { it.toBooleanStrict() }
     .orElse(false)
 
-val DAWN_COURSE_RULE_PREFIX = "Lcom/dawncourse/"
-val BENCHMARK_RULE_PREFIX = "Lcom/dawncourse/app/benchmark/"
-
 android {
     namespace = "com.dawncourse.app"
     compileSdk = 37
@@ -129,6 +126,10 @@ android {
         getByName("nonMinifiedRelease") {
             kotlin.srcDir("src/benchmark/java")
         }
+        getByName("test") {
+            // 复用生成器的纯 Kotlin 规则策略，在 JVM 上验证实际过滤行为，无需安装测试 APK。
+            kotlin.srcDir("../baselineprofile/src/shared/kotlin")
+        }
     }
 }
 
@@ -151,6 +152,30 @@ baselineProfile {
     // 设备测试显式触发，避免普通 assembleRelease 意外启动 instrumentation。
     automaticGenerationDuringBuild = false
     saveInSrc = true
+}
+
+tasks.register("verifyBaselineProfileRulePolicyFixtures") {
+    group = "verification"
+    description = "使用代表性规则集合验证 release Profile 门禁的实际输入行为。"
+    doLast {
+        val dawnRule = "HLcom/dawncourse/app/MainActivity;->onCreate()V"
+        val frameworkRule = "HLandroidx/compose/runtime/Recomposer;->runRecomposeAndApplyChanges()V"
+        val benchmarkRule = "HLcom/dawncourse/app/benchmark/BenchmarkSeedProvider;->call()V"
+        val dawnAndFrameworkRules = listOf(dawnRule, frameworkRule)
+
+        check(!isValidReleaseProfile(emptyList())) {
+            "release Profile 门禁错误接受空规则集合。"
+        }
+        check(!isValidReleaseProfile(listOf(benchmarkRule))) {
+            "release Profile 门禁错误接受仅含 benchmark-only 规则的集合。"
+        }
+        check(isValidReleaseProfile(dawnAndFrameworkRules)) {
+            "release Profile 门禁错误拒绝 Dawn Course 与框架规则组成的 Profile。"
+        }
+        check(!isValidReleaseProfile(dawnAndFrameworkRules + benchmarkRule)) {
+            "release Profile 门禁错误接受含 benchmark-only 规则的 Profile。"
+        }
+    }
 }
 
 tasks.register("verifyGeneratedBaselineProfileSource") {
@@ -201,11 +226,9 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             }
             val rules = profile.readLines().filter(String::isNotBlank)
             check(rules.isNotEmpty()) { "生成 Profile 没有规则：${profile.name}" }
-            check(rules.any { it.contains(DAWN_COURSE_RULE_PREFIX) && !it.contains(BENCHMARK_RULE_PREFIX) }) {
-                "生成 Profile 缺少 Dawn Course 的生产规则：${profile.name}"
-            }
-            check(rules.none { it.contains(BENCHMARK_RULE_PREFIX) }) {
-                "生成 Profile 泄漏 benchmark-only 规则：${profile.name}"
+            check(isValidReleaseProfile(rules)) {
+                "生成 Profile 必须包含 Dawn Course 的生产规则，且不得泄漏 benchmark-only 规则：" +
+                    profile.name
             }
             check(mergedProfile.isFile && mergedProfile.length() > 0L) {
                 "release 合并输出缺少非空 Profile：${mergedProfile.absolutePath}"
@@ -236,6 +259,15 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             "生产 release Manifest 不得包含 BenchmarkSeedProvider。"
         }
     }
+}
+
+/** release Profile 的最小门禁：必须含生产 Dawn 规则，且不能含 benchmark-only 规则。 */
+fun isValidReleaseProfile(rules: Iterable<String>): Boolean {
+    val dawnCourseRulePrefix = "Lcom/dawncourse/"
+    val benchmarkRulePrefix = "Lcom/dawncourse/app/benchmark/"
+    return rules.any { rule ->
+        rule.contains(dawnCourseRulePrefix) && !rule.contains(benchmarkRulePrefix)
+    } && rules.none { rule -> rule.contains(benchmarkRulePrefix) }
 }
 
 tasks.register("verifyPackagedReleaseBaselineProfile") {
