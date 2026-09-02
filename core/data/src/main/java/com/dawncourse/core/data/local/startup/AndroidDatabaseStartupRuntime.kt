@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.AppDatabaseMigrations
 import com.dawncourse.core.data.local.entity.TimetableProfileEntity
+import com.dawncourse.core.data.repository.OperationalDataMutationGate
 import com.dawncourse.core.domain.repository.OperationalDataGate
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import com.dawncourse.core.domain.repository.SettingsRepository
@@ -42,12 +43,31 @@ class DatabaseStartupRuntime @Inject constructor(
     settingsRepository: SettingsRepository,
     activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore,
     private val backupRecoveryRequiredStore:
-        com.dawncourse.core.data.repository.BackupRecoveryRequiredStore
+        com.dawncourse.core.data.repository.BackupRecoveryRequiredStore,
+    private val mutationGate: OperationalDataMutationGate,
 ) : OperationalDataGate {
     private val databaseFile = context.getDatabasePath(DATABASE_NAME)
     private val migrationFiles = AtomicDatabaseMigrationFiles(databaseFile)
     private val recoveryFiles = AndroidDatabaseRecoveryFiles(context, databaseFile)
     private val roomFactory = SqlCipherRoomDatabaseFactory(context)
+    private val integrityVerificationStateStore = IntegrityVerificationStateStore(
+        AndroidIntegrityVerificationStatePersistence(
+            File(context.noBackupFilesDir, "database-integrity/integrity-state-v1"),
+        ),
+    )
+    private val integrityRecoveryRequiredStore = IntegrityRecoveryRequiredStore(
+        AndroidIntegrityVerificationStatePersistence(
+            File(context.noBackupFilesDir, "recovery/integrity_verification_required_v1"),
+        ),
+    )
+    private val integrityCoordinator = DatabaseStartupIntegrityCoordinator<AppDatabase>(
+        verifier = roomFactory::verifyIntegrity,
+        completeSuccessfulVerification = {
+            integrityVerificationStateStore.completeSuccessfulVerification(System.currentTimeMillis())
+        },
+        persistIntegrityRecoveryMarker = integrityRecoveryRequiredStore::markRequiredAndConfirm,
+        mutationGate = mutationGate,
+    )
     private val startupCriticalSection = AndroidDatabaseStartupCriticalSection(databaseFile)
     private val controller = DatabaseStartupRuntimeController(
         criticalSection = startupCriticalSection,
@@ -65,9 +85,11 @@ class DatabaseStartupRuntime @Inject constructor(
             recoveryFiles = recoveryFiles,
             roomFactory = roomFactory
         ),
-        // 备份恢复补偿失败标记与 recoveryFiles 标记同生命周期：任一恢复动作提交成功后
-        // 一并清除，否则下次启动会永久重入恢复。
-        clearBackupRecoveryRequired = backupRecoveryRequiredStore::clearRequired
+        // 两种在线恢复责任与 recoveryFiles 标记同生命周期：显式恢复或放弃提交后一起清除。
+        clearRecoveryResponsibilities = {
+            backupRecoveryRequiredStore.clearRequired()
+            integrityRecoveryRequiredStore.clearRequiredAndConfirm()
+        },
     )
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -79,7 +101,7 @@ class DatabaseStartupRuntime @Inject constructor(
         controller.start(applicationScope)
     }
 
-    /** DataModule 只能取得 Runtime 已打开并验证的同一 Room 实例。 */
+    /** DataModule 只取得 Runtime 已完成首次连接和条件化同步门禁的同一 Room 实例。 */
     fun requireReadyDatabase(): AppDatabase = controller.requireReadyHandle()
 
     /** Worker/Widget/Receiver 的无阻塞启动守卫。 */
@@ -140,35 +162,47 @@ class DatabaseStartupRuntime @Inject constructor(
         )
     }
 
-    /** marker 首次写入失败时，只允许从阻塞恢复页重试这一动作。 */
-    suspend fun retryBackupRestoreRecoveryMarker(): Boolean {
+    /** marker 首次写入失败时，按稳定恢复原因重试正确的专用 marker。 */
+    suspend fun retryRecoveryMarker(): Boolean {
         val state = state.value as? DatabaseRuntimeState.RecoveryRequired ?: return false
         if (state.entryMode != DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED) return false
-        return try {
-            backupRecoveryRequiredStore.markRequired()
-            check(backupRecoveryRequiredStore.isRequired()) {
-                "恢复保护标记未能确认写入"
-            }
+        val markerPersisted = DatabaseRecoveryMarkerRetryCoordinator(
+            persistBackupMarker = {
+                backupRecoveryRequiredStore.markRequired()
+                check(backupRecoveryRequiredStore.isRequired()) {
+                    "恢复保护标记未能确认写入"
+                }
+            },
+            persistIntegrityMarker = integrityRecoveryRequiredStore::markRequiredAndConfirm,
+        ).retry(state.reason)
+        if (markerPersisted) {
             controller.enterRuntimeRecovery(
-                reason = DatabaseRecoveryReason.RestoreFailed,
+                reason = state.reason,
                 entryMode = DatabaseRecoveryEntryMode.RESTART_REQUIRED,
             )
-            true
-        } catch (_: Throwable) {
-            false
         }
+        return markerPersisted
     }
+
+    /** 保留旧调用可见性；实际按当前 reason 路由，不再强制写备份 marker。 */
+    @Deprecated("请使用 retryRecoveryMarker")
+    suspend fun retryBackupRestoreRecoveryMarker(): Boolean = retryRecoveryMarker()
 
     /** 外层锁已持有；这里不得等待 UI 或发起需要用户输入的操作。 */
     private fun initializeWhileLocked(): DatabaseStartupInitialization<AppDatabase> {
+        // 在读取/打开任何数据库状态前原子承担本次启动责任；落盘失败由 Controller 进入
+        // StartupBlocked，绝不能在缺少崩溃证据时继续发布 Ready。
+        val integrityStartupSnapshot = integrityVerificationStateStore.beginStartup()
+        var recoveredIncompleteMigrationThisRun = false
+        val recoveryMarkerSnapshot = DatabaseStartupRecoveryMarkerSnapshot.capture(
+            noBackupFilesDirectory = context.noBackupFilesDir,
+            databaseFile = databaseFile,
+        )
         DawnStartupTrace.section(DawnStartupTrace.RECOVERY_CHECK) {
             // 常态冷启动只扫描每个 marker 所在目录一次。任何已有 marker 或目录无法可靠读取
             // 时，都必须完整执行原有顺序，不能因优化遗漏 journal、恢复页状态或补偿 marker。
             if (
-                DatabaseStartupRecoveryMarkerSnapshot.capture(
-                    noBackupFilesDirectory = context.noBackupFilesDir,
-                    databaseFile = databaseFile,
-                ).requiresFullRecoveryCheck
+                recoveryMarkerSnapshot.requiresFullRecoveryCheck
             ) {
                 when (recoveryBootstrap.recoverInterruptedInstall()) {
                     DatabaseRecoveryInstallRecovery.FAILED -> {
@@ -189,8 +223,14 @@ class DatabaseStartupRuntime @Inject constructor(
                     }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
                     return DatabaseStartupInitialization.RecoveryRequired(reconciled)
                 }
-                if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
-                    return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+                when (migrationFiles.recoverIncompleteMigration()) {
+                    DatabaseMigrationRecovery.Failed -> {
+                        return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+                    }
+                    DatabaseMigrationRecovery.Recovered -> {
+                        recoveredIncompleteMigrationThisRun = true
+                    }
+                    DatabaseMigrationRecovery.NoWork -> Unit
                 }
                 // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
                 // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
@@ -201,6 +241,11 @@ class DatabaseStartupRuntime @Inject constructor(
                 // 与 recoveryFiles marker 一并清除。
                 if (backupRecoveryRequiredStore.isRequired()) {
                     return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
+                }
+                // 专用完整性 marker 位于备份 marker 之后，保持既有 journal→备份恢复顺序；
+                // 此时 Room 尚未打开，可以安全写 recovery-state-v1 并物理隔离主库。
+                if (integrityRecoveryRequiredStore.requiresRecovery()) {
+                    return enterRecovery(DatabaseRecoveryReason.IntegrityVerificationFailed)
                 }
             }
         }
@@ -213,19 +258,36 @@ class DatabaseStartupRuntime @Inject constructor(
             is DatabaseStartupPlan.RecoveryRequired -> enterRecovery(plan.reason)
             is DatabaseStartupPlan.CreateNewEncryptedDatabase -> openAndPublish(
                 passphrase = plan.passphrase,
-                migratedPlaintextThisRun = false
+                migratedPlaintextThisRun = false,
+                recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                integrityStartupSnapshot = integrityStartupSnapshot,
+                recoveryResponsibilityMarkerPresent =
+                    recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
             )
             is DatabaseStartupPlan.OpenEncryptedDatabase -> openAndPublish(
                 passphrase = plan.passphrase,
-                migratedPlaintextThisRun = false
+                migratedPlaintextThisRun = false,
+                recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                integrityStartupSnapshot = integrityStartupSnapshot,
+                recoveryResponsibilityMarkerPresent =
+                    recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
             )
-            is DatabaseStartupPlan.EncryptPlaintextDatabase -> migrateOpenAndPublish(plan.passphrase)
+            is DatabaseStartupPlan.EncryptPlaintextDatabase -> migrateOpenAndPublish(
+                passphrase = plan.passphrase,
+                recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                integrityStartupSnapshot = integrityStartupSnapshot,
+                recoveryResponsibilityMarkerPresent =
+                    recoveryMarkerSnapshot.recoveryResponsibilityMarkerPresent,
+            )
         }
     }
 
     /** 明文换入成功后同一次启动仍保留 pre-image，下一次成功冷开才清理。 */
     private fun migrateOpenAndPublish(
-        passphrase: SqlCipherPassphrase
+        passphrase: SqlCipherPassphrase,
+        recoveredIncompleteMigrationThisRun: Boolean,
+        integrityStartupSnapshot: IntegrityVerificationStartupSnapshot,
+        recoveryResponsibilityMarkerPresent: Boolean,
     ): DatabaseStartupInitialization<AppDatabase> {
         val migrator = PlaintextToSqlCipherMigrator(
             files = migrationFiles,
@@ -242,6 +304,9 @@ class DatabaseStartupRuntime @Inject constructor(
                         passphrase = passphrase,
                         migratedPlaintextThisRun = true,
                         deferRecoveryQuarantine = true,
+                        recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                        integrityStartupSnapshot = integrityStartupSnapshot,
+                        recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
                     )
                 ) {
                     is DatabaseStartupInitialization.Ready -> {
@@ -274,11 +339,14 @@ class DatabaseStartupRuntime @Inject constructor(
         }
     }
 
-    /** Room 只有完整打开并通过 SQLite/SQLCipher 校验后才会发布给 Hilt。 */
+    /** Room 完整打开后按策略同步校验或附带 Ready 后后台校验责任。 */
     private fun openAndPublish(
         passphrase: SqlCipherPassphrase,
         migratedPlaintextThisRun: Boolean,
         deferRecoveryQuarantine: Boolean = false,
+        recoveredIncompleteMigrationThisRun: Boolean,
+        integrityStartupSnapshot: IntegrityVerificationStartupSnapshot,
+        recoveryResponsibilityMarkerPresent: Boolean,
     ): DatabaseStartupInitialization<AppDatabase> {
         fun fail(reason: DatabaseRecoveryReason): DatabaseStartupInitialization.RecoveryRequired =
             if (deferRecoveryQuarantine) {
@@ -289,11 +357,33 @@ class DatabaseStartupRuntime @Inject constructor(
                 enterRecovery(reason)
             }
 
+        val verificationMode = IntegrityVerificationPolicy.decide(
+            IntegrityVerificationPolicyInput(
+                recoveredIncompleteMigrationThisRun = recoveredIncompleteMigrationThisRun,
+                recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
+                previousDatabaseStartupIncomplete =
+                    integrityStartupSnapshot.previousDatabaseStartupIncomplete,
+                migratedPlaintextThisRun = migratedPlaintextThisRun,
+                // 当前版本没有 rekey/raw-key 切换；保留显式输入，后续接入时不能被新时间戳绕过。
+                rekeyOrKeyModeChangedThisRun = false,
+                persistentStateUnreadable = integrityStartupSnapshot.persistentStateUnreadable,
+                nowEpochMillis = System.currentTimeMillis(),
+                lastSuccessfulVerificationEpochMillis =
+                    integrityStartupSnapshot.lastSuccessfulVerificationEpochMillis,
+            ),
+        )
         val database = try {
-            roomFactory.openAndVerify(DATABASE_NAME, passphrase)
+            roomFactory.open(DATABASE_NAME, passphrase)
         } catch (_: Throwable) {
             passphrase.close()
             return fail(DatabaseRecoveryReason.DatabaseOpenFailed)
+        }
+        // 同步模式保持既有 fail-closed：首次连接后立即扫描，任何 Profile 初始化或清理写入
+        // 都不得先于完整性结论。成功责任仍延迟到全部 Ready 条件完成后原子提交。
+        if (!integrityCoordinator.verifyBeforeReady(verificationMode, database)) {
+            passphrase.close()
+            database.close()
+            return fail(DatabaseRecoveryReason.IntegrityVerificationFailed)
         }
         val profileReady = runCatching {
             runBlocking {
@@ -332,7 +422,15 @@ class DatabaseStartupRuntime @Inject constructor(
             database.close()
             return fail(DatabaseRecoveryReason.RecoveryStateCorrupt)
         }
-        return DatabaseStartupInitialization.Ready(database, migratedPlaintextThisRun)
+        if (!integrityCoordinator.completeBeforeReady(verificationMode)) {
+            database.close()
+            return fail(DatabaseRecoveryReason.IntegrityVerificationFailed)
+        }
+        return DatabaseStartupInitialization.Ready(
+            handle = database,
+            migratedPlaintextThisRun = migratedPlaintextThisRun,
+            postReadyAction = integrityCoordinator.postReadyAction(verificationMode, database),
+        )
     }
 
     /** 先原子隔离现存主库，再持久化可见恢复状态；任何失败都升级为状态损坏。 */
@@ -360,6 +458,8 @@ class DatabaseStartupRuntime @Inject constructor(
  */
 internal data class DatabaseStartupRecoveryMarkerSnapshot(
     val requiresFullRecoveryCheck: Boolean,
+    /** 任何恢复安装/恢复原因/在线责任 marker 都强制本次同步校验。 */
+    val recoveryResponsibilityMarkerPresent: Boolean = false,
 ) {
     companion object {
         fun capture(
@@ -370,14 +470,22 @@ internal data class DatabaseStartupRecoveryMarkerSnapshot(
             val backupEntries = readDirectoryNames(File(noBackupFilesDirectory, "recovery"))
             val databaseEntries = readDirectoryNames(requireNotNull(databaseFile.parentFile))
             if (recoveryEntries == null || backupEntries == null || databaseEntries == null) {
-                return DatabaseStartupRecoveryMarkerSnapshot(requiresFullRecoveryCheck = true)
+                return DatabaseStartupRecoveryMarkerSnapshot(
+                    requiresFullRecoveryCheck = true,
+                    recoveryResponsibilityMarkerPresent = true,
+                )
             }
+            val migrationJournalPresent =
+                "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries
+            val recoveryResponsibilityMarkerPresent =
+                "bootstrap-install-v1" in recoveryEntries ||
+                    "recovery-state-v1" in recoveryEntries ||
+                    "backup_restore_required" in backupEntries ||
+                    "integrity_verification_required_v1" in backupEntries ||
+                    migrationJournalPresent
             return DatabaseStartupRecoveryMarkerSnapshot(
-                requiresFullRecoveryCheck =
-                    "bootstrap-install-v1" in recoveryEntries ||
-                        "recovery-state-v1" in recoveryEntries ||
-                        "backup_restore_required" in backupEntries ||
-                        "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries,
+                requiresFullRecoveryCheck = recoveryResponsibilityMarkerPresent,
+                recoveryResponsibilityMarkerPresent = recoveryResponsibilityMarkerPresent,
             )
         }
 
@@ -448,11 +556,12 @@ private class AndroidDatabaseStartupCriticalSection(
     }
 }
 
-/** 只创建 SQLCipher Room，且强制打开与双完整性校验后才返回。 */
+/** 创建 SQLCipher Room，并把首次连接与可复用双完整性校验拆成独立步骤。 */
 internal class SqlCipherRoomDatabaseFactory(
     private val context: Context
 ) {
-    fun openAndVerify(
+    /** 构建 Room 并强制取得首次可写连接；本方法不执行耗时双完整性扫描。 */
+    fun open(
         databaseName: String,
         passphrase: SqlCipherPassphrase
     ): AppDatabase {
@@ -469,23 +578,32 @@ internal class SqlCipherRoomDatabaseFactory(
             }
         }
         return try {
-            val opened = DawnStartupTrace.section(DawnStartupTrace.KDF_AND_FIRST_OPEN) {
+            DawnStartupTrace.section(DawnStartupTrace.KDF_AND_FIRST_OPEN) {
                 database.openHelper.writableDatabase
-            }
-            DawnStartupTrace.section(DawnStartupTrace.INTEGRITY_CHECK) {
-                require(readSingleColumn(opened.query("PRAGMA integrity_check")) == listOf("ok")) {
-                    "数据库完整性校验失败"
-                }
-            }
-            DawnStartupTrace.section(DawnStartupTrace.CIPHER_INTEGRITY_CHECK) {
-                require(readSingleColumn(opened.query("PRAGMA cipher_integrity_check")).isEmpty()) {
-                    "SQLCipher 完整性校验失败"
-                }
             }
             database
         } catch (failure: Throwable) {
             database.close()
             throw failure
+        }
+    }
+
+    /**
+     * 在同一已打开 Room 上执行 SQLite 与 SQLCipher 双校验，可供同步和 Ready 后后台复用。
+     *
+     * 失败只抛出固定消息；查询行内容不得写入日志或恢复状态。
+     */
+    fun verifyIntegrity(database: AppDatabase) {
+        val opened = database.openHelper.writableDatabase
+        DawnStartupTrace.section(DawnStartupTrace.INTEGRITY_CHECK) {
+            require(readSingleColumn(opened.query("PRAGMA integrity_check")) == listOf("ok")) {
+                "数据库完整性校验失败"
+            }
+        }
+        DawnStartupTrace.section(DawnStartupTrace.CIPHER_INTEGRITY_CHECK) {
+            require(readSingleColumn(opened.query("PRAGMA cipher_integrity_check")).isEmpty()) {
+                "SQLCipher 完整性校验失败"
+            }
         }
     }
 

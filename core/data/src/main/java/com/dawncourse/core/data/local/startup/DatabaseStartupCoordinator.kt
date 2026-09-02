@@ -83,7 +83,10 @@ enum class DatabaseRecoveryReason {
     RecoveryStateCorrupt,
 
     /** 用户选择的本地或 WebDAV 备份未通过验证或无法原子恢复。 */
-    RestoreFailed
+    RestoreFailed,
+
+    /** Ready 后双完整性校验失败，必须重启后物理隔离。 */
+    IntegrityVerificationFailed,
 }
 
 /** 数据库文件检查器，生产实现与 JVM 测试实现均可替换。 */

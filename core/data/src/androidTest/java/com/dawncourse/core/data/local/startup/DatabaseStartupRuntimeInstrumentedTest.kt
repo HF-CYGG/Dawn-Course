@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.dawncourse.core.data.repository.ActiveProfileSelectionStore
 import com.dawncourse.core.data.repository.BackupRecoveryRequiredStore
+import com.dawncourse.core.data.repository.OperationalDataMutationGate
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
 import com.dawncourse.core.data.repository.settingsDataStore
 import com.dawncourse.core.domain.model.AppSettings
@@ -121,11 +122,41 @@ class DatabaseStartupRuntimeInstrumentedTest {
         reopened.requireReadyDatabase().close()
     }
 
+    @Test
+    fun dedicatedIntegrityMarkerIsQuarantinedOnColdStartAndClearedAfterExplicitRecovery() = runBlocking {
+        val first = newRuntime().also(DatabaseStartupRuntime::start)
+        assertEquals(DatabaseRuntimeState.Ready, awaitTerminal(first))
+        first.requireReadyDatabase().close()
+        val integrityMarker = IntegrityRecoveryRequiredStore(
+            AndroidIntegrityVerificationStatePersistence(
+                File(context.noBackupFilesDir, "recovery/integrity_verification_required_v1"),
+            ),
+        )
+        integrityMarker.markRequiredAndConfirm()
+
+        val failed = newRuntime().also(DatabaseStartupRuntime::start)
+        assertEquals(
+            DatabaseRuntimeState.RecoveryRequired(
+                DatabaseRecoveryReason.IntegrityVerificationFailed,
+            ),
+            awaitTerminal(failed),
+        )
+        assertFalse("仍被 Room 使用的进程内路径不得在线移动；冷启动才隔离主库", databaseFile.exists())
+        assertTrue(File(databaseFile.path + ".recovery-quarantine").exists())
+
+        assertEquals(DatabaseRecoveryActionResult.RestartRequired, failed.abandonInaccessibleData())
+        assertFalse(integrityMarker.requiresRecovery())
+        val reopened = newRuntime().also(DatabaseStartupRuntime::start)
+        assertEquals(DatabaseRuntimeState.Ready, awaitTerminal(reopened))
+        reopened.requireReadyDatabase().close()
+    }
+
     private fun newRuntime(): DatabaseStartupRuntime = DatabaseStartupRuntime(
         context = context,
         settingsRepository = SettingsRepositoryImpl(context),
         activeProfileSelectionStore = ActiveProfileSelectionStore(context.settingsDataStore),
-        backupRecoveryRequiredStore = BackupRecoveryRequiredStore(context)
+        backupRecoveryRequiredStore = BackupRecoveryRequiredStore(context),
+        mutationGate = OperationalDataMutationGate(),
     )
 
     private suspend fun awaitTerminal(runtime: DatabaseStartupRuntime): DatabaseRuntimeState =
@@ -192,6 +223,8 @@ class DatabaseStartupRuntimeInstrumentedTest {
             ?.forEach { it.delete() }
         File(context.noBackupFilesDir, "database").deleteRecursively()
         File(context.noBackupFilesDir, "database-recovery").deleteRecursively()
+        File(context.noBackupFilesDir, "database-integrity").deleteRecursively()
+        File(context.noBackupFilesDir, "recovery").deleteRecursively()
         deleteDatabaseKeyAlias()
     }
 

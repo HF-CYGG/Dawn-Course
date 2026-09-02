@@ -376,8 +376,10 @@ internal class DatabaseRecoveryBootstrapInstaller(
         val passphrase = provisionRecoveryPassphrase()
         try {
             record(DatabaseRecoveryInstallStage.NEW_ENVELOPE_READY)
-            val staging = roomFactory.openAndVerify(stagingName, passphrase)
+            val staging = roomFactory.open(stagingName, passphrase)
             try {
+                // 恢复 staging 永远走同步双扫描，不参与普通冷启动的后台策略。
+                roomFactory.verifyIntegrity(staging)
                 if (validated != null) {
                     runBlocking {
                         staging.withTransaction {
@@ -568,8 +570,8 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     private val installer: DatabaseRecoveryBootstrapInstaller,
     private val reader: DatabaseRecoveryBackupReader = DatabaseRecoveryBackupReader(context),
     private val journal: AndroidDatabaseRecoveryInstallJournal = AndroidDatabaseRecoveryInstallJournal(context),
-    /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除备份恢复补偿失败标记。 */
-    private val clearBackupRecoveryRequired: () -> Unit = {}
+    /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除全部在线恢复责任。 */
+    private val clearRecoveryResponsibilities: () -> Unit = {}
 ) {
     suspend fun restoreLocal(uri: Uri): DatabaseRecoveryActionResult = withContext(Dispatchers.IO) {
         val validated = reader.readLocal(uri).getOrElse { error ->
@@ -671,8 +673,8 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                     applyActiveProfileSelection(validated.activeProfileId)
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
+                clearRecoveryResponsibilities()
                 recoveryFiles.clearMarkerAfterExplicitDecision()
-                clearBackupRecoveryRequired()
                 journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
                 true
             }.getOrElse {
@@ -720,8 +722,8 @@ internal class DatabaseRecoveryBootstrapCoordinator(
             if (attempt.stage == DatabaseRecoveryInstallStage.MAIN_SWAPPED) {
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
             }
+            clearRecoveryResponsibilities()
             recoveryFiles.clearMarkerAfterExplicitDecision()
-            clearBackupRecoveryRequired()
             journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
         }.isSuccess
         if (finished) return DatabaseRecoveryInstallRecovery.COMMITTED

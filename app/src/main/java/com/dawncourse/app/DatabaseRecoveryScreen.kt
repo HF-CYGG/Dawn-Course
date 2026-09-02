@@ -124,7 +124,7 @@ fun DatabaseRecoveryScreen(
                                 busy = true
                                 message = null
                                 scope.launch {
-                                    if (!runtime.retryBackupRestoreRecoveryMarker()) {
+                                    if (!runtime.retryRecoveryMarker()) {
                                         message = markerRetryFailedMessage
                                     }
                                     busy = false
@@ -259,7 +259,10 @@ private fun recoveryReasonMessage(reason: DatabaseRecoveryReason): String = when
     DatabaseRecoveryReason.MigrationFailed,
     DatabaseRecoveryReason.DatabaseOpenFailed,
     DatabaseRecoveryReason.RecoveryStateCorrupt,
-    DatabaseRecoveryReason.RestoreFailed -> stringResource(R.string.database_recovery_reason_data)
+    DatabaseRecoveryReason.RestoreFailed,
+    DatabaseRecoveryReason.IntegrityVerificationFailed -> {
+        stringResource(R.string.database_recovery_reason_data)
+    }
 }
 
 /** 将稳定失败枚举转换为不会泄漏底层信息的前台提示。 */

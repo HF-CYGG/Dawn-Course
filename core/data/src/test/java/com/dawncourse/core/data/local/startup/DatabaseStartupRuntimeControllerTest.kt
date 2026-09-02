@@ -157,6 +157,68 @@ class DatabaseStartupRuntimeControllerTest {
         )
     }
 
+    @Test
+    fun postReadyActionObservesReadyAndSuccessKeepsReady() {
+        val events = mutableListOf<String>()
+        lateinit var controller: DatabaseStartupRuntimeController<Any>
+        controller = DatabaseStartupRuntimeController(
+            criticalSection = DatabaseStartupCriticalSection { block -> block() },
+            initializer = DatabaseStartupInitializer {
+                DatabaseStartupInitialization.Ready(
+                    handle = Any(),
+                    migratedPlaintextThisRun = false,
+                    postReadyAction = DatabasePostReadyAction {
+                        assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
+                        events += "post-ready"
+                        DatabasePostReadyResult.Complete
+                    },
+                )
+            },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        controller.start(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        assertEquals(listOf("post-ready"), events)
+        assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
+    }
+
+    @Test
+    fun postReadyRecoveryIsPublishedOnlyAfterMarkerAndGateActionCompletes() {
+        val events = mutableListOf<String>()
+        lateinit var controller: DatabaseStartupRuntimeController<Any>
+        controller = DatabaseStartupRuntimeController(
+            criticalSection = DatabaseStartupCriticalSection { block -> block() },
+            initializer = DatabaseStartupInitializer {
+                DatabaseStartupInitialization.Ready(
+                    handle = Any(),
+                    migratedPlaintextThisRun = false,
+                    postReadyAction = DatabasePostReadyAction {
+                        assertEquals(DatabaseRuntimeState.Ready, controller.state.value)
+                        events += "marker"
+                        events += "gate"
+                        DatabasePostReadyResult.RecoveryRequired(
+                            DatabaseRecoveryReason.IntegrityVerificationFailed,
+                            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+                        )
+                    },
+                )
+            },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        controller.start(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        assertEquals(listOf("marker", "gate"), events)
+        assertEquals(
+            DatabaseRuntimeState.RecoveryRequired(
+                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            ),
+            controller.state.value,
+        )
+    }
+
     private fun readyController(database: Any): DatabaseStartupRuntimeController<Any> {
         val controller = DatabaseStartupRuntimeController(
             criticalSection = DatabaseStartupCriticalSection { block -> block() },

@@ -68,7 +68,7 @@ object DatabaseModule {
     /**
      * 提供 [AppDatabase] 实例
      *
-     * @return Runtime 已完成 SQLCipher 与完整性校验的唯一 Room 实例
+     * @return Runtime 已完成 SQLCipher 首次连接与条件化同步校验的唯一 Room 实例
      */
     @Provides
     @Singleton
