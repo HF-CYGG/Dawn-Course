@@ -16,7 +16,8 @@ import com.dawncourse.core.domain.model.Course
     tableName = "courses",
     indices = [
         Index(value = ["semesterId"]),
-        Index(value = ["dayOfWeek"])
+        Index(value = ["dayOfWeek"]),
+        Index(value = ["originId"]),
     ]
 )
 data class CourseEntity(

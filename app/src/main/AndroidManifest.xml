@@ -10,7 +10,8 @@
     <application
         android:name=".DawnApp"
         android:allowBackup="false"
-        android:usesCleartextTraffic="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="false"
         android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -28,6 +29,44 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 数据恢复成功后在独立进程重建 Hilt graph；该组件不可被外部应用调用。 -->
+        <activity
+            android:name=".RecoveryRestartActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:process=":recovery_restart"
+            android:theme="@style/Theme.DawnCourse" />
+
+        <receiver
+            android:name=".schedule.SystemScheduleReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            保留共享 InitializationProvider，但移除 WorkManager 与 Widget 的自动 metadata。
+            DawnApp 会在 Hilt 完成字段注入后手动初始化 WidgetSyncInitializer；WorkManager
+            则通过 Configuration.Provider 按需初始化并使用 HiltWorkerFactory。
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+            <meta-data
+                android:name="com.dawncourse.feature.widget.startup.WidgetSyncInitializer"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

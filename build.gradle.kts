@@ -1,11 +1,44 @@
+import org.gradle.api.Project
+import org.gradle.kotlin.dsl.configure
+import org.jetbrains.kotlin.compose.compiler.gradle.ComposeCompilerGradlePluginExtension
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
+
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     alias(libs.plugins.androidApplication) apply false
-    // kotlinAndroid 插件已移除：AGP 9.0+ 内置 Kotlin 支持，无需再显式声明
     alias(libs.plugins.androidLibrary) apply false
+    alias(libs.plugins.androidTest) apply false
+    alias(libs.plugins.baselineProfile) apply false
     alias(libs.plugins.hiltAndroid) apply false
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.composeCompiler) apply false
+}
+
+fun Project.configureComposeCompiler() {
+    extensions.configure<ComposeCompilerGradlePluginExtension> {
+        stabilityConfigurationFile.set(
+            rootProject.layout.projectDirectory.file("compose_compiler_config.conf")
+        )
+    }
+}
+
+fun Project.configureAndroidJvm17() {
+    extensions.configure<KotlinAndroidProjectExtension> {
+        compilerOptions {
+            // Java 已统一为 17，Kotlin 也必须显式对齐，避免产物字节码版本分叉。
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+}
+
+subprojects {
+    pluginManager.withPlugin("org.jetbrains.kotlin.plugin.compose") {
+        configureComposeCompiler()
+    }
+    pluginManager.withPlugin("org.jetbrains.kotlin.android") {
+        configureAndroidJvm17()
+    }
 }
 
 allprojects {

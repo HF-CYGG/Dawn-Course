@@ -76,7 +76,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.compose.ui.res.stringResource
+import com.dawncourse.core.domain.model.ImportDestination
 import androidx.compose.runtime.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -126,6 +128,7 @@ import kotlin.coroutines.resume
 @Composable
 fun ImportScreen(
     onImportSuccess: () -> Unit,
+    targetProfileId: Long? = null,
     viewModel: ImportViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -133,6 +136,46 @@ fun ImportScreen(
     var qiangZhiBaseUrl by remember { mutableStateOf("") }
     var qiangZhiStudentId by remember { mutableStateOf("") }
     var qiangZhiPassword by remember { mutableStateOf("") }
+
+    // 导入页面一进入就捕获目标；解析期间用户切换课表也不会重新定向本次提交。
+    LaunchedEffect(targetProfileId) {
+        viewModel.beginImport(targetProfileId)
+    }
+
+    LlmConsentDialog(
+        uiState = uiState,
+        onDismiss = { viewModel.cancelLlmConsent() },
+        onConfirm = { viewModel.confirmLlmConsent() },
+        onCheckedChange = { viewModel.updateLlmConsentChecked(it) },
+        onSchoolNameChange = { viewModel.updateLlmConsentSchoolName(it) }
+    )
+
+    uiState.pendingOverwriteImpact?.let { impact ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissOverwriteConfirmation,
+            title = { Text(stringResource(R.string.import_overwrite_confirm_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.import_overwrite_confirm_message,
+                        impact.profileName,
+                        impact.semesterName,
+                        impact.coursesToReplace,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmImport) {
+                    Text(stringResource(R.string.import_overwrite_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissOverwriteConfirmation) {
+                    Text(stringResource(R.string.import_overwrite_cancel))
+                }
+            },
+        )
+    }
 
     // 监听 ViewModel 的一次性事件 (如导入成功)
     LaunchedEffect(Unit) {
@@ -647,6 +690,7 @@ private fun WebViewStep(
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var webView: WebView? by remember { mutableStateOf(null) }
+    var webViewGeneration by remember { mutableIntStateOf(0) }
     var inputUrl by remember { mutableStateOf(uiState.webUrl) }
     var isLoading by remember { mutableStateOf(false) }
     var pollJob: Job? by remember { mutableStateOf(null) }
@@ -665,7 +709,7 @@ private fun WebViewStep(
                 stream.write(pendingHtmlForExport.toByteArray())
             }
         }.onSuccess {
-            Toast.makeText(context, "已保存页面源码文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "已保存脱敏诊断副本", Toast.LENGTH_SHORT).show()
         }.onFailure {
             Toast.makeText(context, "保存失败，请重试", Toast.LENGTH_SHORT).show()
         }
@@ -701,7 +745,7 @@ private fun WebViewStep(
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
             trimmed
         } else {
-            "http://$trimmed"
+            "https://$trimmed"
         }
         val parsed = Uri.parse(withScheme)
         val scheme = parsed.scheme?.lowercase(Locale.ROOT).orEmpty()
@@ -738,13 +782,7 @@ private fun WebViewStep(
 
     suspend fun evaluateJs(script: String): String {
         val currentWebView = webView ?: return "null"
-        return suspendCancellableCoroutine { cont ->
-            currentWebView.evaluateJavascript(script) { result ->
-                if (cont.isActive) {
-                    cont.resume(result ?: "null")
-                }
-            }
-        }
+        return evaluateWebViewScript(currentWebView, script)
     }
 
     if (showNoDataDialog) {
@@ -753,8 +791,8 @@ private fun WebViewStep(
             title = { Text("需要帮助解析吗？") },
             text = {
                 Text(
-                    "可以一键导出当前页面源码为 txt 文件，便于你脱敏后提交给开发者定位问题。" +
-                        "\n导出的文件可能包含个人信息，请先自行或让 AI 脱敏，仅保留页面结构。" +
+                    "可以一键导出当前页面的脱敏诊断副本，便于提交给开发者定位问题。" +
+                        "\n应用会在导出前移除常见个人信息，只保留页面结构；提交前仍建议再次检查。" +
                         "\n不想提交可以直接关闭。"
                 )
             },
@@ -811,13 +849,17 @@ private fun WebViewStep(
                                 Toast.makeText(context, "未获取到页面源码", Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
-                            pendingHtmlForExport = html
-                            exportLauncher.launch("debug_snapshot.json")
+                            val sanitized = runCatching { buildSanitizedDiagnosticExport(html) }.getOrElse {
+                                Toast.makeText(context, "页面内容超过安全处理上限，未导出", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
+                            pendingHtmlForExport = sanitized
+                            exportLauncher.launch("dawn_diagnostic_sanitized.txt")
                         }
                         showNoDataDialog = false
                     }
                 ) {
-                    Text("导出并保存")
+                    Text("导出脱敏副本")
                 }
             },
             dismissButton = {
@@ -912,9 +954,14 @@ private fun WebViewStep(
         }
         
         // WebView 容器
-        AndroidView(
-            factory = { ctx ->
+        key(webViewGeneration) {
+            AndroidView(
+                factory = { ctx ->
                 WebView(ctx).apply {
+                    tag = {
+                        webView = null
+                        webViewGeneration++
+                    }
                     // 开启安全浏览（API 26+）
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         settings.safeBrowsingEnabled = true
@@ -996,6 +1043,14 @@ private fun WebViewStep(
                                 viewModel.updateWebUrl(it)
                             }
                         }
+
+                        override fun onRenderProcessGone(
+                            view: WebView,
+                            detail: android.webkit.RenderProcessGoneDetail
+                        ): Boolean {
+                            viewModel.updateResultText("网页脚本进程已重建，请重试提取。")
+                            return resetWebViewAfterRendererLoss(view)
+                        }
                     }
                     if (uiState.webUrl.isNotBlank()) {
                         val safeUrl = normalizeHttpUrl(uiState.webUrl)
@@ -1008,11 +1063,12 @@ private fun WebViewStep(
                     }
                     webView = this
                 }
-            },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            )
+        }
 
         // 状态提示栏 (显示解析中或错误信息)
         if (uiState.isLoading || uiState.resultText.isNotBlank()) {
@@ -1076,6 +1132,8 @@ private fun WebViewStep(
                     onClick = {
                         coroutineScope.launch {
                             try {
+                                // 每次点击“一键提取”视为一次独立任务，用于脚本拉取去重统计
+                                viewModel.beginScriptPullTask()
                                 val currentWebView = webView
                                 if (currentWebView == null) {
                                     viewModel.updateResultText("未能提取到有效 HTML 内容")
@@ -1106,7 +1164,7 @@ private fun WebViewStep(
                                     }
                                 }
 
-                                currentWebView.evaluateJavascript(js, null)
+                                evaluateJs(js)
                                 viewModel.updateResultText("正在提取...")
                                 pollJob?.cancel()
                                 pollJob = coroutineScope.launch {
@@ -1205,10 +1263,14 @@ private fun ReviewStep(
     RefinedReviewScreen(
         uiState = uiState,
         onDeleteCourse = { index -> viewModel.deleteParsedCourse(index) },
-        onConfirm = { viewModel.confirmImport() },
+        onConfirm = viewModel::requestImportConfirmation,
         onUpdateSemester = { start, weeks -> viewModel.updateSemesterSettings(start, weeks) },
         onOpenDatePicker = { showDatePicker = true },
-        onOpenTimeSettings = { showTimeSettingDialog = true }
+        onOpenTimeSettings = { showTimeSettingDialog = true },
+        onSelectNewSemester = viewModel::selectNewSemesterDestination,
+        onSelectNewProfile = viewModel::selectNewProfileDestination,
+        onNewProfileNameChange = viewModel::updateNewProfileName,
+        onSelectOverwrite = viewModel::selectOverwriteDestination,
     )
 }
 
@@ -1219,7 +1281,11 @@ fun RefinedReviewScreen(
     onConfirm: () -> Unit,
     onUpdateSemester: (Long, Int) -> Unit,
     onOpenDatePicker: () -> Unit,
-    onOpenTimeSettings: () -> Unit
+    onOpenTimeSettings: () -> Unit,
+    onSelectNewSemester: (Long) -> Unit,
+    onSelectNewProfile: () -> Unit,
+    onNewProfileNameChange: (String) -> Unit,
+    onSelectOverwrite: (Long, Long) -> Unit,
 ) {
     var isListExpanded by remember { mutableStateOf(false) }
     var isConfigExpanded by remember { mutableStateOf(false) }
@@ -1251,6 +1317,13 @@ fun RefinedReviewScreen(
                 onOpenDatePicker = onOpenDatePicker,
                 onOpenTimeSettings = onOpenTimeSettings,
                 onUpdateSemester = onUpdateSemester
+            )
+            ImportDestinationSection(
+                uiState = uiState,
+                onSelectNewSemester = onSelectNewSemester,
+                onSelectNewProfile = onSelectNewProfile,
+                onNewProfileNameChange = onNewProfileNameChange,
+                onSelectOverwrite = onSelectOverwrite,
             )
         }
         Box(
@@ -1284,6 +1357,89 @@ fun RefinedReviewScreen(
                 Icon(Icons.Default.Check, null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("确认导入并存入课表", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/** 导入预览的落点选择，仅保存 ID；真正的归属校验与事务写入位于 data 层。 */
+@Composable
+private fun ImportDestinationSection(
+    uiState: ImportUiState,
+    onSelectNewSemester: (Long) -> Unit,
+    onSelectNewProfile: () -> Unit,
+    onNewProfileNameChange: (String) -> Unit,
+    onSelectOverwrite: (Long, Long) -> Unit,
+) {
+    val selected = uiState.destination
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.import_destination_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = stringResource(R.string.import_destination_hint),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            uiState.profileTargets.forEach { profile ->
+                val selectedNewSemester = (selected as? ImportDestination.NewSemester)?.profileId == profile.profileId
+                FilterChip(
+                    selected = selectedNewSemester,
+                    onClick = { onSelectNewSemester(profile.profileId) },
+                    label = {
+                        Text(
+                            stringResource(
+                                R.string.import_destination_new_semester,
+                                profile.profileName,
+                            ),
+                        )
+                    },
+                )
+                profile.semesters.forEach { semester ->
+                    val selectedOverwrite = (selected as? ImportDestination.OverwriteSemester)
+                        ?.let { it.profileId == profile.profileId && it.semesterId == semester.semesterId }
+                        ?: false
+                    OutlinedButton(
+                        onClick = { onSelectOverwrite(profile.profileId, semester.semesterId) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = if (selectedOverwrite) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        ),
+                    ) {
+                        Text(
+                            stringResource(
+                                R.string.import_destination_overwrite,
+                                profile.profileName,
+                                semester.semesterName,
+                            ),
+                        )
+                    }
+                }
+            }
+            FilterChip(
+                selected = selected is ImportDestination.NewProfile,
+                onClick = onSelectNewProfile,
+                label = { Text(stringResource(R.string.import_destination_new_profile)) },
+            )
+            if (selected is ImportDestination.NewProfile) {
+                OutlinedTextField(
+                    value = uiState.newProfileName,
+                    onValueChange = onNewProfileNameChange,
+                    label = { Text(stringResource(R.string.import_destination_new_profile_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }

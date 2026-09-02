@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 仅 Baseline Profile 生成器 APK 请求；不会合入应用 release manifest。 -->
+    <uses-permission android:name="com.dawncourse.app.permission.BENCHMARK_SEED" />
+</manifest>

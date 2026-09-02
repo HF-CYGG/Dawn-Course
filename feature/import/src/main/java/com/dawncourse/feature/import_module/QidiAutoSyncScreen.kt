@@ -98,23 +98,26 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.dawncourse.core.domain.model.Course
-import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.ImportCommitRequest
+import com.dawncourse.core.domain.model.ImportCommitResult
+import com.dawncourse.core.domain.model.ImportDestination
+import com.dawncourse.core.domain.model.NewSemesterSpec
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialsRepository
-import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.repository.ImportCommitRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.time.LocalTime
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -278,6 +281,7 @@ fun QidiAutoSyncScreen(
     viewModel: QidiSyncViewModel = hiltViewModel(),
     importViewModel: ImportViewModel = hiltViewModel()
 ){
+    val importUiState by importViewModel.uiState.collectAsState()
     val providerName = when (provider) {
         SyncProviderType.ZF -> "正方"
         else -> "教务"
@@ -313,6 +317,7 @@ fun QidiAutoSyncScreen(
     var lastZfMenuJumpUrl by remember { mutableStateOf("") }
     var triedJwglxtFallback by remember { mutableStateOf(false) }
     var endpointCheckFailed by remember { mutableStateOf(false) }
+    var termReadFallbackTriggered by remember { mutableStateOf(false) }
     val mainScrollState = rememberScrollState()
     var yearMenuExpanded by remember { mutableStateOf(false) }
     var termMenuExpanded by remember { mutableStateOf(false) }
@@ -354,8 +359,18 @@ fun QidiAutoSyncScreen(
     val clipboardManager = LocalClipboardManager.current
     val autoUpdateSupported = provider == SyncProviderType.ZF
     var pageStatePollingJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var selectableOptionsFetchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    lateinit var triggerParseFailureFlow: (String) -> Unit
 
     var loginErrorMessage by remember { mutableStateOf("") }
+
+    LlmConsentDialog(
+        uiState = importUiState,
+        onDismiss = { importViewModel.cancelLlmConsent() },
+        onConfirm = { importViewModel.confirmLlmConsent() },
+        onCheckedChange = { importViewModel.updateLlmConsentChecked(it) },
+        onSchoolNameChange = { importViewModel.updateLlmConsentSchoolName(it) }
+    )
 
     fun addLog(message: String, type: SyncLogType = SyncLogType.INFO) {
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
@@ -500,6 +515,8 @@ fun QidiAutoSyncScreen(
 
     fun startSyncFlow() {
         scope.launch {
+            // 自动更新流程开始：创建脚本拉取任务，确保云端拉取计入统计
+            viewModel.beginScriptPullTask()
             showProgressDialog = true
             currentStep = "读取绑定凭据"
             addLog("开始读取绑定凭据", SyncLogType.INFO)
@@ -540,6 +557,9 @@ fun QidiAutoSyncScreen(
             }
             triedJwglxtFallback = false
             endpointCheckFailed = false
+            termReadFallbackTriggered = false
+            selectableOptionsFetchJob?.cancel()
+            pageStatePollingJob?.cancel()
             addressBar = normalized
             wv.loadUrl(normalized)
             addLog("开始加载入口：$normalized", SyncLogType.INFO)
@@ -548,6 +568,8 @@ fun QidiAutoSyncScreen(
 
     fun startExtractFlow() {
         scope.launch {
+            // 若用户直接进入提取步骤，兜底创建任务，避免漏记统计
+            viewModel.ensureScriptPullTask()
             showProgressDialog = true
             currentStep = "注入脚本并提取课程"
             addLog("开始提取课程", SyncLogType.ACTION)
@@ -595,7 +617,7 @@ fun QidiAutoSyncScreen(
                     append(autoSyncExtractor)
                     append("\n}catch(e){window.__dawnResult=null;window.__dawnReady=true;}})();")
                 }
-                wv.evaluateJavascript(js, null)
+                suspendEvaluateJs(wv, js)
                 addLog("已注入提取脚本", SyncLogType.ACTION)
                 var attempts = 0
                 var raw = ""
@@ -621,21 +643,88 @@ fun QidiAutoSyncScreen(
                     return@launch
                 }
                 addLog("页面数据已获取", SyncLogType.SUCCESS)
-                importViewModel.parseResultFromWebView(raw)
+                importViewModel.parseResultFromWebView(
+                    raw = raw,
+                    allowDiagnosticsUpload = true
+                )
                 addLog("开始解析课程数据", SyncLogType.INFO)
                 var wait = 0
                 var parsed: List<ParsedCourse> = emptyList()
-                while (wait < 40) {
+                var cloudFailureReason = ""
+                while (wait < 900) {
                     val ui = importViewModel.uiState.value
                     parsed = ui.parsedCourses
                     if (parsed.isNotEmpty()) break
+                    when (ui.parsePipelineStage) {
+                        ParsePipelineStage.WAITING_USER_CONSENT -> {
+                            currentStep = "等待用户确认云端解析"
+                            subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
+                            if (wait % 25 == 0) {
+                                addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                            }
+                        }
+                        ParsePipelineStage.CLOUD_PARSING -> {
+                            currentStep = "云端解析中"
+                            if (wait % 25 == 0) {
+                                addLog("云端解析处理中", SyncLogType.INFO)
+                            }
+                        }
+                        ParsePipelineStage.CLOUD_FAILED -> {
+                            cloudFailureReason = ui.resultText.ifBlank { "云端解析失败" }
+                            break
+                        }
+                        ParsePipelineStage.LOCAL_PARSING -> {
+                            if (wait % 25 == 0) {
+                                currentStep = "本地解析中"
+                            }
+                        }
+                        else -> {
+                            if (ui.showLlmConsentDialog) {
+                                currentStep = "等待用户确认云端解析"
+                            } else if (ui.isLoading) {
+                                currentStep = "解析中"
+                            }
+                        }
+                    }
+                    if (ui.showLlmConsentDialog && ui.parsePipelineStage == ParsePipelineStage.IDLE) {
+                        currentStep = "等待用户确认云端解析"
+                    }
                     if (wait % 10 == 0) {
-                        addLog("等待解析结果：${wait}/40", SyncLogType.INFO)
+                        addLog("等待解析结果：${wait}/900", SyncLogType.INFO)
                     }
                     wait++
                     kotlinx.coroutines.delay(200)
                 }
                 if (parsed.isEmpty()) {
+                    val ui = importViewModel.uiState.value
+                    if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
+                        val cloudFailurePresentation = buildCloudParseFailurePresentation(
+                            cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+                        )
+                        subTitle = cloudFailurePresentation.userMessage
+                        loading = false
+                        currentStep = cloudFailurePresentation.currentStep
+                        addLog(
+                            subTitle,
+                            if (cloudFailurePresentation.shouldReportError) SyncLogType.ERROR else SyncLogType.WARNING
+                        )
+                        if (cloudFailurePresentation.shouldReportError) {
+                            reportError(subTitle)
+                        }
+                        return@launch
+                    }
+                    if (ui.parsePipelineStage == ParsePipelineStage.CLOUD_PARSING ||
+                        ui.parsePipelineStage == ParsePipelineStage.WAITING_USER_CONSENT ||
+                        ui.showLlmConsentDialog ||
+                        ui.isLoading
+                    ) {
+                        subTitle = "云端解析超时，请稍后重试"
+                        loading = false
+                        currentStep = "云端解析超时"
+                        addLog("云端解析等待超时", SyncLogType.ERROR)
+                        reportError("云端解析等待超时")
+                        return@launch
+                    }
                     subTitle = "解析失败或未发现课程"
                     loading = false
                     currentStep = "解析失败"
@@ -647,16 +736,7 @@ fun QidiAutoSyncScreen(
                 addLog("解析完成，课程数：${parsed.size}", SyncLogType.SUCCESS)
                 addLog("开始对比当前课表", SyncLogType.INFO)
                 pendingParsedCourses = parsed
-                var semesterId = viewModel.getCurrentSemesterId()
-                if (semesterId == null) {
-                    // 自动兜底：存在学期但未标记当前时，自动设定第一个学期为当前
-                    val allSemesters = viewModel.getAllSemesters()
-                    if (allSemesters.isNotEmpty()) {
-                        val firstSemester = allSemesters.first()
-                        viewModel.setCurrentSemester(firstSemester.id)
-                        semesterId = viewModel.getCurrentSemesterId()
-                    }
-                }
+                val semesterId = viewModel.getCurrentSemesterId()
                 if (semesterId == null) {
                     loading = false
                     currentStep = "操作中止：未设置本地学期"
@@ -707,6 +787,9 @@ fun QidiAutoSyncScreen(
                 currentStep = "提取失败"
                 addLog("提取失败", SyncLogType.ERROR)
                 reportError("提取失败")
+            } finally {
+                // 一次提取流程结束后清理任务 ID，避免后续无关动作串统计
+                viewModel.endScriptPullTask()
             }
         }
     }
@@ -717,57 +800,73 @@ fun QidiAutoSyncScreen(
             addLog("WebView 未就绪", SyncLogType.WARNING)
             return
         }
-        scope.launch {
-            val res = suspendEvaluateJs(
-                wv,
-                """
-                (function(){
-                  try{
-                    // 修复：同时兼容 id 与 name 的学年学期下拉框
-                    var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
-                    var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
-                    var years=[];
-                    var terms=[];
-                    if(y && y.options){
-                      for(var i=0;i<y.options.length;i++){
-                        var o=y.options[i];
-                        if(o && o.value){ years.push({value:o.value,text:o.text}); }
-                      }
+        selectableOptionsFetchJob?.cancel()
+        selectableOptionsFetchJob = scope.launch {
+            val maxAttempts = 8
+            repeat(maxAttempts) { attempt ->
+                val res = suspendEvaluateJs(
+                    wv,
+                    """
+                    (function(){
+                      try{
+                        // 修复：同时兼容 id 与 name 的学年学期下拉框
+                        var y=document.querySelector('#xnm') || document.querySelector('select[name="xnm"]');
+                        var t=document.querySelector('#xqm') || document.querySelector('select[name="xqm"]');
+                        var years=[];
+                        var terms=[];
+                        if(y && y.options){
+                          for(var i=0;i<y.options.length;i++){
+                            var o=y.options[i];
+                            if(o && o.value){ years.push({value:o.value,text:o.text}); }
+                          }
+                        }
+                        if(t && t.options){
+                          for(var j=0;j<t.options.length;j++){
+                            var o2=t.options[j];
+                            if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
+                          }
+                        }
+                        var yv = y ? y.value : '';
+                        var tv = t ? t.value : '';
+                        return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv,url:location.href});
+                      }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:'',url:location.href||''}); }
+                    })();
+                    """.trimIndent()
+                )
+                val txt = parseJsReturn(res)
+                if (txt.isNotBlank()) {
+                    applyOptionSnapshot(txt)
+                    if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
+                        termReadFallbackTriggered = false
+                        addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
+                        if (showProgressDialog) {
+                            runCatching { sheetState.hide() }
+                            showProgressDialog = false
+                        }
+                        return@launch
                     }
-                    if(t && t.options){
-                      for(var j=0;j<t.options.length;j++){
-                        var o2=t.options[j];
-                        if(o2 && o2.value){ terms.push({value:o2.value,text:o2.text}); }
-                      }
-                    }
-                    var yv = y ? y.value : '';
-                    var tv = t ? t.value : '';
-                    return JSON.stringify({years:years,terms:terms,yearValue:yv,termValue:tv});
-                  }catch(e){ return JSON.stringify({years:[],terms:[],yearValue:'',termValue:''}); }
-                })();
-                """.trimIndent()
-            )
-            val txt = parseJsReturn(res)
-            if (txt.isNotBlank()) {
-                applyOptionSnapshot(txt)
-                addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-                if (showProgressDialog) {
-                    runCatching { sheetState.hide() }
-                    showProgressDialog = false
                 }
-            } else {
-                addLog("未读取到学年学期选项", SyncLogType.WARNING)
+                if (attempt < maxAttempts - 1) {
+                    currentStep = "等待学年学期加载"
+                    subTitle = "系统选项仍在加载，正在重试..."
+                    if (attempt == 0 || attempt == maxAttempts / 2) {
+                        addLog("学年学期选项暂未就绪，继续等待加载", SyncLogType.INFO)
+                    }
+                    kotlinx.coroutines.delay(600)
+                }
             }
+            addLog("学年学期选项持续为空，转入解析失败流程", SyncLogType.WARNING)
+            triggerParseFailureFlow("未能正确读取学年学期选项")
         }
     }
 
     fun pollPageStateIfNeeded() {
-        if (syncStep != SyncStep.Login || needManualLogin) return
+        if (syncStep != SyncStep.Login || needManualLogin || termReadFallbackTriggered) return
         val wv = webView ?: return
         pageStatePollingJob?.cancel()
         pageStatePollingJob = scope.launch {
             repeat(30) {
-                if (syncStep != SyncStep.Login || needManualLogin) return@launch
+                if (syncStep != SyncStep.Login || needManualLogin || termReadFallbackTriggered) return@launch
                 val res = suspendEvaluateJs(
                     wv,
                     """
@@ -875,10 +974,218 @@ fun QidiAutoSyncScreen(
                 
                 if (hasMenu) {
                     val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
-                    wv.evaluateJavascript(openMenuJs, null)
+                    suspendEvaluateJs(wv, openMenuJs)
                 }
 
                 kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    suspend fun captureCurrentPageHtml(): String {
+        val wv = webView ?: return ""
+        val result = suspendEvaluateJs(
+            wv,
+            """
+            (function(){
+              try{
+                return document.documentElement ? document.documentElement.outerHTML : '';
+              }catch(e){
+                return '';
+              }
+            })();
+            """.trimIndent()
+        )
+        return parseJsReturn(result)
+    }
+
+    suspend fun awaitParseResult(): List<ParsedCourse> {
+        var wait = 0
+        var parsed: List<ParsedCourse> = emptyList()
+        var cloudFailureReason = ""
+        while (wait < 900) {
+            val ui = importViewModel.uiState.value
+            parsed = ui.parsedCourses
+            if (parsed.isNotEmpty()) break
+            when (ui.parsePipelineStage) {
+                ParsePipelineStage.WAITING_USER_CONSENT -> {
+                    currentStep = "等待用户确认云端解析"
+                    subTitle = "解析脚本未识别课表，等待确认是否上传脱敏内容进行云端解析"
+                    if (wait % 25 == 0) {
+                        addLog("等待用户确认云端解析上传", SyncLogType.WARNING)
+                    }
+                }
+                ParsePipelineStage.CLOUD_PARSING -> {
+                    currentStep = "云端解析中"
+                    if (wait % 25 == 0) {
+                        addLog("云端解析处理中", SyncLogType.INFO)
+                    }
+                }
+                ParsePipelineStage.CLOUD_FAILED -> {
+                    cloudFailureReason = ui.resultText.ifBlank { "云端解析失败" }
+                    break
+                }
+                ParsePipelineStage.LOCAL_PARSING -> {
+                    if (wait % 25 == 0) {
+                        currentStep = "本地解析中"
+                    }
+                }
+                else -> {
+                    if (ui.showLlmConsentDialog) {
+                        currentStep = "等待用户确认云端解析"
+                    } else if (ui.isLoading) {
+                        currentStep = "解析中"
+                    }
+                }
+            }
+            if (ui.showLlmConsentDialog && ui.parsePipelineStage == ParsePipelineStage.IDLE) {
+                currentStep = "等待用户确认云端解析"
+            }
+            if (wait % 10 == 0) {
+                addLog("等待解析结果：$wait/900", SyncLogType.INFO)
+            }
+            wait++
+            kotlinx.coroutines.delay(200)
+        }
+        if (parsed.isNotEmpty()) {
+            return parsed
+        }
+        val ui = importViewModel.uiState.value
+        if (cloudFailureReason.isNotBlank() || ui.parsePipelineStage == ParsePipelineStage.CLOUD_FAILED) {
+            val cloudFailurePresentation = buildCloudParseFailurePresentation(
+                cloudFailureReason.ifBlank { ui.resultText.ifBlank { "云端解析失败" } }
+            )
+            subTitle = cloudFailurePresentation.userMessage
+            loading = false
+            currentStep = cloudFailurePresentation.currentStep
+            addLog(
+                subTitle,
+                if (cloudFailurePresentation.shouldReportError) SyncLogType.ERROR else SyncLogType.WARNING
+            )
+            if (cloudFailurePresentation.shouldReportError) {
+                reportError(subTitle)
+            }
+            return emptyList()
+        }
+        if (
+            ui.parsePipelineStage == ParsePipelineStage.CLOUD_PARSING ||
+            ui.parsePipelineStage == ParsePipelineStage.WAITING_USER_CONSENT ||
+            ui.showLlmConsentDialog ||
+            ui.isLoading
+        ) {
+            subTitle = "云端解析超时，请稍后重试"
+            loading = false
+            currentStep = "云端解析超时"
+            addLog("云端解析等待超时", SyncLogType.ERROR)
+            reportError("云端解析等待超时")
+            return emptyList()
+        }
+        subTitle = "解析失败或未发现课程"
+        loading = false
+        currentStep = "解析失败"
+        addLog("解析失败或未发现课程", SyncLogType.ERROR)
+        reportError("解析失败或未发现课程")
+        return emptyList()
+    }
+
+    suspend fun handleParsedCourses(parsed: List<ParsedCourse>) {
+        currentStep = "对比课表"
+        addLog("解析完成，课程数：${parsed.size}", SyncLogType.SUCCESS)
+        addLog("开始对比当前课表", SyncLogType.INFO)
+        pendingParsedCourses = parsed
+        val semesterId = viewModel.getCurrentSemesterId()
+        if (semesterId == null) {
+            loading = false
+            currentStep = "操作中止：未设置本地学期"
+            subTitle = "请先在设置中配置当前学期"
+            addLog("检测到本地未设置当前学期，无法保存课表", SyncLogType.ERROR)
+            runCatching { sheetState.hide() }
+            showProgressDialog = false
+            showNoSemesterDialog = true
+            return
+        }
+        val currentSemesterId = semesterId
+        val existing = viewModel.getCoursesBySemester(currentSemesterId)
+        if (existing.isEmpty()) {
+            loading = false
+            currentStep = "需要先导入课表"
+            subTitle = "请先通过教务系统导入一次课表"
+            addLog("当前学期尚无课表数据，需先完成首次导入", SyncLogType.WARNING)
+            runCatching { sheetState.hide() }
+            showProgressDialog = false
+            showNeedInitialImportDialog = true
+            return
+        }
+        val diff = buildDiffItems(parsed, existing)
+        diffItems = diff
+        diffSelections.clear()
+        diffSelections.addAll(List(diff.size) { true })
+        loading = false
+        if (diff.isEmpty()) {
+            currentStep = "课表无变动"
+            subTitle = "课表无变动"
+            addLog("课表无变动", SyncLogType.SUCCESS)
+            sheetState.hide()
+            showProgressDialog = false
+            showNoDiffDialog = true
+            syncStep = SyncStep.Done
+        } else {
+            currentStep = "等待选择同步方式"
+            subTitle = "已获取课表，请选择同步方式"
+            addLog("发现差异：${diff.size} 项", SyncLogType.WARNING)
+            sheetState.hide()
+            showProgressDialog = false
+            showDiffSelectDialog = true
+            syncStep = SyncStep.Done
+        }
+    }
+
+    triggerParseFailureFlow = { reason ->
+        val wv = webView
+        if (wv == null) {
+            addLog("WebView 未就绪，无法进入解析失败流程", SyncLogType.ERROR)
+            reportError(reason)
+        } else if (termReadFallbackTriggered) {
+            addLog("解析失败兜底流程已触发，忽略重复请求", SyncLogType.INFO)
+        } else {
+            termReadFallbackTriggered = true
+            selectableOptionsFetchJob?.cancel()
+            pageStatePollingJob?.cancel()
+            scope.launch {
+                try {
+                    loading = true
+                    showProgressDialog = true
+                    currentStep = "采集页面内容"
+                    subTitle = reason
+                    addLog("$reason，转入解析失败处理流程", SyncLogType.WARNING)
+                    importViewModel.updateWebUrl(addressBar)
+                    val rawHtml = captureCurrentPageHtml()
+                    if (rawHtml.isBlank()) {
+                        loading = false
+                        currentStep = "无法读取页面内容"
+                        subTitle = "页面内容读取失败，请稍后重试"
+                        addLog("页面内容读取失败，无法触发解析失败流程", SyncLogType.ERROR)
+                        reportError("页面内容读取失败，无法触发解析失败流程")
+                        return@launch
+                    }
+                    importViewModel.parseResultFromWebView(
+                        raw = rawHtml,
+                        allowDiagnosticsUpload = true,
+                        failureTypeHint = "parser_empty",
+                        forceCloudRepair = true
+                    )
+                    addLog("已提交当前页面到解析引擎", SyncLogType.INFO)
+                    val parsed = awaitParseResult()
+                    if (parsed.isNotEmpty()) {
+                        handleParsedCourses(parsed)
+                    }
+                } catch (e: Throwable) {
+                    loading = false
+                    currentStep = "解析失败流程异常"
+                    subTitle = "无法完成解析失败处理"
+                    addLog("解析失败流程异常：${e.message ?: e.javaClass.simpleName}", SyncLogType.ERROR)
+                    reportError("解析失败流程异常", e)
+                }
             }
         }
     }
@@ -1006,6 +1313,9 @@ fun QidiAutoSyncScreen(
                             }
                             triedJwglxtFallback = false
                             endpointCheckFailed = false
+                            termReadFallbackTriggered = false
+                            selectableOptionsFetchJob?.cancel()
+                            pageStatePollingJob?.cancel()
                             addressBar = url
                             wv.loadUrl(url)
                             addLog("手动前往地址：$url", SyncLogType.ACTION)
@@ -1046,7 +1356,7 @@ fun QidiAutoSyncScreen(
                                 showProgressDialog = true
                                 currentStep = "覆盖写入当前学期"
                                 addLog("开始覆盖写入当前学期", SyncLogType.ACTION)
-                                val count = viewModel.applyToCurrentSemester(pendingParsedCourses)
+                                val count = viewModel.applyToCurrentSemester(pendingParsedCourses, provider)
                                 subTitle = "同步成功：更新 ${count} 门课程"
                                 currentStep = "同步完成"
                                 addLog("同步成功：更新 ${count} 门课程", SyncLogType.SUCCESS)
@@ -1143,7 +1453,8 @@ fun QidiAutoSyncScreen(
                                 addLog("开始应用部分变更", SyncLogType.ACTION)
                                 val result = viewModel.applyPartialUpdate(
                                     pendingParsedCourses,
-                                    selected
+                                    selected,
+                                    provider,
                                 )
                                 subTitle = "同步完成：新增 ${result.added} 项，移除 ${result.removed} 项"
                                 currentStep = "同步完成"
@@ -1321,7 +1632,7 @@ fun QidiAutoSyncScreen(
                                         val wv = webView ?: return@OutlinedButton
                                         scope.launch {
                                             val clickJs = viewModel.getScriptContent("zf_refresh_captcha_click.js", "js")
-                                            wv.evaluateJavascript(clickJs, null)
+                                            suspendEvaluateJs(wv, clickJs)
                                             val srcJs = viewModel.getScriptContent("zf_refresh_captcha_src.js", "js")
                                             val res = suspendEvaluateJs(wv, srcJs)
                                             val src = parseJsReturn(res).replace("\\/", "/")
@@ -1344,7 +1655,7 @@ fun QidiAutoSyncScreen(
                                         scope.launch {
                                             val baseJs = viewModel.getScriptContent("zf_submit_captcha.js", "js")
                                             val js = baseJs.replace("{{CAPTCHA_CODE}}", safe)
-                                            wv.evaluateJavascript(js, null)
+                                            suspendEvaluateJs(wv, js)
                                             addLog("已提交验证码并触发登录", SyncLogType.ACTION)
                                         }
                                     }
@@ -1581,19 +1892,41 @@ fun QidiAutoSyncScreen(
                     addLog("WebView 初始化完成", SyncLogType.INFO)
                 },
                 onPageStarted = { url ->
-                    loading = true
-                    if (showProgressDialog) {
+                    val fallbackFlowActive = termReadFallbackTriggered && (
+                        importUiState.showLlmConsentDialog ||
+                            importUiState.isLoading ||
+                            importUiState.parsePipelineStage != ParsePipelineStage.IDLE
+                        )
+                    if (!fallbackFlowActive) {
+                        loading = true
+                    }
+                    if (showProgressDialog && !fallbackFlowActive) {
                         currentStep = "页面加载中"
                         addLog("开始加载：$url", SyncLogType.INFO)
                     }
                     if (url.isNotBlank()) {
                         addressBar = url
+                        importViewModel.updateWebUrl(url)
                     }
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
-                onPageFinished = { wv, _ ->
-                    loading = false
-                    if (showProgressDialog) {
+                onPageFinished = { wv, callbackUrl ->
+                    // WebView 回调 URL 是浏览器实际完成加载的地址；绝不能信任页面脚本
+                    // 返回的 location.href 来决定是否注入密码或更新绑定入口。
+                    val currentWebViewUrl = wv.url?.takeIf(String::isNotBlank) ?: callbackUrl
+                    if (currentWebViewUrl.isNotBlank()) {
+                        addressBar = currentWebViewUrl
+                        importViewModel.updateWebUrl(currentWebViewUrl)
+                    }
+                    val fallbackFlowActive = termReadFallbackTriggered && (
+                        importUiState.showLlmConsentDialog ||
+                            importUiState.isLoading ||
+                            importUiState.parsePipelineStage != ParsePipelineStage.IDLE
+                        )
+                    if (!fallbackFlowActive) {
+                        loading = false
+                    }
+                    if (showProgressDialog && !fallbackFlowActive) {
                         currentStep = "页面加载完成"
                         addLog("页面加载完成")
                     }
@@ -1614,8 +1947,9 @@ fun QidiAutoSyncScreen(
                                 val hasSelect = txt.contains("\"hasSelect\":true")
                                 val hasMenu = txt.contains("\"hasMenu\":true")
                                 val loggedIn = txt.contains("\"loggedIn\":true")
-                                val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
-                                val pageHref = hrefMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
+                                if (fallbackFlowActive) {
+                                    return@launch
+                                }
                                 
                                 val errorMsgMatch = Regex("\"errorMsg\":\"(.*?)\"").find(txt)
                                 val errorMsg = errorMsgMatch?.groups?.get(1)?.value.orEmpty()
@@ -1629,9 +1963,8 @@ fun QidiAutoSyncScreen(
                                 captchaUrl = if (yzm && yzmSrc.isNotBlank()) yzmSrc else ""
                                 val shouldTryFallback = !needManualLogin && !isLogin && !isKebiao && !hasSelect && !hasMenu
                                 if (shouldTryFallback && !triedJwglxtFallback) {
-                                    val sourceUrl = if (pageHref.isNotBlank()) pageHref else addressBar
-                                    val fallbackUrl = buildJwglxtFallbackUrl(sourceUrl)
-                                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != sourceUrl) {
+                                    val fallbackUrl = buildJwglxtFallbackUrl(currentWebViewUrl)
+                                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != currentWebViewUrl) {
                                         triedJwglxtFallback = true
                                         endpointCheckFailed = false
                                         addressBar = fallbackUrl
@@ -1652,18 +1985,46 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 val creds = credsForAutoFill
-                                val autoFillKey = if (pageHref.isNotBlank()) pageHref else addressBar
                                 if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
-                                    if (autoFillKey.isNotBlank() && autoFillKey != lastAutoFillUrl) {
-                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
-                                            .replace("{{PASSWORD}}", creds.secret)
+                                    val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                    // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
+                                    val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl
+                                    if (
+                                        WebViewCredentialAutofillPolicy.canAutoFill(
+                                            savedEndpointUrl = creds.endpointUrl,
+                                            currentWebViewUrl = injectionUrl,
+                                        ) && injectionUrl.isNotBlank() && injectionUrl != lastAutoFillUrl
+                                    ) {
+                                        val credentialScript = baseJs.replace(
+                                            "{{USERNAME}}",
+                                            escapeJavaScriptSingleQuoted(creds.username ?: "")
+                                        )
+                                            .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        wv.evaluateJavascript(js, null)
-                                        lastAutoFillUrl = autoFillKey
-                                        if (showProgressDialog) {
-                                            addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                        val guardedScript = WebViewCredentialAutofillPolicy
+                                            .wrapCredentialScriptForVerifiedOrigin(
+                                                savedEndpointUrl = creds.endpointUrl,
+                                                credentialScript = credentialScript,
+                                            )
+                                        if (guardedScript == null) {
+                                            if (showProgressDialog) {
+                                                addLog("绑定入口无效，跳过自动填充", SyncLogType.WARNING)
+                                            }
+                                        } else {
+                                            val result = parseJsReturn(suspendEvaluateJs(wv, guardedScript))
+                                            if (result == "autofill_origin_mismatch") {
+                                                if (showProgressDialog) {
+                                                    addLog("页面已跳转到非绑定入口，跳过自动填充", SyncLogType.INFO)
+                                                }
+                                            } else {
+                                                lastAutoFillUrl = injectionUrl
+                                                if (showProgressDialog) {
+                                                    addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                                }
+                                            }
                                         }
+                                    } else if (showProgressDialog) {
+                                        addLog("当前页面不是绑定入口，跳过自动填充，请手动登录", SyncLogType.INFO)
                                     }
                                 }
                                 if (needManualLogin) {
@@ -1677,15 +2038,15 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 if (!needManualLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
-                                    if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
+                                    if (currentWebViewUrl.isNotBlank() && currentWebViewUrl != lastZfMenuJumpUrl) {
                                         val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
-                                        wv.evaluateJavascript(openMenuJs, null)
-                                        lastZfMenuJumpUrl = pageHref
+                                        suspendEvaluateJs(wv, openMenuJs)
+                                        lastZfMenuJumpUrl = currentWebViewUrl
                                         addLog("尝试打开课表页面", SyncLogType.ACTION)
                                     }
                                 }
-                                if (pageHref.isNotBlank()) {
-                                    val updated = viewModel.updateEndpointIfNeeded(pageHref, provider)
+                                if (currentWebViewUrl.isNotBlank()) {
+                                    val updated = viewModel.updateEndpointIfNeeded(currentWebViewUrl, provider)
                                     if (updated) {
                                         subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"
                                         if (showProgressDialog) {
@@ -1693,7 +2054,7 @@ fun QidiAutoSyncScreen(
                                         }
                                     }
                                     if (showProgressDialog) {
-                                        addLog("当前地址：$pageHref", SyncLogType.INFO)
+                                        addLog("当前地址：$currentWebViewUrl", SyncLogType.INFO)
                                     }
                                 }
                                 if (isKebiao) {
@@ -1719,16 +2080,45 @@ fun QidiAutoSyncScreen(
                             try {
                                 val creds = credsForAutoFill
                                 if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
-                                    if (addressBar.isNotBlank() && addressBar != lastAutoFillUrl) {
-                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace("{{USERNAME}}", creds.username ?: "")
-                                            .replace("{{PASSWORD}}", creds.secret)
+                                    val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                    // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
+                                    val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl
+                                    if (
+                                        WebViewCredentialAutofillPolicy.canAutoFill(
+                                            savedEndpointUrl = creds.endpointUrl,
+                                            currentWebViewUrl = injectionUrl,
+                                        ) && injectionUrl.isNotBlank() && injectionUrl != lastAutoFillUrl
+                                    ) {
+                                        val credentialScript = baseJs.replace(
+                                            "{{USERNAME}}",
+                                            escapeJavaScriptSingleQuoted(creds.username ?: "")
+                                        )
+                                            .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        wv.evaluateJavascript(js, null)
-                                        lastAutoFillUrl = addressBar
-                                        if (showProgressDialog) {
-                                            addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                        val guardedScript = WebViewCredentialAutofillPolicy
+                                            .wrapCredentialScriptForVerifiedOrigin(
+                                                savedEndpointUrl = creds.endpointUrl,
+                                                credentialScript = credentialScript,
+                                            )
+                                        if (guardedScript == null) {
+                                            if (showProgressDialog) {
+                                                addLog("绑定入口无效，跳过自动填充", SyncLogType.WARNING)
+                                            }
+                                        } else {
+                                            val result = parseJsReturn(suspendEvaluateJs(wv, guardedScript))
+                                            if (result == "autofill_origin_mismatch") {
+                                                if (showProgressDialog) {
+                                                    addLog("页面已跳转到非绑定入口，跳过自动填充", SyncLogType.INFO)
+                                                }
+                                            } else {
+                                                lastAutoFillUrl = injectionUrl
+                                                if (showProgressDialog) {
+                                                    addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                                }
+                                            }
                                         }
+                                    } else if (showProgressDialog) {
+                                        addLog("当前页面不是绑定入口，跳过自动填充，请手动登录", SyncLogType.INFO)
                                     }
                                 }
                                 val stateJs = viewModel.getScriptContent("zf_check_table_state.js", "js")
@@ -1782,6 +2172,8 @@ private fun CaptchaImage(
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                // 仅展示远程验证码图片，禁止访问 content:// 避免恶意页面链接读取本地内容。
+                settings.allowContentAccess = false
                 if (!userAgent.isNullOrBlank()) {
                     settings.userAgentString = userAgent
                 }
@@ -1928,11 +2320,7 @@ private fun AnimatedStepCard(
 }
 
 private fun escapeJs(raw: String): String {
-    return raw
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "")
+    return escapeJavaScriptSingleQuoted(raw)
 }
 
 private fun normalizeEndpointForLoad(raw: String?): String? {
@@ -1983,10 +2371,13 @@ private fun WebViewBox(
     onPageFinished: (WebView, String) -> Unit = {_, _ -> },
     onPageError: (String) -> Unit = {}
 ) {
-    AndroidView(
-        modifier = modifier.padding(top = 8.dp),
-        factory = { context ->
+    var webViewGeneration by remember { mutableIntStateOf(0) }
+    key(webViewGeneration) {
+        AndroidView(
+            modifier = modifier.padding(top = 8.dp),
+            factory = { context ->
             val wv = WebView(context)
+            wv.tag = { webViewGeneration++ }
             val settings = wv.settings
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -1996,7 +2387,13 @@ private fun WebViewBox(
             settings.setSupportZoom(true)
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
-            settings.javaScriptCanOpenWindowsAutomatically = true
+            // 教务登录依赖页面 JavaScript，但不需要本地文件、content URI 或脚本弹窗能力。
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.setAllowFileAccessFromFileURLs(false)
+            settings.setAllowUniversalAccessFromFileURLs(false)
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
             if (provider == SyncProviderType.ZF) {
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 settings.userAgentString = settings.userAgentString.replace("wv", "")
@@ -2039,22 +2436,27 @@ private fun WebViewBox(
                         onPageError("HTTP ${errorResponse.statusCode}")
                     }
                 }
+
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: android.webkit.RenderProcessGoneDetail
+                ): Boolean {
+                    onPageError("网页脚本进程已重建")
+                    return resetWebViewAfterRendererLoss(view)
+                }
             }
             onWebViewReady(wv)
             wv
-        }
-    )
+            }
+        )
+    }
 }
 
 /**
  * 挂起执行 JS 并返回字符串
  */
 private suspend fun suspendEvaluateJs(webView: WebView, script: String): String =
-    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-        webView.evaluateJavascript(script) { value ->
-            if (cont.isActive) cont.resume(value) {}
-        }
-    }
+    evaluateWebViewScript(webView, script)
 
 /**
  * 解析 evaluateJavascript 返回的字符串（去除引号与转义）
@@ -2086,35 +2488,84 @@ private fun parseJsReturn(value: String?): String {
 class QidiSyncViewModel @Inject constructor(
     private val credentialsRepository: CredentialsRepository,
     private val courseRepository: CourseRepository,
+    private val importCommitRepository: ImportCommitRepository,
+    private val scriptSyncRepository: ScriptSyncRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val semesterRepository: SemesterRepository,
-    private val scriptSyncRepository: ScriptSyncRepository
+    private val syncSourceBindingRepository: com.dawncourse.core.domain.repository.SyncSourceBindingRepository,
 ) : androidx.lifecycle.ViewModel() {
+    // 自动更新（实验）当前脚本拉取任务 ID，用于服务端按任务去重统计
+    private var currentScriptPullTaskId: String = ""
+    /** 首次使用时捕获固定写入目标，切换课表后不改写新 Profile。 */
+    private var capturedTarget: QidiSyncTarget? = null
+
+    /**
+     * 开始一次自动更新脚本拉取任务
+     *
+     * 每次用户点击“开始连接”或“开始提取”时调用，
+     * 便于服务端统计“按任务去重”的拉取次数。
+     */
+    fun beginScriptPullTask() {
+        currentScriptPullTaskId = "qzsync_${System.currentTimeMillis()}_${(0..9999).random()}"
+        capturedTarget = null
+    }
+
+    /**
+     * 确保当前存在任务 ID，避免遗漏统计
+     */
+    fun ensureScriptPullTask() {
+        if (currentScriptPullTaskId.isBlank()) {
+            beginScriptPullTask()
+        }
+    }
+
+    /**
+     * 结束当前脚本拉取任务
+     */
+    fun endScriptPullTask() {
+        currentScriptPullTaskId = ""
+    }
 
     /**
      * 获取指定脚本内容（优先从云端获取最新）
      */
     suspend fun getScriptContent(scriptName: String, category: String = "js"): String {
-        return scriptSyncRepository.getScript(scriptName, category)
+        return scriptSyncRepository.getScript(
+            scriptName = scriptName,
+            category = category,
+            pullTaskId = currentScriptPullTaskId
+        )
     }
 
     /**
      * 读取起迪凭据
      */
-    suspend fun loadQidiCredentials() = credentialsRepository.getCredentials()
+    suspend fun loadQidiCredentials(): com.dawncourse.core.domain.model.SyncCredentials? {
+        val target = resolveCapturedTargetOrNull() ?: return null
+        val credentials = credentialsRepository.getCredentials(target.profileId) ?: return null
+        captureBindingForTarget(target, credentials.provider) ?: return null
+        return credentials
+    }
 
     /**
      * 若当前绑定与 provider 一致，且尚未记录入口或入口不同，则更新入口。
      *
      * @return 是否发生更新
      */
-    suspend fun updateEndpointIfNeeded(href: String, provider: SyncProviderType): Boolean {
-        val creds = credentialsRepository.getCredentials() ?: return false
+    suspend fun updateEndpointIfNeeded(currentWebViewUrl: String, provider: SyncProviderType): Boolean {
+        val target = resolveCapturedTargetOrNull() ?: return false
+        val creds = credentialsRepository.getCredentials(target.profileId) ?: return false
         if (creds.provider != provider) return false
-        val normalized = normalizeEndpoint(href)
+        captureBindingForTarget(target, provider) ?: return false
+        if (!WebViewCredentialAutofillPolicy.canUpdateSavedEndpoint(creds.endpointUrl, currentWebViewUrl)) {
+            return false
+        }
+        val normalized = normalizeEndpoint(currentWebViewUrl)
         if (normalized.isBlank()) return false
         if (creds.endpointUrl == normalized) return false
         credentialsRepository.saveCredentials(
-            creds.copy(endpointUrl = normalized)
+            target.profileId,
+            creds.copy(endpointUrl = normalized),
         )
         return true
     }
@@ -2145,37 +2596,32 @@ class QidiSyncViewModel @Inject constructor(
      *
      * @return 写入课程数量
      */
-    suspend fun applyToCurrentSemester(parsed: List<ParsedCourse>): Int {
-        val current = semesterRepository.getCurrentSemester().first() ?: return 0
-        courseRepository.deleteCoursesBySemester(current.id)
+    suspend fun applyToCurrentSemester(
+        parsed: List<ParsedCourse>,
+        provider: SyncProviderType,
+    ): Int {
+        val target = requireCapturedBinding(provider) ?: return 0
+        val current = semesterRepository.getSemesterById(target.semesterId)
+            ?.takeIf { it.profileId == target.profileId } ?: return 0
         val domainCourses = parsed.map { it.toDomainCourse().copy(semesterId = current.id) }
-        courseRepository.insertCourses(domainCourses)
-        return domainCourses.size
+        val bindingId = target.sourceBindingId ?: return 0
+        val result = importCommitRepository.commit(
+            ImportCommitRequest(
+                destination = ImportDestination.OverwriteSemester(target.profileId, current.id),
+                semester = NewSemesterSpec(
+                    name = current.name,
+                    startDate = current.startDate,
+                    weekCount = current.weekCount,
+                ),
+                courses = domainCourses,
+                expectedSourceBindingId = bindingId,
+            ),
+        )
+        return if (result is ImportCommitResult.Success) result.committedCourseCount else 0
     }
 
     suspend fun getCurrentSemesterId(): Long? {
-        return withContext(Dispatchers.IO) {
-            val current = semesterRepository.getCurrentSemester().first()
-            current?.id ?: semesterRepository.getAllSemesters().first().firstOrNull()?.id
-        }
-    }
-
-    /**
-     * 获取全部学期列表（用于自动兜底）
-     */
-    suspend fun getAllSemesters(): List<Semester> {
-        return withContext(Dispatchers.IO) {
-            semesterRepository.getAllSemesters().first()
-        }
-    }
-
-    /**
-     * 设置当前学期
-     */
-    suspend fun setCurrentSemester(semesterId: Long) {
-        withContext(Dispatchers.IO) {
-            semesterRepository.setCurrentSemester(semesterId)
-        }
+        return resolveCapturedTargetOrNull()?.semesterId
     }
 
     suspend fun getCoursesBySemester(semesterId: Long): List<Course> {
@@ -2184,25 +2630,95 @@ class QidiSyncViewModel @Inject constructor(
 
     suspend fun applyPartialUpdate(
         parsed: List<ParsedCourse>,
-        selectedItems: List<DiffItem>
+        selectedItems: List<DiffItem>,
+        provider: SyncProviderType,
     ): PartialUpdateResult {
-        val current = semesterRepository.getCurrentSemester().first() ?: return PartialUpdateResult(0, 0)
+        val target = requireCapturedBinding(provider) ?: return PartialUpdateResult(0, 0)
+        val current = semesterRepository.getSemesterById(target.semesterId)
+            ?.takeIf { it.profileId == target.profileId } ?: return PartialUpdateResult(0, 0)
+        val bindingId = target.sourceBindingId ?: return PartialUpdateResult(0, 0)
         val existing = courseRepository.getCoursesBySemester(current.id).first()
+        val finalCourses = existing.toMutableList()
         var removedCount = 0
         selectedItems.filter { it.type == DiffType.Removed }.forEach { item ->
-            val matches = existing.filter { toFingerprint(it) == item.fingerprint }.take(item.count)
-            matches.forEach { course ->
-                courseRepository.deleteCourse(course)
+            val indexes = finalCourses.indices
+                .filter { index -> toFingerprint(finalCourses[index]) == item.fingerprint }
+                .take(item.count)
+                .sortedDescending()
+            indexes.forEach { index ->
+                finalCourses.removeAt(index)
                 removedCount++
             }
         }
-        var addedCount = 0
+        val addedCourses = mutableListOf<Course>()
         selectedItems.filter { it.type == DiffType.Added }.forEach { item ->
             val matches = parsed.filter { toFingerprint(it) == item.fingerprint }.take(item.count)
-            val domainCourses = matches.map { it.toDomainCourse().copy(semesterId = current.id) }
-            courseRepository.insertCourses(domainCourses)
-            addedCount += domainCourses.size
+            addedCourses += matches.map { it.toDomainCourse().copy(semesterId = current.id) }
         }
-        return PartialUpdateResult(addedCount, removedCount)
+        val result = importCommitRepository.commit(
+            ImportCommitRequest(
+                destination = ImportDestination.OverwriteSemester(target.profileId, current.id),
+                semester = NewSemesterSpec(
+                    name = current.name,
+                    startDate = current.startDate,
+                    weekCount = current.weekCount,
+                ),
+                courses = finalCourses + addedCourses,
+                expectedSourceBindingId = bindingId,
+            ),
+        )
+        return if (result is ImportCommitResult.Success) {
+            PartialUpdateResult(addedCourses.size, removedCount)
+        } else {
+            PartialUpdateResult(0, 0)
+        }
+    }
+
+    /** 读取一次活动上下文并固定本次同步的 Profile/学期范围。 */
+    private suspend fun resolveCapturedTarget(): QidiSyncTarget {
+        capturedTarget?.let { return it }
+        val context = timetableProfileRepository.observeActiveContext().first()
+            ?: throw IllegalStateException("未选择活动课表")
+        val semester = context.semester ?: throw IllegalStateException("活动课表尚未选择学期")
+        return QidiSyncTarget(context.profile.id, semester.id).also { capturedTarget = it }
+    }
+
+    /** 网络开始时捕获一次 binding；提交阶段不得重新创建，否则会放过已经失效的旧任务。 */
+    private suspend fun captureBindingForTarget(
+        target: QidiSyncTarget,
+        provider: SyncProviderType,
+    ): QidiSyncTarget? {
+        if (target.sourceBindingId != null) {
+            return target.takeIf { it.provider == provider }
+        }
+        val bindingId = syncSourceBindingRepository.ensureIfStillActive(
+            profileId = target.profileId,
+            semesterId = target.semesterId,
+            provider = provider,
+        ) ?: return null
+        return target.copy(provider = provider, sourceBindingId = bindingId).also { capturedTarget = it }
+    }
+
+    /** 解析完成后只接受网络开始时冻结的 provider + binding。 */
+    private suspend fun requireCapturedBinding(provider: SyncProviderType): QidiSyncTarget? =
+        resolveCapturedTargetOrNull()?.takeIf {
+            it.provider == provider && !it.sourceBindingId.isNullOrBlank()
+        }
+
+    /** 起迪与正方页面同步的不可变写入范围。 */
+    private data class QidiSyncTarget(
+        val profileId: Long,
+        val semesterId: Long,
+        val provider: SyncProviderType? = null,
+        val sourceBindingId: String? = null,
+    )
+
+    /** 空 Profile 或读取选择失败时交给 UI 展示“尚未选择学期”，不让协程异常退出。 */
+    private suspend fun resolveCapturedTargetOrNull(): QidiSyncTarget? = try {
+        resolveCapturedTarget()
+    } catch (cancellation: kotlinx.coroutines.CancellationException) {
+        throw cancellation
+    } catch (_: IllegalStateException) {
+        null
     }
 }

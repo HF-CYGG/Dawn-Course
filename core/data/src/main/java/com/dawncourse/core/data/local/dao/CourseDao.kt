@@ -24,6 +24,20 @@ interface CourseDao {
     @Query("SELECT * FROM courses")
     suspend fun getAllCoursesOnce(): List<CourseEntity>
 
+    @Query(
+        "SELECT courses.* FROM courses " +
+            "INNER JOIN semesters ON semesters.id = courses.semesterId " +
+            "WHERE semesters.profileId = :profileId ORDER BY courses.id",
+    )
+    suspend fun getCoursesByProfileOnce(profileId: Long): List<CourseEntity>
+
+    @Query(
+        "SELECT COUNT(*) FROM courses " +
+            "INNER JOIN semesters ON semesters.id = courses.semesterId " +
+            "WHERE semesters.profileId = :profileId",
+    )
+    suspend fun countByProfile(profileId: Long): Int
+
     /**
      * 根据学期 ID 查询课程
      *
@@ -32,6 +46,10 @@ interface CourseDao {
      */
     @Query("SELECT * FROM courses WHERE semesterId = :semesterId")
     fun getCoursesBySemester(semesterId: Long): Flow<List<CourseEntity>>
+
+    /** 覆盖导入与补偿恢复需要同一事务内读取目标学期的完整 pre-image。 */
+    @Query("SELECT * FROM courses WHERE semesterId = :semesterId ORDER BY id")
+    suspend fun getCoursesBySemesterOnce(semesterId: Long): List<CourseEntity>
 
     /**
      * 获取指定学期中所有课程的最大周次
@@ -51,8 +69,11 @@ interface CourseDao {
      * @param originId 原始课程 ID
      * @return 匹配的课程实体列表
      */
-    @Query("SELECT * FROM courses WHERE originId = :originId")
-    suspend fun getCoursesByOriginId(originId: Long): List<CourseEntity>
+    @Query(
+        "SELECT * FROM courses " +
+            "WHERE semesterId = :semesterId AND originId = :originId ORDER BY id"
+    )
+    suspend fun getCoursesByOriginId(semesterId: Long, originId: Long): List<CourseEntity>
     
     /**
      * 根据 ID 查询单门课程
@@ -117,6 +138,12 @@ interface CourseDao {
      */
     @Query("DELETE FROM courses WHERE semesterId = :semesterId")
     suspend fun deleteCoursesBySemester(semesterId: Long)
+
+    @Query(
+        "DELETE FROM courses WHERE semesterId IN " +
+            "(SELECT id FROM semesters WHERE profileId = :profileId)",
+    )
+    suspend fun deleteCoursesByProfile(profileId: Long)
 
     /**
      * 批量更新所有课程的时长

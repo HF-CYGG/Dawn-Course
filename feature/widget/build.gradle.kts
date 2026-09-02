@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.androidLibrary)
-    // kotlinAndroid 插件已移除：AGP 9.0+ 内置 Kotlin 支持
     alias(libs.plugins.hiltAndroid)
     alias(libs.plugins.ksp)
     alias(libs.plugins.composeCompiler)
@@ -23,16 +22,14 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     // kotlinOptions 块已移除：built-in Kotlin 下 jvmTarget 默认等于
     // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
     }
-    // composeOptions.kotlinCompilerExtensionVersion 已移除：
-    // Compose 编译器版本现在由 composeCompiler 插件（版本随 Kotlin 一同发布）管理
 }
 
 dependencies {
@@ -52,7 +49,9 @@ dependencies {
 
     // Hilt
     implementation(libs.hilt.android)
+    implementation(libs.hilt.work)
     ksp(libs.hilt.compiler)
+    ksp(libs.androidx.hilt.compiler)
     
     // Coroutines
     implementation(libs.coroutines.core)
@@ -65,4 +64,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.ui)
     implementation(libs.ui.tooling.preview)
+
+    // Widget 恢复策略的纯 JVM 单元测试。
+    testImplementation(libs.junit)
 }

@@ -39,9 +39,6 @@ enum class AppFontStyle {
  * @property showSidebarIndex 是否在侧边栏显示节次索引
  * @property hideNonThisWeek 是否隐藏非本周课程
  * @property showDateInHeader 是否在表头显示日期
- * @property currentSemesterName 当前学期名称
- * @property totalWeeks 当前学期总周数
- * @property startDateTimestamp 当前学期开始时间戳
  * @property enableClassReminder 是否启用上课提醒
  * @property reminderMinutes 提前提醒分钟数
  * @property enablePersistentNotification 是否启用常驻通知
@@ -88,11 +85,6 @@ data class AppSettings(
     val hideNonThisWeek: Boolean = false,
     val showDateInHeader: Boolean = false,
 
-    // 学期信息 (简易版缓存，主要数据在数据库)
-    val currentSemesterName: String = "2025年春季学期",
-    val totalWeeks: Int = 20,
-    val startDateTimestamp: Long = 0L,
-    
     // 通知与提醒
     val enableClassReminder: Boolean = false,
     val reminderMinutes: Int = 10,

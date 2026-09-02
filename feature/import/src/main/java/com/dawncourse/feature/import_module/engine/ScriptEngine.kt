@@ -1,277 +1,382 @@
 package com.dawncourse.feature.import_module.engine
 
-import app.cash.quickjs.QuickJs
-import org.json.JSONObject
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.ParcelFileDescriptor
+import android.os.Process
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * JS 脚本引擎管理器
+ * JS 脚本引擎宿主。
  *
- * 负责 QuickJS 实例的创建、管理和销毁。
- * 封装了 QuickJS 的底层操作，提供更友好的执行接口。
+ * 入口探测、调用编排与结果校验仍由共享 script_host.js 契约负责。QuickJS 本体只在
+ * `:script_runtime` 进程中运行；若 native evaluate 卡死，主进程在预算耗尽时终止整个
+ * 脚本进程，从而保证后续解析可以获得一个全新的运行时。
  */
 @Singleton
-class ScriptEngine @Inject constructor() {
+class ScriptEngine @Inject constructor(
+    @ApplicationContext context: Context
+) {
+    companion object {
+        const val DEFAULT_TIMEOUT_MS: Long = 5_000L
+        const val SUPPORTED_CONTRACT_VERSION: Int = 1
+        const val SUPPORTED_PARSER_API_VERSION: Int = 1
+        const val SCRIPT_HOST_NAME: String = "script_host.js"
+        const val SCRIPT_HOST_CATEGORY: String = "runtime"
 
-    /**
-     * 最近一次 [parseHtml] 执行期间，解析脚本上报的"被跳过记录"原因短码列表。
-     *
-     * 只包含固定短码（no_weeks / no_sections / no_day），不含任何页面内容，
-     * 可安全地用于 UI 提示与统计。每次 [parseHtml] 开头会重置。
-     */
-    @Volatile
-    var lastRunDiagnostics: List<String> = emptyList()
-        private set
+        const val ERROR_NO_ENTRY: String = "no_entry"
+        const val ERROR_SCRIPT_EXCEPTION: String = "script_exception"
+        const val ERROR_TIMEOUT: String = "timeout"
+        const val ERROR_EMPTY_RESULT: String = "empty_result"
+        const val ERROR_SCHEMA_INVALID: String = "schema_invalid"
+        const val ERROR_DUPLICATE_RATIO_HIGH: String = "duplicate_ratio_high"
+        const val ERROR_DO_NOT_CONTINUE: String = "do_not_continue"
+        const val ERROR_HARNESS_MISSING: String = "harness_missing"
+        const val ERROR_RESULT_TOO_LARGE: String = "result_too_large"
 
-    /** 在一次全新的解析流程开始前清空诊断，避免读到上一次运行的残留 */
-    fun clearDiagnostics() {
-        lastRunDiagnostics = emptyList()
+        private val CRASH_LIKE_ERRORS = setOf(
+            ERROR_SCRIPT_EXCEPTION,
+            ERROR_NO_ENTRY,
+            ERROR_TIMEOUT,
+            ERROR_HARNESS_MISSING
+        )
+
+        // 独立覆盖隔离进程创建与 native 冷加载；脚本执行仍受 request.timeoutMillis 限制。
+        private const val SERVICE_BIND_TIMEOUT_MS: Long = 10_000L
+        // 大请求的 Pipe 传输与协议解码不占用脚本执行预算，但同样必须有硬上限。
+        private const val SERVICE_PREPARATION_TIMEOUT_MS: Long = 10_000L
+        private const val SERVICE_TERMINATION_TIMEOUT_MS: Long = 1_000L
+        private const val DEFAULT_PIPE_BUFFER_BYTES: Int = 8 * 1024
+
+        internal fun failureResult(errorCode: String, message: String) = ScriptExecutionResult(
+            raw = "",
+            ok = false,
+            schemaValid = false,
+            resultCount = 0,
+            errorCode = errorCode,
+            errorMessage = message,
+            entryUsed = "",
+            contractVersion = SUPPORTED_CONTRACT_VERSION
+        )
+
+        /** 未知 Binder/IPC 故障统一映射，避免协议泄露供应商异常类名、堆栈或脚本内容。 */
+        internal fun unexpectedRuntimeFailureResult(): ScriptExecutionResult =
+            failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime failed")
     }
 
-    /**
-     * 导入脚本执行异常（可恢复）
-     *
-     * 设计目标：
-     * - 作为“解析失败”的结构化错误信号，便于上层做统一的 UI 提示与重试
-     * - message 不携带 HTML/脚本内容，避免把敏感信息带到 UI 或日志里
-     * - 保留 cause，便于在必要时进行问题定位（但默认不上报/不打印堆栈）
-     */
+    data class ScriptExecutionResult(
+        val raw: String,
+        val ok: Boolean,
+        val schemaValid: Boolean,
+        val resultCount: Int,
+        val errorCode: String,
+        val errorMessage: String,
+        val entryUsed: String,
+        val contractVersion: Int,
+        val diagnostics: List<String> = emptyList()
+    )
+
     class ScriptExecutionException(
         message: String,
+        val errorCode: String = ERROR_SCRIPT_EXCEPTION,
         cause: Throwable? = null
     ) : RuntimeException(message, cause)
 
-    /**
-     * 执行 JS 脚本并返回解析结果
-     *
-     * @param script JS 脚本内容
-     * @param html 待解析的 HTML 内容
-     * @return 解析后的 JSON 字符串（后续可反序列化为 Course 列表）
-     */
-    fun parseHtml(script: String, html: String): String {
-        // 注意：QuickJs.create() 本身也纳入 try 范围。
-        // 该调用会 dlopen 原生 .so，在部分较新硬件（16 KB 内存页设备）上，
-        // 若原生库未按 16 KB 对齐，这里会抛出 UnsatisfiedLinkError（Error 而非 Exception）。
-        // 调用方（ImportViewModel）目前已有 catch (Throwable) 兜底，不会崩溃，
-        // 但仍统一转换为 ScriptExecutionException，保持“解析失败”的语义一致，
-        // 并避免把底层 Error 类型泄露给上层。
-        lastRunDiagnostics = emptyList()
-        var quickJs: QuickJs? = null
-        return try {
-            quickJs = QuickJs.create()
-            setupRuntime(quickJs)
-            quickJs.evaluate(script)
-            executeScript(quickJs, html)
-        } catch (e: Throwable) {
-            // 解析脚本属于“外部输入 + 多实现差异”的高风险区域：
-            // - 可能出现脚本语法错误、页面结构变化、QuickJS 运行时异常等
-            // - 这些错误不应导致应用崩溃，更不应在用户设备上打印堆栈（可能泄露页面/账号相关信息）
-            //
-            // 因此这里统一转换为“可恢复”的异常类型，并保留原始 cause 供上层必要时分析。
-            if (e is ScriptExecutionException) throw e
-            throw ScriptExecutionException("解析器执行失败", e)
+    private val appContext = context.applicationContext
+    private val executionMutex = Mutex()
+
+    init {
+        // 仅删除旧版本精确命名的 raw IPC 文件；新实现全程仅使用匿名 Pipe。
+        LegacyScriptRuntimeFileCleanup.clear(appContext.cacheDir)
+    }
+
+    @Volatile
+    internal var lastRuntimeProcessId: Int = 0
+        private set
+
+    @Volatile
+    internal var lastTerminatedRuntimeProcessId: Int = 0
+        private set
+
+    suspend fun parseHtml(
+        script: String,
+        html: String,
+        harnessSource: String,
+        dependencies: List<String> = emptyList(),
+        targetType: String = "parser",
+        timeoutMillis: Long = DEFAULT_TIMEOUT_MS
+    ): ScriptExecutionResult = executionMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val normalizedTimeout = ScriptRuntimeLimits.normalizeTimeout(timeoutMillis)
+            val validation = ScriptRuntimeLimits.validateInput(
+                harnessBytes = ScriptRuntimeLimits.utf8Size(harnessSource),
+                scriptAndDependencyBytes = ScriptRuntimeLimits.utf8Size(script) +
+                    dependencies.sumOf(ScriptRuntimeLimits::utf8Size),
+                htmlBytes = ScriptRuntimeLimits.utf8Size(html),
+                timeoutMillis = normalizedTimeout
+            )
+            val result = when {
+                harnessSource.isBlank() -> failureResult(
+                    ERROR_HARNESS_MISSING,
+                    "script harness is missing"
+                )
+                !validation.isValid -> failureResult(
+                    validation.errorCode,
+                    "script runtime input exceeds limit"
+                )
+                else -> executeRemote(
+                    ScriptRuntimeRequest(
+                        script = script,
+                        html = html,
+                        harnessSource = harnessSource,
+                        dependencies = dependencies,
+                        targetType = targetType,
+                        timeoutMillis = normalizedTimeout
+                    )
+                )
+            }
+
+            if (result.errorCode in CRASH_LIKE_ERRORS) {
+                throw ScriptExecutionException("解析器执行失败", result.errorCode)
+            }
+            result
+        }
+    }
+
+    private suspend fun executeRemote(
+        request: ScriptRuntimeRequest
+    ): ScriptExecutionResult = coroutineScope {
+        val requestPipe = ParcelFileDescriptor.createPipe()
+        val responsePipe = ParcelFileDescriptor.createPipe()
+        val requestRead = requestPipe[0]
+        val requestWrite = requestPipe[1]
+        val responseRead = responsePipe[0]
+        val responseWrite = responsePipe[1]
+        val requestBytes = request.toJson().toByteArray(Charsets.UTF_8)
+        val executionStarted = CompletableDeferred<Unit>()
+        val completion = CompletableDeferred<Unit>()
+        val connected = CompletableDeferred<Int>()
+        val runtimeDied = CompletableDeferred<Unit>()
+        val gate = ScriptRuntimeExecutionGate()
+        var bound = false
+        val remoteProcessId = AtomicInteger(0)
+        val requestWriter = async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            runCatching {
+                ParcelFileDescriptor.AutoCloseOutputStream(requestWrite).use { output ->
+                    output.write(requestBytes)
+                    output.flush()
+                }
+            }.fold(
+                onSuccess = { PipeWriteResult.Complete },
+                onFailure = { PipeWriteResult.Failed }
+            )
+        }
+        val responseReader = async(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            runCatching {
+                readPipeAtMost(responseRead, ScriptRuntimeLimits.MAX_RESULT_BYTES)
+            }.getOrElse { PipeReadResult.Failed }
+        }
+        val callback = object : IScriptRuntimeCallback.Stub() {
+            override fun onExecutionStarted() {
+                executionStarted.complete(Unit)
+            }
+
+            override fun onComplete() {
+                completion.complete(Unit)
+            }
+        }
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                runCatching {
+                    val runtime = IScriptRuntime.Stub.asInterface(binder)
+                    val processId = runtime.processId
+                    remoteProcessId.set(processId)
+                    lastRuntimeProcessId = processId
+                    binder?.linkToDeath(
+                        {
+                            runtimeDied.complete(Unit)
+                            completion.completeExceptionally(IllegalStateException("script runtime died"))
+                        },
+                        0
+                    )
+                    val decision = gate.onConnected(processId)
+                    if (decision.shouldSubmit && !gate.isCancelled()) {
+                        responseReader.start()
+                        requestWriter.start()
+                        try {
+                            runtime.execute(requestRead, responseWrite, callback)
+                        } finally {
+                            // Binder 已复制 descriptor；本地端必须关闭，才能把 Pipe EOF 交给服务端。
+                            runCatching { requestRead.close() }
+                            runCatching { responseWrite.close() }
+                        }
+                    } else {
+                        killRuntimeProcess(decision.processIdToReclaim)
+                    }
+                    connected.complete(processId)
+                }.onFailure { error ->
+                    connected.completeExceptionally(error)
+                    completion.completeExceptionally(error)
+                }
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                runtimeDied.complete(Unit)
+                val error = IllegalStateException("script runtime disconnected")
+                connected.completeExceptionally(error)
+                completion.completeExceptionally(error)
+            }
+
+            override fun onBindingDied(name: ComponentName?) {
+                runtimeDied.complete(Unit)
+                val error = IllegalStateException("script runtime binding died")
+                connected.completeExceptionally(error)
+                completion.completeExceptionally(error)
+            }
+
+            override fun onNullBinding(name: ComponentName?) {
+                val error = IllegalStateException("script runtime binding missing")
+                connected.completeExceptionally(error)
+                completion.completeExceptionally(error)
+            }
+        }
+
+        fun unbindIfNeeded() {
+            if (bound) {
+                bound = false
+                runCatching { appContext.unbindService(connection) }
+            }
+        }
+
+        try {
+            bound = appContext.bindService(
+                Intent(appContext, ScriptRuntimeService::class.java),
+                connection,
+                Context.BIND_AUTO_CREATE
+            )
+            if (!bound) {
+                failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding failed")
+            } else {
+                withTimeout(SERVICE_BIND_TIMEOUT_MS) { connected.await() }
+                withTimeout(SERVICE_PREPARATION_TIMEOUT_MS) { executionStarted.await() }
+                val result = withTimeout(request.timeoutMillis) {
+                    completion.await()
+                    when (requestWriter.await()) {
+                        PipeWriteResult.Failed -> failureResult(
+                            ERROR_SCRIPT_EXCEPTION,
+                            "script runtime request pipe failed"
+                        )
+                        PipeWriteResult.Complete -> when (val response = responseReader.await()) {
+                            is PipeReadResult.Complete -> scriptExecutionResultFromJson(response.text)
+                            PipeReadResult.TooLarge -> failureResult(
+                                ERROR_RESULT_TOO_LARGE,
+                                "script result exceeds limit"
+                            )
+                            PipeReadResult.Failed -> failureResult(
+                                ERROR_SCRIPT_EXCEPTION,
+                                "script runtime response pipe failed"
+                            )
+                        }
+                    }
+                }
+                result
+            }
+        } catch (_: TimeoutCancellationException) {
+            val processId = gate.cancelAndGetProcessId()
+            killRuntimeProcess(processId)
+            unbindIfNeeded()
+            awaitRuntimeTermination(runtimeDied, processId)
+            if (processId > 0 || remoteProcessId.get() > 0) {
+                failureResult(ERROR_TIMEOUT, "script execution exceeded process budget")
+            } else {
+                failureResult(ERROR_SCRIPT_EXCEPTION, "script runtime binding timed out")
+            }
+        } catch (_: Throwable) {
+            val processId = gate.cancelAndGetProcessId()
+            killRuntimeProcess(processId)
+            unbindIfNeeded()
+            awaitRuntimeTermination(runtimeDied, processId)
+            unexpectedRuntimeFailureResult()
         } finally {
-            quickJs?.close()
+            unbindIfNeeded()
+            requestWriter.cancel()
+            responseReader.cancel()
+            runCatching { requestRead.close() }
+            runCatching { requestWrite.close() }
+            runCatching { responseRead.close() }
+            runCatching { responseWrite.close() }
         }
     }
 
-    private fun setupRuntime(quickJs: QuickJs) {
-        quickJs.evaluate(
-            """
-            (function() {
-              if (!globalThis.console) {
-                globalThis.console = { log: function(){}, error: function(){}, warn: function(){} };
-              }
-              if (!globalThis.setTimeout) {
-                globalThis.setTimeout = function(fn, ms) { if (typeof fn === 'function') { fn(); } return 0; };
-              }
-              if (!globalThis.clearTimeout) {
-                globalThis.clearTimeout = function() {};
-              }
-              if (!globalThis.window) {
-                globalThis.window = globalThis;
-              }
-              if (!globalThis.document) {
-                globalThis.document = {};
-              }
-              if (!globalThis.__dc_normalize) {
-                globalThis.__dc_normalize = function(v) {
-                  if (typeof v === 'string') return v;
-                  if (v === undefined || v === null) return '';
-                  try { return JSON.stringify(v); } catch (e) { return String(v); }
-                };
-              }
-              // 解析脚本可通过 reportDropped(reason) 往这里追加"被跳过记录"的原因短码，
-              // 供 ScriptEngine 在执行结束后读取（见 common_parser_utils.js）。
-              globalThis.__dc_diag = [];
-            })();
-            """.trimIndent()
-        )
+    /** 强杀只负责发信号；等待 Binder death 后再允许下一次绑定，规避 OEM 进程回收竞态。 */
+    private suspend fun awaitRuntimeTermination(
+        runtimeDied: CompletableDeferred<Unit>,
+        processId: Int
+    ) {
+        if (processId <= 0) return
+        withTimeoutOrNull(SERVICE_TERMINATION_TIMEOUT_MS) {
+            runtimeDied.await()
+        }
     }
 
-    private fun executeScript(quickJs: QuickJs, html: String): String {
-        val htmlJson = JSONObject.quote(html)
-        val isPromise = quickJs.evaluate(
-            """
-            (function() {
-              const __dc_html = $htmlJson;
-              const __dc_hasProvider = typeof scheduleHtmlProvider === 'function';
-              const __dc_hasParser = typeof scheduleHtmlParser === 'function';
-              const __dc_hasTimer = typeof scheduleTimer === 'function' && __dc_hasProvider;
-              const __dc_hasParse = typeof parse === 'function';
-              function __dc_isPromise(v) {
-                return v && typeof v.then === 'function';
-              }
-              function __dc_normalizeProvider(providerValue, timerValue) {
-                const providerStr = globalThis.__dc_normalize(providerValue);
-                if (!providerStr || providerStr === "do not continue" || timerValue === undefined) return providerStr;
-                try {
-                  const obj = JSON.parse(providerStr);
-                  if (obj && typeof obj === "object" && obj.timetable === undefined) {
-                    obj.timetable = timerValue;
-                    return JSON.stringify(obj);
-                  }
-                } catch (e) {}
-                return providerStr;
-              }
-              function __dc_finalize(providerValue, parserValue, timerValue) {
-                if (providerValue !== undefined) {
-                  return __dc_normalizeProvider(providerValue, timerValue);
+    /** 限制匿名响应 Pipe 的总字节数，超限时关闭读端让远端写入尽快失败。 */
+    private fun readPipeAtMost(
+        descriptor: ParcelFileDescriptor,
+        maxBytes: Int
+    ): PipeReadResult {
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(DEFAULT_PIPE_BUFFER_BYTES)
+            while (true) {
+                val remaining = maxBytes - output.size()
+                val readLimit = (remaining + 1).coerceAtMost(buffer.size)
+                val count = input.read(buffer, 0, readLimit)
+                if (count < 0) {
+                    return PipeReadResult.Complete(output.toString(Charsets.UTF_8.name()))
                 }
-                if (parserValue !== undefined) {
-                  return globalThis.__dc_normalize(parserValue);
+                if (count > remaining) {
+                    return PipeReadResult.TooLarge
                 }
-                return globalThis.__dc_normalize(providerValue);
-              }
-              function __dc_runAfterProvider(providerValue) {
-                let parserValue = __dc_hasParser ? scheduleHtmlParser(providerValue) : undefined;
-                if (__dc_isPromise(parserValue)) {
-                  return Promise.resolve(parserValue).then(function(parserResolved) {
-                    const timerValue = __dc_hasTimer
-                      ? scheduleTimer({ providerRes: globalThis.__dc_normalize(providerValue), parserRes: parserResolved })
-                      : undefined;
-                    if (__dc_isPromise(timerValue)) {
-                      return Promise.resolve(timerValue).then(function(timerResolved) {
-                        return __dc_finalize(providerValue, parserResolved, timerResolved);
-                      });
-                    }
-                    return __dc_finalize(providerValue, parserResolved, timerValue);
-                  });
-                }
-                let timerValue = __dc_hasTimer
-                  ? scheduleTimer({ providerRes: globalThis.__dc_normalize(providerValue), parserRes: parserValue })
-                  : undefined;
-                if (__dc_isPromise(timerValue)) {
-                  return Promise.resolve(timerValue).then(function(timerResolved) {
-                    return __dc_finalize(providerValue, parserValue, timerResolved);
-                  });
-                }
-                return __dc_finalize(providerValue, parserValue, timerValue);
-              }
-              let __dc_entryResult;
-              if (__dc_hasProvider) {
-                __dc_entryResult = scheduleHtmlProvider(__dc_html, "", null);
-              } else if (__dc_hasParser) {
-                __dc_entryResult = scheduleHtmlParser(__dc_html);
-              } else if (__dc_hasParse) {
-                __dc_entryResult = parse(__dc_html);
-              } else {
-                throw new Error("No compatible entry function found");
-              }
-              globalThis.__dc_error = undefined;
-              globalThis.__dc_flowResolved = false;
-              globalThis.__dc_flowValue = "";
-              if (__dc_isPromise(__dc_entryResult)) {
-                Promise.resolve(__dc_entryResult)
-                  .then(function(resolvedEntry) {
-                    if (__dc_hasProvider) {
-                      const flowResult = __dc_runAfterProvider(resolvedEntry);
-                      if (__dc_isPromise(flowResult)) {
-                        return Promise.resolve(flowResult).then(function(finalResult) {
-                          globalThis.__dc_flowValue = finalResult;
-                          globalThis.__dc_flowResolved = true;
-                        });
-                      }
-                      globalThis.__dc_flowValue = flowResult;
-                      globalThis.__dc_flowResolved = true;
-                      return;
-                    }
-                    globalThis.__dc_flowValue = globalThis.__dc_normalize(resolvedEntry);
-                    globalThis.__dc_flowResolved = true;
-                  })
-                  .catch(function(e) {
-                    globalThis.__dc_error = String(e);
-                    globalThis.__dc_flowResolved = true;
-                  });
-                return true;
-              }
-              if (__dc_hasProvider) {
-                const flowResult = __dc_runAfterProvider(__dc_entryResult);
-                if (__dc_isPromise(flowResult)) {
-                  Promise.resolve(flowResult)
-                    .then(function(finalResult) {
-                      globalThis.__dc_flowValue = finalResult;
-                      globalThis.__dc_flowResolved = true;
-                    })
-                    .catch(function(e) {
-                      globalThis.__dc_error = String(e);
-                      globalThis.__dc_flowResolved = true;
-                    });
-                  return true;
-                }
-                globalThis.__dc_flowValue = flowResult;
-                globalThis.__dc_flowResolved = true;
-                return false;
-              }
-              globalThis.__dc_flowValue = globalThis.__dc_normalize(__dc_entryResult);
-              globalThis.__dc_flowResolved = true;
-              return false;
-            })();
-            """.trimIndent()
-        )
-        if (isPromise is Boolean && isPromise) {
-            if (hasPendingJobsSupport(quickJs)) {
-                repeat(200) {
-                    executePendingJobs(quickJs)
-                    val resolved = quickJs.evaluate("globalThis.__dc_flowResolved === true")
-                    if (resolved is Boolean && resolved) return@repeat
-                }
-            }
-        }
-        // 读取解析脚本上报的"被跳过记录"原因短码（仅固定短码，无页面内容）
-        runCatching {
-            val diagJson = quickJs.evaluate("JSON.stringify(globalThis.__dc_diag || [])")?.toString()
-            if (!diagJson.isNullOrBlank()) {
-                val arr = org.json.JSONArray(diagJson)
-                lastRunDiagnostics = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
-            }
-        }
-
-        val error = quickJs.evaluate("globalThis.__dc_error")?.toString()
-        if (!error.isNullOrBlank()) {
-            // JS 侧错误字符串可能包含页面片段/请求信息等敏感内容：
-            // - 不作为异常 message 直接向上冒泡，避免被 UI 展示或被日志系统采集
-            // - 作为 cause 保留，便于在需要时定位解析器问题
-            throw ScriptExecutionException("解析器执行失败", RuntimeException(error))
-        }
-        return quickJs.evaluate("globalThis.__dc_flowValue")?.toString() ?: ""
-    }
-
-    private fun executePendingJobs(quickJs: QuickJs) {
-        val method = quickJs.javaClass.methods.firstOrNull {
-            it.name == "executePendingJobs" && it.parameterCount == 0
-        } ?: return
-        repeat(100) {
-            val result = method.invoke(quickJs)
-            when (result) {
-                is Boolean -> if (!result) return
-                is Int -> if (result == 0) return
+                output.write(buffer, 0, count)
             }
         }
     }
 
-    private fun hasPendingJobsSupport(quickJs: QuickJs): Boolean {
-        return quickJs.javaClass.methods.any { it.name == "executePendingJobs" && it.parameterCount == 0 }
+    private fun killRuntimeProcess(processId: Int) {
+        if (processId > 0 && processId != Process.myPid()) {
+            lastTerminatedRuntimeProcessId = processId
+            Process.killProcess(processId)
+        }
     }
+
+    private sealed interface PipeReadResult {
+        data class Complete(val text: String) : PipeReadResult
+        data object TooLarge : PipeReadResult
+        data object Failed : PipeReadResult
+    }
+
+    /** Pipe 写端错误由主流程统一映射，避免 async 子任务取消整个超时控制协程。 */
+    private sealed interface PipeWriteResult {
+        data object Complete : PipeWriteResult
+        data object Failed : PipeWriteResult
+    }
+
 }

@@ -1,0 +1,19 @@
+# CodeQL 扫描配置
+#
+# 目的：
+# 1. 把 PR / push 扫描收敛到安全查询集（security-extended），去掉纯代码风格类
+#    查询（未使用变量、恒真条件、弃用调用等）带来的门禁噪声——这些不属于安全
+#    问题，不应让 CodeQL check 变红。
+# 2. 排除构建产物与生成代码（AIDL、KSP 等），它们不是人工维护的源码，扫出的
+#    告警无法也不需要修复。
+#
+# 说明：security-extended 仍包含 implicit PendingIntent、WebView 设置、明文存储、
+# 证书锁定等全部 Android 安全查询，安全覆盖面不降低。
+
+name: "Dawn Course CodeQL"
+
+queries:
+  - uses: security-extended
+
+paths-ignore:
+  - "**/build/**"

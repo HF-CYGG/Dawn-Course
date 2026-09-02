@@ -1,12 +1,16 @@
 package com.dawncourse.feature.widget.worker
 
-import android.content.Context
 import android.app.AlarmManager
 import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.hilt.work.HiltWorker
 import androidx.glance.appwidget.updateAll
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
@@ -17,13 +21,17 @@ import java.util.concurrent.TimeUnit
 
 import android.content.Intent
 import android.content.IntentFilter
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import com.dawncourse.feature.widget.MidnightUpdateReceiver
 import com.dawncourse.feature.widget.DawnWidgetReceiver
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+import com.dawncourse.core.domain.repository.OperationalDataGate
+import com.dawncourse.core.domain.repository.OperationalDataReadiness
 
 /**
  * Widget 更新工作器
@@ -31,21 +39,50 @@ import com.dawncourse.feature.widget.DawnWidgetReceiver
  * 使用 WorkManager 执行后台更新任务，确保 Widget 内容的及时刷新。
  * 主要应对系统杀后台后 Widget 长期不刷新的情况。
  */
-class WidgetUpdateWorker(
-    private val context: Context,
-    workerParams: WorkerParameters
-) : CoroutineWorker(context, workerParams) {
+@HiltWorker
+class WidgetUpdateWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val operationalDataGate: OperationalDataGate
+) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        when (operationalDataGate.readiness()) {
+            OperationalDataReadiness.STARTING -> return Result.retry()
+            OperationalDataReadiness.RECOVERY_REQUIRED -> return Result.success()
+            OperationalDataReadiness.READY -> Unit
+        }
+        // 任务可能在最后一个 Widget 被移除后才开始执行，执行前再次守住实例边界。
+        if (!WidgetSyncManager.hasWidgetInstances(applicationContext)) {
+            return Result.success()
+        }
         // 触发 Widget 更新，重新执行 provideGlance
-        DawnWidget().updateAll(context)
-        return Result.success()
+        return try {
+            DawnWidget().updateAll(applicationContext)
+            Result.success()
+        } catch (failure: Throwable) {
+            Log.w(TAG, "Widget worker update failed", failure)
+            Result.retry()
+        }
+    }
+
+    private companion object {
+        private const val TAG = "WidgetUpdateWorker"
     }
 }
 
 object WidgetSyncManager {
     private const val TAG = "WidgetSyncManager"
     private const val UNIQUE_WORK_NAME = "DawnWidgetUpdateWork"
+    /**
+     * 系统恢复事件使用的即时 Widget 更新任务唯一名称。
+     */
+    internal const val IMMEDIATE_RESTORE_WORK_NAME = "DawnWidgetSystemRestore"
+
+    /**
+     * 连续系统事件只保留最新一次 Widget 刷新请求。
+     */
+    internal val IMMEDIATE_RESTORE_WORK_POLICY: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE
     private const val NEXT_UPDATE_REQUEST_CODE = 10001
     private const val ACTION_FORCE_UPDATE = "com.dawncourse.widget.FORCE_UPDATE"
 
@@ -55,10 +92,6 @@ object WidgetSyncManager {
      * WorkManager 主要负责系统杀后台后的存活保底
      */
     fun scheduleUpdate(context: Context) {
-        // 兜底原因：本方法会在冷启动的 App Startup 阶段被调用。
-        // WorkManager.getInstance() 在未初始化时会抛 IllegalStateException，
-        // 部分 OEM ROM 的 JobScheduler 也可能在 enqueue 时抛异常。
-        // 小组件刷新属于增强功能，任何失败都不应影响 App 启动。
         runCatching {
             val request = PeriodicWorkRequestBuilder<WidgetUpdateWorker>(
                 4, TimeUnit.HOURS
@@ -66,34 +99,75 @@ object WidgetSyncManager {
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP, // 如果已存在则保持，避免重复调度
+                ExistingPeriodicWorkPolicy.KEEP,
                 request
             )
-        }.onFailure {
-            Log.w(TAG, "scheduleUpdate failed", it)
-        }
+        }.onFailure { Log.w(TAG, "scheduleUpdate failed", it) }
     }
 
     fun cancelUpdate(context: Context) {
         runCatching {
             WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_WORK_NAME)
-        }.onFailure {
-            Log.w(TAG, "cancelUpdate failed", it)
+        }.onFailure { Log.w(TAG, "cancelUpdate failed", it) }
+    }
+
+    /**
+     * 在开机、应用覆盖安装或系统时间变化后恢复 Widget 更新链路。
+     *
+     * 只查询 AppWidgetManager 的实例 ID，不读取课程数据、Repository 或 DAO；
+     * 没有实例时不创建周期 Work、不设置午夜闹钟，也不触发刷新。
+     *
+     * @param context 应用上下文或广播上下文。
+     */
+    fun restoreAfterSystemEvent(context: Context) {
+        val appContext = context.applicationContext
+        val plan = WidgetRestorePolicy.planFor(hasWidgetInstances(appContext))
+        if (plan.schedulePeriodicWork) scheduleUpdate(appContext)
+        if (plan.scheduleMidnightAlarm) {
+            runCatching { MidnightUpdateReceiver.scheduleNextMidnightUpdate(appContext) }
+                .onFailure { Log.w(TAG, "scheduleNextMidnightUpdate failed", it) }
         }
+        if (plan.enqueueImmediateUpdate) enqueueImmediateRestoreUpdate(appContext)
+    }
+
+    /**
+     * 查询系统当前是否仍有 DawnWidget 实例。
+     *
+     * 查询失败时保守视为无实例，避免在系统恢复阶段制造额外后台唤醒。
+     */
+    internal fun hasWidgetInstances(context: Context): Boolean {
+        val appContext = context.applicationContext
+        return runCatching {
+            AppWidgetManager.getInstance(appContext).getAppWidgetIds(
+                ComponentName(appContext, DawnWidgetReceiver::class.java)
+            ).isNotEmpty()
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 将系统恢复后的立即刷新交给 WorkManager，避免 Receiver 返回后裸协程被系统终止。
+     */
+    private fun enqueueImmediateRestoreUpdate(context: Context) {
+        runCatching {
+            val request = OneTimeWorkRequestBuilder<WidgetUpdateWorker>().build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                IMMEDIATE_RESTORE_WORK_NAME,
+                IMMEDIATE_RESTORE_WORK_POLICY,
+                request
+            )
+        }.onFailure { Log.w(TAG, "enqueueImmediateRestoreUpdate failed", it) }
     }
 
     /**
      * 立即触发一次更新
      */
     fun triggerImmediateUpdate(context: Context) {
-        updateWidgetNow(context)
+        restoreAfterSystemEvent(context)
     }
 
     fun scheduleNextCourseUpdate(context: Context, triggerAtMillis: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, DawnWidgetReceiver::class.java).apply {
-            action = ACTION_FORCE_UPDATE
-        }
+        val intent = nextCourseUpdateIntent(context)
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             NEXT_UPDATE_REQUEST_CODE,
@@ -119,8 +193,33 @@ object WidgetSyncManager {
                     pendingIntent
                 )
             }
+        } catch (failure: Throwable) {
+            Log.w(TAG, "scheduleNextCourseUpdate failed", failure)
         }
     }
+
+    /** 清除下一课程结束时的精确闹钟，供测试变体在重置隔离状态时收敛调度。 */
+    fun cancelNextCourseUpdate(context: Context) {
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            NEXT_UPDATE_REQUEST_CODE,
+            nextCourseUpdateIntent(context),
+            PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+        ) ?: return
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        try {
+            alarmManager.cancel(pendingIntent)
+        } finally {
+            pendingIntent.cancel()
+        }
+    }
+
+    // 用 Intent(Context, Class) 构造显式广播 Intent：显式 component 能让静态分析
+    // 明确识别目标组件，避免 AlarmManager 持有的 PendingIntent 被判定为隐式 Intent。
+    private fun nextCourseUpdateIntent(context: Context): Intent =
+        Intent(context, DawnWidgetReceiver::class.java).apply {
+            action = ACTION_FORCE_UPDATE
+        }
 
     /**
      * 注册时间变化广播监听器
@@ -137,12 +236,8 @@ object WidgetSyncManager {
                 if (intent.action == Intent.ACTION_TIME_CHANGED ||
                     intent.action == Intent.ACTION_DATE_CHANGED ||
                     intent.action == Intent.ACTION_TIMEZONE_CHANGED) {
-                    
-                    // 1. 重置午夜更新闹钟 (因为“午夜”时刻可能变了，或者已错过)
-                    MidnightUpdateReceiver.scheduleNextMidnightUpdate(ctx)
-                    
-                    // 2. 立即刷新 Widget
-                    updateWidgetNow(ctx)
+                    // 所有系统时间变化入口统一经实例判定后恢复。
+                    restoreAfterSystemEvent(ctx)
                 }
             }
         }
@@ -153,14 +248,6 @@ object WidgetSyncManager {
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
         }
         // 注册到 Application Context (跟随应用生命周期)
-        //
-        // 必须使用 ContextCompat.registerReceiver 并显式指定导出标记：
-        // targetSdk 34 (Android 14) 起，未显式声明 RECEIVER_EXPORTED / RECEIVER_NOT_EXPORTED
-        // 的动态注册会抛 SecurityException。这里只监听系统广播，不需要对外暴露。
-        //
-        // 同时整体兜底：本方法在冷启动的 App Startup 阶段被调用，
-        // 部分 OEM ROM 会对启动早期的 registerReceiver 施加额外限制，
-        // 抛出异常不应导致进程被杀。
         runCatching {
             ContextCompat.registerReceiver(
                 context.applicationContext,
@@ -168,39 +255,23 @@ object WidgetSyncManager {
                 filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED
             )
-        }.onFailure {
-            Log.w(TAG, "registerTimeChangeReceiver failed", it)
-        }
+        }.onFailure { Log.w(TAG, "registerTimeChangeReceiver failed", it) }
     }
 
     /**
      * 立即执行 Widget 刷新（使用协程直接更新，非 WorkManager）
-     * 适用于需要立即响应的交互场景，如：App 回到前台、时间变更广播等。
+     * 仅保留给 App 前台等非系统恢复的交互场景使用。
      */
     fun updateWidgetNow(context: Context) {
-        // 本方法在 MainActivity.onStart() 中被无条件调用，位于每次启动的关键路径上。
-        //
-        // 必须捕获 Throwable 而不是 Exception：
-        // Glance / RemoteViews 在新版本 Android 上可能抛出 LinkageError 系列错误
-        // （NoSuchMethodError / NoClassDefFoundError / AbstractMethodError 等），
-        // 这些是 Error 而非 Exception，catch (e: Exception) 无法拦截。
-        // 由于这里是没有 CoroutineExceptionHandler 的裸协程作用域，
-        // 漏网的 Throwable 会冒泡到默认 Thread.UncaughtExceptionHandler 并杀死整个进程，
-        // 在启动阶段表现为“白屏后闪退”。
         CoroutineScope(SupervisorJob() + Dispatchers.IO + widgetExceptionHandler).launch {
             try {
                 DawnWidget().updateAll(context)
-            } catch (t: Throwable) {
-                Log.w(TAG, "updateWidgetNow failed", t)
+            } catch (failure: Throwable) {
+                Log.w(TAG, "updateWidgetNow failed", failure)
             }
         }
     }
 
-    /**
-     * 小组件后台任务统一异常兜底
-     *
-     * 小组件刷新属于“尽力而为”的增强功能，任何失败都不应升级为进程崩溃。
-     */
     internal val widgetExceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Log.w(TAG, "Widget coroutine failed", throwable)
     }

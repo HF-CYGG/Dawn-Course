@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.repository.CredentialsRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import com.dawncourse.core.domain.usecase.RunTimetableSyncUseCase
 import com.dawncourse.core.domain.model.TimetableSyncResult
@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -65,18 +66,20 @@ sealed interface TimetableUiState {
  * 负责管理课表界面的 UI 状态、处理用户交互（如切换周次、删除课程、撤销操作）以及数据流的聚合。
  *
  * @property repository 课程数据仓库
- * @property semesterRepository 学期数据仓库
+ * @property timetableProfileRepository 活动课表与学期上下文仓库
  * @property calculateWeekUseCase 计算当前周次的用例
  */
 @HiltViewModel
 @OptIn(ExperimentalCoroutinesApi::class)
 class TimetableViewModel @Inject constructor(
     private val repository: CourseRepository,
-    private val semesterRepository: SemesterRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val calculateWeekUseCase: CalculateWeekUseCase,
     private val runTimetableSyncUseCase: RunTimetableSyncUseCase,
     private val credentialsRepository: CredentialsRepository
 ) : ViewModel() {
+
+    private var lastActiveScope: Pair<Long?, Long?>? = null
 
     /**
      * 标记是否已自动滚动到当前周
@@ -117,20 +120,33 @@ class TimetableViewModel @Inject constructor(
      */
     private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
         combine(
-            semesterRepository.getCurrentSemester(),
+            timetableProfileRepository.observeActiveContext(),
             timeTicker
-        ) { semester: com.dawncourse.core.domain.model.Semester?, _: Unit ->
-            semester
+        ) { context, _: Unit ->
+            context
         }
-            .onEach { semester ->
+            .onEach { context ->
+                val scope = context?.profile?.id to context?.semester?.id
+                if (scope != lastActiveScope) {
+                    lastActiveScope = scope
+                    hasScrolledToCurrentWeek = false
+                    // 作用域（Profile/学期）切换后，上一课表的删除撤销栈与待显示提示不再适用，
+                    // 必须同时失效；否则用户切到另一课表再返回时点“撤销”，会把旧课表的课程
+                    // 写回旧学期，而当前看到的是另一张课表。
+                    invalidatePendingUndo()
+                }
+                val semester = context?.semester
                 if (semester != null) {
                     // 根据学期开始日期计算当前周次
                     val week = calculateWeekUseCase(semester.startDate)
                     // 允许开学前显示 0 周，避免把“未开学”误判为第 1 周
                     val validWeek = week.coerceAtLeast(0)
                     _currentWeek.value = validWeek
+                } else {
+                    _currentWeek.value = 0
                 }
             }
+            .map { context -> context?.semester }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),
@@ -169,7 +185,10 @@ class TimetableViewModel @Inject constructor(
             initialValue = TimetableUiState.Loading
         )
 
-    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+    val boundProvider: StateFlow<SyncProviderType?> = timetableProfileRepository.observeActiveContext()
+        .flatMapLatest { context ->
+            context?.profile?.id?.let(credentialsRepository::observeBoundProvider) ?: flowOf(null)
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -205,8 +224,26 @@ class TimetableViewModel @Inject constructor(
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage
 
-    // 删除操作的撤销栈，最多保存 5 步
-    private val deletedCoursesStack = ArrayDeque<List<Course>>()
+    private data class DeletedCoursesUndo(
+        val profileId: Long,
+        val semesterId: Long,
+        val courses: List<Course>,
+    )
+
+    // 删除操作的撤销栈，连同触发时的 Profile/学期作用域最多保存 5 步。
+    private val deletedCoursesStack = ArrayDeque<DeletedCoursesUndo>()
+
+    /**
+     * 作用域切换时失效待处理的删除撤销：清空撤销栈并撤下仍在显示的删除提示。
+     *
+     * 仅在确实存在待撤销记录时才清理提示，避免误清其他无关的用户消息。
+     * 与 currentSemesterFlow 的收集同在 viewModelScope 主调度器上执行，无需额外同步。
+     */
+    private fun invalidatePendingUndo() {
+        if (deletedCoursesStack.isEmpty()) return
+        deletedCoursesStack.clear()
+        _userMessage.value = null
+    }
 
     /**
      * 标记用户消息已显示
@@ -228,22 +265,26 @@ class TimetableViewModel @Inject constructor(
      */
     fun deleteCoursesWithUndo(courses: List<Course>) {
         viewModelScope.launch {
-            // 保存到撤销栈
-            deletedCoursesStack.addFirst(courses)
-            if (deletedCoursesStack.size > 5) {
-                deletedCoursesStack.removeLast()
+            val (profileId, semesterId) = captureActiveScope(courses)
+                ?: return@launch showUserMessage("活动课表已变化，请刷新后重试")
+            when (val result = repository.deleteCoursesIfScopeActive(
+                profileId = profileId,
+                semesterId = semesterId,
+                courseIds = courses.mapTo(linkedSetOf()) { course -> course.id },
+            )) {
+                CourseRepository.AtomicSaveResult.Success -> {
+                    deletedCoursesStack.addFirst(
+                        DeletedCoursesUndo(profileId, semesterId, courses.toList())
+                    )
+                    if (deletedCoursesStack.size > 5) deletedCoursesStack.removeLast()
+                    _userMessage.value = if (courses.size == 1) {
+                        "课程已删除"
+                    } else {
+                        "已删除 ${courses.size} 个课程时段"
+                    }
+                }
+                is CourseRepository.AtomicSaveResult.Rejected -> _userMessage.value = result.message
             }
-            
-            // 执行删除
-            courses.forEach { repository.deleteCourse(it) }
-            
-            // 显示提示
-            val message = if (courses.size == 1) {
-                "课程已删除"
-            } else {
-                "已删除 ${courses.size} 个课程时段"
-            }
-            _userMessage.value = message
         }
     }
 
@@ -253,16 +294,19 @@ class TimetableViewModel @Inject constructor(
      * 从撤销栈中取出最近一次删除的课程列表，并将其重新插入数据库。
      */
     fun undoDelete() {
-        val coursesToRestore = deletedCoursesStack.removeFirstOrNull() ?: return
+        val undo = deletedCoursesStack.firstOrNull() ?: return
         viewModelScope.launch {
-            // 恢复课程 ID 为 0 以作为新记录插入，或者保留原 ID 如果是软删除？
-            // Room 的 insert 策略是 REPLACE，如果保留原 ID 且 ID 未被占用，可以恢复。
-            // 但如果这是自增 ID，删除后可能无法保证 ID 仍可用（虽然通常没问题）。
-            // 安全起见，我们将 ID 设为 0 让数据库重新生成，或者尝试插入原对象。
-            // 如果使用 insertCourses，ID 会被重置吗？如果对象有 ID，Room 会尝试使用它。
-            // 我们尝试直接插入原对象。
-            repository.insertCourses(coursesToRestore)
-            _userMessage.value = "已撤销删除"
+            when (val result = repository.restoreCoursesIfScopeActive(
+                profileId = undo.profileId,
+                semesterId = undo.semesterId,
+                courses = undo.courses,
+            )) {
+                CourseRepository.AtomicSaveResult.Success -> {
+                    if (deletedCoursesStack.firstOrNull() == undo) deletedCoursesStack.removeFirst()
+                    _userMessage.value = "已撤销删除"
+                }
+                is CourseRepository.AtomicSaveResult.Rejected -> _userMessage.value = result.message
+            }
         }
     }
 
@@ -322,93 +366,24 @@ class TimetableViewModel @Inject constructor(
         val targetOriginId = if (course.originId == 0L) course.id else course.originId
         
         viewModelScope.launch {
-            val siblings = repository.getCoursesByOriginId(targetOriginId)
-            // 如果只有一条记录且未修改，说明无需撤销
-            if (siblings.size <= 1 && siblings.none { it.isModified }) return@launch
-            
-            // 找到“原始模板”：未修改的记录 (作为新纪录的属性基准)
-            val template = siblings.firstOrNull { !it.isModified } ?: return@launch
-
-            // 收集所有周次
-            val allWeeks = siblings.flatMap { c ->
-                val weeks = mutableSetOf<Int>()
-                for (i in c.startWeek..c.endWeek) {
-                    val match = when (c.weekType) {
-                        Course.WEEK_TYPE_ODD -> i % 2 != 0
-                        Course.WEEK_TYPE_EVEN -> i % 2 == 0
-                        else -> true
-                    }
-                    if (match) weeks.add(i)
-                }
-                weeks
-            }.toSet()
-
-            // 计算合并后的片段
-            val segments = convertToSegments(allWeeks)
-
-            // 删除所有相关记录
-            siblings.forEach { repository.deleteCourse(it) }
-
-            // 插入合并后的新记录
-            segments.forEach { (start, end, type) ->
-                repository.insertCourse(template.copy(
-                    id = 0,
-                    startWeek = start,
-                    endWeek = end,
-                    weekType = type,
-                    isModified = false,
-                    note = "",
-                    originId = 0 // 重置 originId
-                ))
+            val (profileId, semesterId) = captureActiveScope(listOf(course))
+                ?: return@launch showUserMessage("活动课表已变化，请刷新后重试")
+            when (val result = repository.undoRescheduleIfScopeActive(
+                profileId = profileId,
+                semesterId = semesterId,
+                originId = targetOriginId,
+            )) {
+                CourseRepository.AtomicSaveResult.Success -> Unit
+                is CourseRepository.AtomicSaveResult.Rejected -> _userMessage.value = result.message
             }
         }
     }
 
-    /**
-     * 将离散的周次集合转换为连续的片段列表
-     *
-     * 使用贪心算法尝试合并连续的周次。
-     * 优先尝试合并为 [Course.WEEK_TYPE_ALL] (连续周)，
-     * 其次尝试合并为 [Course.WEEK_TYPE_ODD] (单周) 或 [Course.WEEK_TYPE_EVEN] (双周)。
-     *
-     * @param weeks 周次集合
-     * @return 片段列表 [(开始周, 结束周, 类型)]
-     */
-    private fun convertToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {
-        if (weeks.isEmpty()) return emptyList()
-        val sorted = weeks.sorted()
-        val segments = mutableListOf<Triple<Int, Int, Int>>()
-        
-        val pending = sorted.toMutableSet()
-        while (pending.isNotEmpty()) {
-            // pending 非空时 minOrNull 理论上不会为 null，这里仍做兜底避免异常状态下崩溃。
-            val first = pending.minOrNull() ?: break
-            
-            // 尝试构建连续周 (1,2,3,4...)
-            var endAll = first
-            while (pending.contains(endAll + 1)) endAll++
-            val countAll = endAll - first + 1
-            
-            // 尝试构建同奇偶性周 (1,3,5...)
-            var endParity = first
-            val step = 2
-            while (pending.contains(endParity + step)) endParity += step
-            val countParity = (endParity - first) / 2 + 1
-            
-            // 贪心策略：谁长选谁
-            if (countAll >= countParity) {
-                segments.add(Triple(first, endAll, Course.WEEK_TYPE_ALL))
-                for (i in first..endAll) pending.remove(i)
-            } else {
-                val type = if (first % 2 != 0) Course.WEEK_TYPE_ODD else Course.WEEK_TYPE_EVEN
-                segments.add(Triple(first, endParity, type))
-                var k = first
-                while (k <= endParity) {
-                    pending.remove(k)
-                    k += 2
-                }
-            }
-        }
-        return segments.sortedBy { it.first }
+    private fun captureActiveScope(courses: List<Course>): Pair<Long, Long>? {
+        if (courses.isEmpty()) return null
+        val profileId = lastActiveScope?.first ?: return null
+        val semesterId = lastActiveScope?.second ?: return null
+        if (courses.any { course -> course.semesterId != semesterId || course.id <= 0L }) return null
+        return profileId to semesterId
     }
 }

@@ -51,9 +51,13 @@ google-services.json
 
 # Trae/AI related
 .trae/
+.codex_tmp/
+.kotlin/
 logs/
 hs_err_pid*.log
 replay_pid*.log
+java_pid*.hprof
+*.hprof
 
 # Specific project ignores
 /server/
@@ -63,3 +67,12 @@ replay_pid*.log
 /docs/releases/
 /ios-app
 /classCrawl-main
+/server/llm-backend/node_modules/
+node_modules/
+**/node_modules/
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

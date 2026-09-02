@@ -219,7 +219,14 @@ fun parseXiaoaiProviderResult(raw: String): XiaoaiProviderResult {
     return XiaoaiProviderResult(courses, timetableJson)
 }
 
-fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> {
+fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> =
+    parseParsedCoursesFromRaw(raw, depth = 0)
+
+private fun parseParsedCoursesFromRaw(
+    raw: String,
+    depth: Int
+): List<ParsedCourse> {
+    if (depth > MAX_JSON_WRAPPER_DEPTH) return emptyList()
     val trimmed = raw.trim()
     if (trimmed.isBlank() || trimmed == "do not continue") return emptyList()
     return try {
@@ -228,13 +235,40 @@ fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> {
             parseParsedCourseArray(array)
         } else {
             val obj = org.json.JSONObject(trimmed)
-            val courseArray = obj.optJSONArray("courses") ?: org.json.JSONArray()
-            parseParsedCourseArray(courseArray)
+            parseParsedCoursesFromJsonObject(obj, depth)
         }
     } catch (e: Exception) {
         emptyList()
     }
 }
+
+private fun parseParsedCoursesFromJsonObject(
+    obj: org.json.JSONObject,
+    depth: Int = 0
+): List<ParsedCourse> {
+    if (depth > MAX_JSON_WRAPPER_DEPTH) return emptyList()
+    val directArray = obj.optJSONArray("courses")
+        ?: obj.optJSONArray("parsedCourses")
+        ?: obj.optJSONArray("result")
+        ?: obj.optJSONArray("data")
+    if (directArray != null) {
+        val parsed = parseParsedCourseArray(directArray)
+        if (parsed.isNotEmpty()) return parsed
+    }
+    for (key in JSON_WRAPPER_KEYS) {
+        val parsedNested = when (val value = obj.opt(key)) {
+            is String -> parseParsedCoursesFromRaw(value, depth + 1)
+            is org.json.JSONObject -> parseParsedCoursesFromJsonObject(value, depth + 1)
+            is org.json.JSONArray -> parseParsedCourseArray(value)
+            else -> emptyList()
+        }
+        if (parsedNested.isNotEmpty()) return parsedNested
+    }
+    return emptyList()
+}
+
+private const val MAX_JSON_WRAPPER_DEPTH = 4
+private val JSON_WRAPPER_KEYS = listOf("result", "data", "payload")
 
 private fun parseParsedCourseArray(array: org.json.JSONArray): List<ParsedCourse> {
     val list = mutableListOf<ParsedCourse>()

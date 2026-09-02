@@ -4,8 +4,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.WidgetUpdateRepository
 import com.dawncourse.core.domain.usecase.DetectConflictUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -13,9 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -34,6 +35,7 @@ import javax.inject.Inject
 class CourseEditorViewModel @Inject constructor(
     private val repository: CourseRepository,
     private val semesterRepository: SemesterRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val detectConflictUseCase: DetectConflictUseCase,
     private val widgetUpdateRepository: WidgetUpdateRepository,
     savedStateHandle: SavedStateHandle
@@ -44,23 +46,62 @@ class CourseEditorViewModel @Inject constructor(
     private val _course = MutableStateFlow<Course?>(null)
     val course: StateFlow<Course?> = _course.asStateFlow()
 
-    private val _currentSemesterId = MutableStateFlow<Long>(1L)
-    val currentSemesterId: StateFlow<Long> = _currentSemesterId.asStateFlow()
+    /** 编辑既有课程时捕获的课表身份，切换课表后不得继续写入旧学期。 */
+    private val editingProfileId = MutableStateFlow<Long?>(null)
+
+    /** 当前 Room 学期；null 表示用户尚未选择或选择已失效。 */
+    val currentSemester: StateFlow<Semester?> = timetableProfileRepository.observeActiveContext()
+        .map { context -> context?.semester }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null
+        )
+
+    /** 当前学期 ID；0 表示没有有效选择。 */
+    val currentSemesterId: StateFlow<Long> = currentSemester
+        .map { semester -> semester?.id ?: 0L }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = 0L
+        )
+
+    /** 当前学期周数，编辑界面不得再读取 AppSettings 的旧缓存。 */
+    val currentSemesterWeekCount: StateFlow<Int> = currentSemester
+        .map { semester -> semester?.weekCount ?: DEFAULT_SEMESTER_WEEK_COUNT }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = DEFAULT_SEMESTER_WEEK_COUNT
+        )
+
+    /** UI 保存能力必须基于目标学期仍真实存在于 Room，而不只是 ID 为正数。 */
+    val hasValidTargetSemester: StateFlow<Boolean> = combine(
+        _course,
+        currentSemester,
+        semesterRepository.getAllSemesters()
+    ) { editingCourse, selectedSemester, semesters ->
+        val targetId = if (courseId > 0L) editingCourse?.semesterId else selectedSemester?.id
+        targetId != null && targetId > 0L && semesters.any { it.id == targetId }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = false
+    )
 
     private val _conflictCourses = MutableStateFlow<List<Course>>(emptyList())
     val conflictCourses: StateFlow<List<Course>> = _conflictCourses.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            val semester = semesterRepository.getCurrentSemester().firstOrNull()
-            if (semester != null) {
-                _currentSemesterId.value = semester.id
-            }
-        }
-
         if (courseId != 0L) {
             viewModelScope.launch {
-                _course.value = repository.getCourseById(courseId)
+                val activeContext = timetableProfileRepository.observeActiveContext().first()
+                val loadedCourse = repository.getCourseById(courseId)
+                if (loadedCourse != null && activeContext?.semester?.id == loadedCourse.semesterId) {
+                    editingProfileId.value = activeContext.profile.id
+                    _course.value = loadedCourse
+                }
             }
         }
     }
@@ -108,6 +149,22 @@ class CourseEditorViewModel @Inject constructor(
         }
         viewModelScope.launch {
             val semesterId = courses.first().semesterId
+            val capturedProfileId = editingProfileId.value
+                ?: timetableProfileRepository.observeActiveContext().first()?.profile?.id
+                ?: run {
+                    onConflict(PROFILE_SCOPE_CHANGED_MESSAGE)
+                    return@launch
+                }
+            if (!isTargetStillActive(semesterId, capturedProfileId)) {
+                onConflict(PROFILE_SCOPE_CHANGED_MESSAGE)
+                return@launch
+            }
+            val semester = semesterId.takeIf { it > 0L }
+                ?.let { semesterRepository.getSemesterById(it) }
+            CourseSaveSemesterValidator.validate(courses, semester)?.let { message ->
+                onConflict(message)
+                return@launch
+            }
             val existingCourses = repository.getCoursesBySemester(semesterId).first()
             val editingIds = courses.map { it.id }.filter { it != 0L }.toSet()
             val filteredExisting = if (editingIds.isEmpty()) {
@@ -148,20 +205,24 @@ class CourseEditorViewModel @Inject constructor(
                 }
             }
 
-            if (editingId != 0L && toInsert.size == 1) {
-                repository.updateCourse(toInsert.first().copy(id = editingId))
-                sendWidgetUpdateBroadcast()
-                onSaved()
+            // 冲突检测与数据库提交之间也可能切换课表，提交前必须再次确认捕获的上下文。
+            if (!isTargetStillActive(semesterId, capturedProfileId)) {
+                onConflict(PROFILE_SCOPE_CHANGED_MESSAGE)
                 return@launch
             }
 
-            if (editingId != 0L) {
-                repository.deleteCourseById(editingId)
+            when (val result = repository.saveCoursesIfScopeActive(
+                profileId = capturedProfileId,
+                semesterId = semesterId,
+                courses = toInsert,
+                editingCourseId = editingId,
+            )) {
+                CourseRepository.AtomicSaveResult.Success -> {
+                    sendWidgetUpdateBroadcast()
+                    onSaved()
+                }
+                is CourseRepository.AtomicSaveResult.Rejected -> onConflict(result.message)
             }
-            val insertList = toInsert.map { it.copy(id = 0L) }
-            repository.insertCourses(insertList)
-            sendWidgetUpdateBroadcast()
-            onSaved()
         }
     }
 
@@ -240,5 +301,19 @@ class CourseEditorViewModel @Inject constructor(
             7 -> "日"
             else -> day.toString()
         }
+    }
+
+    /** 只允许把编辑结果写入开始编辑时仍处于活动状态的学期。 */
+    private suspend fun isTargetStillActive(semesterId: Long, profileId: Long?): Boolean {
+        if (profileId == null || semesterId <= 0L) return false
+        val current = timetableProfileRepository.observeActiveContext().first() ?: return false
+        return current.profile.id == profileId && current.semester?.id == semesterId
+    }
+
+    companion object {
+        /** 尚未加载学期时的安全展示周数。 */
+        private const val DEFAULT_SEMESTER_WEEK_COUNT = 20
+        /** Profile 切换后拒绝旧编辑会话的明确反馈。 */
+        private const val PROFILE_SCOPE_CHANGED_MESSAGE = "课表已切换，请重新打开课程编辑"
     }
 }

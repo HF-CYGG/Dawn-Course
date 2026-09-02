@@ -1,0 +1,12 @@
+<resources>
+    <string name="import_destination_title">Import destination</string>
+    <string name="import_destination_hint">This import is locked to the selected destination. Switching timetables will not change where it is committed.</string>
+    <string name="import_destination_new_semester">Create a semester in “%1$s”</string>
+    <string name="import_destination_new_profile">Create an independent timetable</string>
+    <string name="import_destination_new_profile_name">New timetable name</string>
+    <string name="import_destination_overwrite">Overwrite “%1$s · %2$s”</string>
+    <string name="import_overwrite_confirm_title">Confirm semester overwrite</string>
+    <string name="import_overwrite_confirm_message">This replaces %3$d existing course entries in “%1$s · %2$s”. Other timetables and semesters are unchanged.</string>
+    <string name="import_overwrite_confirm_action">Overwrite</string>
+    <string name="import_overwrite_cancel">Cancel</string>
+</resources>

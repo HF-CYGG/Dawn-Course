@@ -11,7 +11,6 @@ on:
       - '.gitignore'
       - 'LICENSE'
       - 'deps.txt'
-      - 'scripts/**'
   pull_request:
     branches:
       - main
@@ -22,35 +21,70 @@ on:
       - '.gitignore'
       - 'LICENSE'
       - 'deps.txt'
-      - 'scripts/**'
 
+# 同一分支/PR 的新推送取消尚未结束的旧运行，避免排队浪费并更快拿到最终结果。
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 拆成 4 个并行 job（编译 / 单测 / lint / release smoke），互不阻塞；
+# 作为必需检查的 build 只做 assembleDebug，热缓存下 2-3 分钟即可给出结果。
 jobs:
   build:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
+    - uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
+    - uses: android-actions/setup-android@v3
+    - name: Cache Android SDK
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT }}/platforms/android-37.2
+          ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+        key: android-sdk-p37.2-bt36.0.0
+    - run: sdkmanager --channel=3 "platforms;android-37.2" "build-tools;36.0.0"
+    - run: chmod +x gradlew
+    - name: Assemble debug
+      run: >-
+        ./gradlew assembleDebug
+        --build-cache --configuration-cache --configuration-cache-problems=warn --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug
-
-    - name: Run tests
-      run: ./gradlew testDebugUnitTest
-
-    - name: Run Lint
-      run: ./gradlew lintDebug
-
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
+    - uses: android-actions/setup-android@v3
+    - name: Cache Android SDK
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT }}/platforms/android-37.2
+          ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+        key: android-sdk-p37.2-bt36.0.0
+    - run: sdkmanager --channel=3 "platforms;android-37.2" "build-tools;36.0.0"
+    - run: chmod +x gradlew
+    - name: Unit test
+      run: >-
+        ./gradlew testDebugUnitTest
+        --build-cache --configuration-cache --configuration-cache-problems=warn --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
     - name: Upload Test Reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -58,9 +92,73 @@ jobs:
         name: test-reports
         path: '**/build/reports/tests/**'
 
+  lint:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
+    - uses: android-actions/setup-android@v3
+    - name: Cache Android SDK
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT }}/platforms/android-37.2
+          ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+        key: android-sdk-p37.2-bt36.0.0
+    - run: sdkmanager --channel=3 "platforms;android-37.2" "build-tools;36.0.0"
+    - run: chmod +x gradlew
+    - name: Lint
+      run: >-
+        ./gradlew lintDebug
+        --build-cache --configuration-cache --configuration-cache-problems=warn --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
     - name: Upload Lint Reports
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: lint-reports
         path: '**/build/reports/lint-results-debug.html'
+
+  release-smoke:
+    name: Minified release/native gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || !contains(github.event.head_commit.message, 'Merge pull request')
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
+    - uses: android-actions/setup-android@v3
+    - name: Cache Android SDK + NDK
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT }}/platforms/android-37.2
+          ${{ env.ANDROID_SDK_ROOT }}/build-tools/36.0.0
+          ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        key: android-sdk-p37.2-bt36.0.0-ndk27.2.12479018
+    - run: sdkmanager --channel=3 "platforms;android-37.2" "build-tools;36.0.0" "ndk;27.2.12479018"
+    - run: chmod +x gradlew
+    - name: Build minified releaseSmoke and run APK gates
+      run: >-
+        ./gradlew :app:releaseSmoke -Pdawn.releaseSmoke=true
+        --build-cache --max-workers=4
+        -Dorg.gradle.jvmargs="-Xmx5g -Dfile.encoding=UTF-8" -Dkotlin.daemon.jvmargs="-Xmx2g"
+    - name: Upload releaseSmoke APK
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-smoke-apk-do-not-distribute
+        path: app/build/outputs/apk/release/app-release.apk
+        if-no-files-found: error

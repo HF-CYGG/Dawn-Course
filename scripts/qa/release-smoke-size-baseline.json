@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "variant": "releaseSmoke",
+  "appVersionName": "1.0.5.1",
+  "recordedAt": "2026-08-25T03:21:58+08:00",
+  "baselineBytes": 20964050,
+  "artifactSha256": "000EC46A4CD1593407997B0702CE5EDF777AB2CAF9992FE61828BF12817C9AE1",
+  "description": "AGP 9.3.1 minified releaseSmoke universal APK before SQLCipher 4.18.0 and Harlon QuickJS 3.2.3 replacement."
+}

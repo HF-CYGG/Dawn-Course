@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="course_reminder_channel_name">课程提醒</string>
+    <string name="course_reminder_channel_description">在上课前发送通知</string>
+    <string name="course_reminder_title">上课提醒：%1$s</string>
+    <string name="course_reminder_content">即将上课 @%1$s</string>
+
+    <string name="course_status_channel_name">课程状态</string>
+    <string name="course_status_channel_description">持续显示当前课程和下一节课程</string>
+    <string name="course_status_no_semester_title">暂无当前学期</string>
+    <string name="course_status_no_semester_content">请在设置中创建或选择学期</string>
+    <string name="course_status_out_of_semester_title">当前不在学期范围</string>
+    <string name="course_status_out_of_semester_content">课表状态将在下一天自动刷新</string>
+    <string name="course_status_no_courses_title">今天没有安排课程</string>
+    <string name="course_status_no_courses_content">享受美好的一天</string>
+    <string name="course_status_upcoming_title">下节课：%1$s</string>
+    <string name="course_status_upcoming_content">%1$s · %2$s</string>
+    <string name="course_status_in_class_title">正在上课：%1$s</string>
+    <string name="course_status_in_class_content">%1$s 下课 · %2$s</string>
+    <string name="course_status_finished_title">今日课程已结束</string>
+    <string name="course_status_finished_content">好好休息，准备明天的课程吧</string>
+    <string name="course_status_course_with_more">%1$s +%2$d</string>
+    <string name="course_status_location_unknown">地点待定</string>
+
+    <string name="mute_recovery_channel_name">自动静音恢复</string>
+    <string name="mute_recovery_channel_description">自动恢复铃声失败时提示需要用户处理</string>
+    <string name="mute_recovery_notification_title">自动静音恢复需要处理</string>
+    <string name="mute_recovery_notification_content">请打开 Dawn Course 重试恢复，或确认已手动处理</string>
+</resources>

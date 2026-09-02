@@ -8,8 +8,11 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
+import com.dawncourse.core.domain.repository.SyncSourceBindingRepository
+import com.dawncourse.core.domain.repository.CredentialBindingMutationResult
 import com.dawncourse.core.domain.repository.SyncStateRepository
 import com.dawncourse.core.domain.repository.WebDavCredentialsRepository
 import com.dawncourse.core.domain.repository.WidgetUpdateRepository
@@ -32,16 +35,24 @@ import com.dawncourse.core.domain.model.WebDavSyncResult
 import com.dawncourse.core.domain.model.LocalBackupPreview
 import com.dawncourse.core.domain.model.LocalBackupPreviewResult
 import com.dawncourse.core.domain.model.LocalBackupResult
+import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.domain.model.ActiveTimetableContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,11 +66,14 @@ import java.util.Locale
  * @property settingsRepository 设置数据仓库，用于存取设置数据
  */
 @HiltViewModel
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val courseRepository: CourseRepository,
     private val semesterRepository: SemesterRepository,
+    private val timetableProfileRepository: TimetableProfileRepository,
     private val credentialsRepository: CredentialsRepository,
+    private val syncSourceBindingRepository: SyncSourceBindingRepository,
     private val syncStateRepository: SyncStateRepository,
     private val webDavCredentialsRepository: WebDavCredentialsRepository,
     private val fetchWebDavRemoteInfoUseCase: FetchWebDavRemoteInfoUseCase,
@@ -72,6 +86,9 @@ class SettingsViewModel @Inject constructor(
     private val generateIcsUseCase: GenerateIcsUseCase,
     private val calendarExportRepository: CalendarExportRepository
 ) : ViewModel() {
+
+    private val _credentialBindingEvents = MutableSharedFlow<CredentialBindingUiEvent>(extraBufferCapacity = 1)
+    val credentialBindingEvents: SharedFlow<CredentialBindingUiEvent> = _credentialBindingEvents.asSharedFlow()
 
     /**
      * 当前的应用设置状态流
@@ -86,10 +103,31 @@ class SettingsViewModel @Inject constructor(
             initialValue = AppSettings()
         )
 
+    /** Room 中由 selected_semester_id 指向的当前学期。 */
+    val currentSemester: StateFlow<Semester?> = semesterRepository.getCurrentSemester()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = null
+        )
+
+    /** 当前 Profile 与其活动学期，供设置页顶部展示管理入口。 */
+    val activeTimetableContext: StateFlow<ActiveTimetableContext?> =
+        timetableProfileRepository.observeActiveContext()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
     /**
      * 已绑定的自动更新来源（例如 正方教务）
      */
-    val boundProvider: StateFlow<SyncProviderType?> = credentialsRepository.boundProvider
+    val boundProvider: StateFlow<SyncProviderType?> = timetableProfileRepository
+        .observeActiveContext()
+        .flatMapLatest { context ->
+            context?.profile?.id?.let(credentialsRepository::observeBoundProvider) ?: flowOf(null)
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -159,37 +197,6 @@ class SettingsViewModel @Inject constructor(
     private val _calendarExportState = MutableStateFlow(CalendarExportUiState())
     val calendarExportState: StateFlow<CalendarExportUiState> = _calendarExportState.asStateFlow()
 
-    init {
-        // 同步 DataStore 设置与数据库中的当前学期数据
-        // 防止因导入或其他操作导致 DataStore 中的缓存数据（如开学日期）滞后
-        viewModelScope.launch {
-            try {
-                val currentSemester = semesterRepository.getCurrentSemester().first()
-                if (currentSemester != null) {
-                    // 获取当前 DataStore 中的值（不阻塞主线程）
-                    val cachedSettings = settingsRepository.settings.first()
-                    
-                    // 检查是否有不一致，如果有则更新 DataStore
-                    if (cachedSettings.currentSemesterName != currentSemester.name ||
-                        cachedSettings.startDateTimestamp != currentSemester.startDate ||
-                        cachedSettings.totalWeeks != currentSemester.weekCount
-                    ) {
-                        settingsRepository.setCurrentSemesterName(currentSemester.name)
-                        settingsRepository.setStartDateTimestamp(currentSemester.startDate)
-                        settingsRepository.setTotalWeeks(currentSemester.weekCount)
-                    }
-                }
-            } catch (_: Throwable) {
-                // 启动阶段的“同步设置与学期”属于一致性优化：
-                // - 失败不会影响 Settings 页面正常展示（仍会使用 DataStore 的缓存值）
-                // - 失败通常来自数据库未初始化/迁移中、短暂 IO 问题等，可在后续自然恢复
-                //
-                // 因此这里选择“安全忽略”，避免打印堆栈造成噪音与潜在隐私风险。
-            }
-        }
-
-    }
-
     /**
      * 绑定 WakeUp 口令作为自动更新凭据
      *
@@ -197,6 +204,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindWakeUpToken(token: String) {
         viewModelScope.launch {
+            val profileId = activeProfileId() ?: return@launch
             // 仅保存口令，用户名留空
             val creds = SyncCredentials(
                 provider = SyncProviderType.WAKEUP,
@@ -205,7 +213,10 @@ class SettingsViewModel @Inject constructor(
                 secret = token,
                 endpointUrl = null
             )
-            credentialsRepository.saveCredentials(creds)
+            publishCredentialBindingResult(
+                syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
+                CredentialBindingUiEvent.Saved,
+            )
         }
     }
 
@@ -214,7 +225,11 @@ class SettingsViewModel @Inject constructor(
      */
     fun clearSyncCredentials() {
         viewModelScope.launch {
-            credentialsRepository.clearCredentials()
+            val profileId = activeProfileId() ?: return@launch
+            publishCredentialBindingResult(
+                syncSourceBindingRepository.clearCredentialsAndUnbindIfActive(profileId),
+                CredentialBindingUiEvent.Cleared,
+            )
         }
     }
 
@@ -227,6 +242,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindQidiCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
+            val profileId = activeProfileId() ?: return@launch
             val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.QIDI,
@@ -235,7 +251,10 @@ class SettingsViewModel @Inject constructor(
                 secret = password,
                 endpointUrl = normalized
             )
-            credentialsRepository.saveCredentials(creds)
+            publishCredentialBindingResult(
+                syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
+                CredentialBindingUiEvent.Saved,
+            )
         }
     }
 
@@ -244,6 +263,7 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindZfCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
+            val profileId = activeProfileId() ?: return@launch
             val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.ZF,
@@ -252,7 +272,10 @@ class SettingsViewModel @Inject constructor(
                 secret = password,
                 endpointUrl = normalized
             )
-            credentialsRepository.saveCredentials(creds)
+            publishCredentialBindingResult(
+                syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
+                CredentialBindingUiEvent.Saved,
+            )
         }
     }
 
@@ -572,24 +595,22 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setShowDateInHeader(show) }
     }
 
-    fun setCurrentSemesterName(name: String) {
-        viewModelScope.launch { 
-            settingsRepository.setCurrentSemesterName(name)
-            val currentSemester = semesterRepository.getCurrentSemester().first()
-            if (currentSemester != null) {
-                semesterRepository.updateSemester(currentSemester.copy(name = name))
-            }
-            sendWidgetUpdateBroadcast()
-        }
-    }
-
-    fun setTotalWeeks(weeks: Int) {
-        viewModelScope.launch { 
-            settingsRepository.setTotalWeeks(weeks) 
-            val currentSemester = semesterRepository.getCurrentSemester().first()
-            if (currentSemester != null) {
-                semesterRepository.updateSemester(currentSemester.copy(weekCount = weeks))
-            }
+    /**
+     * 更新当前学期元数据。
+     *
+     * 学期名称、周数和开学日期只写 Room，不再镜像到 AppSettings。
+     */
+    fun updateCurrentSemester(name: String, weeks: Int, startDate: Long) {
+        viewModelScope.launch {
+            val semester = semesterRepository.getCurrentSemester().first() ?: return@launch
+            semesterRepository.updateSemester(
+                semester.copy(
+                    name = name,
+                    weekCount = weeks,
+                    startDate = startDate,
+                    isCurrent = false
+                )
+            )
             sendWidgetUpdateBroadcast()
         }
     }
@@ -609,17 +630,6 @@ class SettingsViewModel @Inject constructor(
             } else {
                 onResult(0)
             }
-        }
-    }
-
-    fun setStartDateTimestamp(timestamp: Long) {
-        viewModelScope.launch { 
-            settingsRepository.setStartDateTimestamp(timestamp)
-            val currentSemester = semesterRepository.getCurrentSemester().first()
-            if (currentSemester != null) {
-                semesterRepository.updateSemester(currentSemester.copy(startDate = timestamp))
-            }
-            sendWidgetUpdateBroadcast()
         }
     }
 
@@ -747,12 +757,45 @@ class SettingsViewModel @Inject constructor(
      */
     fun clearAllData() {
         viewModelScope.launch {
+            // 全应用重置必须逐个删除 Profile 作用域凭据，禁止遗留其他课表账号。
+            timetableProfileRepository.observeProfiles().first().forEach { profile ->
+                credentialsRepository.clearCredentials(profile.id)
+            }
             courseRepository.deleteAllCourses()
             semesterRepository.deleteAllSemesters()
-            credentialsRepository.clearCredentials()
             settingsRepository.clearAllSettings()
         }
     }
+
+    /** 获取操作时刻的活动 Profile，避免把凭据写入旧的选择。 */
+    private suspend fun activeProfileId(): Long? =
+        timetableProfileRepository.observeActiveContext().first()?.profile?.id
+
+    /** ViewModel 只发布语义事件，用户可见文案由 UI 资源层决定。 */
+    private suspend fun publishCredentialBindingResult(
+        result: CredentialBindingMutationResult,
+        successEvent: CredentialBindingUiEvent,
+    ) {
+        _credentialBindingEvents.emit(credentialBindingUiEvent(result, successEvent))
+    }
+}
+
+/** 设置页凭据操作的语义结果；不携带硬编码用户文案。 */
+enum class CredentialBindingUiEvent {
+    Saved,
+    Cleared,
+    Rejected,
+    Inconsistent,
+}
+
+/** 纯映射便于验证失败与不一致状态不会被误报为保存成功。 */
+internal fun credentialBindingUiEvent(
+    result: CredentialBindingMutationResult,
+    successEvent: CredentialBindingUiEvent,
+): CredentialBindingUiEvent = when (result) {
+    is CredentialBindingMutationResult.Success -> successEvent
+    is CredentialBindingMutationResult.Rejected -> CredentialBindingUiEvent.Rejected
+    is CredentialBindingMutationResult.Inconsistent -> CredentialBindingUiEvent.Inconsistent
 }
 
 /**
@@ -761,11 +804,14 @@ class SettingsViewModel @Inject constructor(
  * @property isProcessing 是否正在执行导入/导出
  * @property success 结果是否成功（null 表示尚未执行）
  * @property message 当前提示文案
+ * @property recoveryRequired 还原失败且补偿也失败，当前数据库内容已不一致，
+ *   必须重启进入 Recovery 引导，不能继续使用
  */
 data class LocalBackupUiState(
     val isProcessing: Boolean = false,
     val success: Boolean? = null,
-    val message: String = ""
+    val message: String = "",
+    val recoveryRequired: Boolean = false
 )
 
 /**
@@ -801,7 +847,10 @@ private fun LocalBackupResult.toUiState(): LocalBackupUiState {
     return LocalBackupUiState(
         isProcessing = false,
         success = success,
-        message = message
+        message = message,
+        // 必须透传：补偿失败意味着数据库内容已不一致，UI 需明确要求用户立即重启进入
+        // Recovery，而不是只显示一条普通错误文案后让用户继续使用。
+        recoveryRequired = recoveryRequired
     )
 }
 

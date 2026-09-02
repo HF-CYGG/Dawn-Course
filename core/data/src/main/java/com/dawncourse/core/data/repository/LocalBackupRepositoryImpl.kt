@@ -2,22 +2,16 @@ package com.dawncourse.core.data.repository
 
 import android.content.Context
 import android.net.Uri
-import androidx.room.withTransaction
-import com.dawncourse.core.data.local.AppDatabase
-import com.dawncourse.core.data.local.entity.toDomain
-import com.dawncourse.core.data.local.entity.toEntity
 import com.dawncourse.core.domain.model.LocalBackupData
 import com.dawncourse.core.domain.model.LocalBackupPreview
 import com.dawncourse.core.domain.model.LocalBackupPreviewResult
 import com.dawncourse.core.domain.model.LocalBackupResult
 import com.dawncourse.core.domain.repository.LocalBackupRepository
-import com.dawncourse.core.domain.repository.SettingsRepository
 import com.google.gson.GsonBuilder
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /**
@@ -28,10 +22,10 @@ import kotlinx.coroutines.withContext
  * - 还原时解析 JSON 并在事务中覆盖数据库，再恢复设置
  */
 @Singleton
-class LocalBackupRepositoryImpl @Inject constructor(
+class LocalBackupRepositoryImpl @Inject internal constructor(
     @ApplicationContext private val context: Context,
-    private val database: AppDatabase,
-    private val settingsRepository: SettingsRepository
+    private val backupSnapshotBuilder: BackupSnapshotBuilder,
+    private val backupRestoreCoordinator: BackupRestoreCoordinator
 ) : LocalBackupRepository {
 
     /** JSON 序列化工具 */
@@ -49,25 +43,9 @@ class LocalBackupRepositoryImpl @Inject constructor(
             if (inputStream == null) {
                 throw IllegalStateException("无法读取备份文件")
             }
-            val json = inputStream.use { it.bufferedReader().readText() }
+            val json = inputStream.use { input -> BoundedBackupInput.readUtf8(input) }
             gson.fromJson(json, LocalBackupData::class.java)
         }
-    }
-
-    /**
-     * 校验备份内容，返回错误文案
-     */
-    private fun validateBackup(backup: LocalBackupData): String? {
-        if (backup.version > LocalBackupData.CURRENT_VERSION) {
-            return "备份文件版本过高，请先升级应用"
-        }
-        if (backup.exportTime <= 0L) {
-            return "备份文件缺少导出时间"
-        }
-        if (backup.semesters.isEmpty() && backup.courses.isEmpty()) {
-            return "备份内容为空"
-        }
-        return null
     }
 
     /**
@@ -78,9 +56,7 @@ class LocalBackupRepositoryImpl @Inject constructor(
             runCatching {
                 val parsedUri = Uri.parse(uri)
                 // 读取设置与数据库快照
-                val settings = settingsRepository.settings.first()
-                val semesters = database.semesterDao().getAllSemestersOnce().map { it.toDomain() }
-                val courses = database.courseDao().getAllCoursesOnce().map { it.toDomain() }
+                val snapshot = backupSnapshotBuilder.build()
                 // 获取应用版本号用于写入元数据
                 val versionName = runCatching {
                     context.packageManager.getPackageInfo(context.packageName, 0).versionName
@@ -89,9 +65,13 @@ class LocalBackupRepositoryImpl @Inject constructor(
                 val backup = LocalBackupData(
                     exportTime = System.currentTimeMillis(),
                     appVersionName = versionName,
-                    settings = settings,
-                    semesters = semesters,
-                    courses = courses
+                    settings = snapshot.settings,
+                    semesters = snapshot.semesters,
+                    courses = snapshot.courses,
+                    selectedSemesterId = null,
+                    profiles = snapshot.profiles,
+                    sourceBindings = snapshot.sourceBindings,
+                    activeProfileId = snapshot.activeProfileId,
                 )
                 val json = gson.toJson(backup)
                 // 写入 SAF 输出流
@@ -119,19 +99,21 @@ class LocalBackupRepositoryImpl @Inject constructor(
                 val backup = parseBackupFromUri(uri).getOrElse { error ->
                     return@runCatching LocalBackupResult(false, "无法读取备份文件：${error.message ?: "未知错误"}")
                 }
-                val validateMessage = validateBackup(backup)
-                if (validateMessage != null) {
-                    return@runCatching LocalBackupResult(false, validateMessage)
+                BackupRestoreGate.validateThenCommit(backup.toRestorePayload()) { snapshot ->
+                    backupRestoreCoordinator.restore(snapshot).getOrThrow()
+                }.getOrElse { error ->
+                    if (error is BackupRecoveryRequiredException) {
+                        return@runCatching LocalBackupResult(
+                            success = false,
+                            message = "数据补偿恢复失败，需要进入恢复流程",
+                            recoveryRequired = true
+                        )
+                    }
+                    return@runCatching LocalBackupResult(
+                        false,
+                        error.message ?: "备份校验或还原失败"
+                    )
                 }
-                // 数据库替换使用事务，确保原子性
-                database.withTransaction {
-                    database.courseDao().deleteAllCourses()
-                    database.semesterDao().deleteAllSemesters()
-                    backup.semesters.forEach { database.semesterDao().insertSemester(it.toEntity()) }
-                    backup.courses.forEach { database.courseDao().insertCourse(it.toEntity()) }
-                }
-                // 恢复设置快照
-                settingsRepository.setAllSettings(backup.settings)
                 LocalBackupResult(true, "已完成数据还原")
             }.getOrElse { error ->
                 LocalBackupResult(false, "还原失败：${error.message ?: "未知错误"}")
@@ -151,17 +133,22 @@ class LocalBackupRepositoryImpl @Inject constructor(
                         message = "无法读取备份文件：${error.message ?: "未知错误"}"
                     )
                 }
-                val validateMessage = validateBackup(backup)
-                if (validateMessage != null) {
-                    return@runCatching LocalBackupPreviewResult(false, validateMessage)
+                val validated = runCatching {
+                    BackupPayloadValidator.validate(backup.toRestorePayload())
+                }.getOrElse { error ->
+                    return@runCatching LocalBackupPreviewResult(
+                        false,
+                        "备份校验失败：${error.message ?: "未知错误"}"
+                    )
                 }
                 val preview = LocalBackupPreview(
                     version = backup.version,
                     exportTime = backup.exportTime,
                     appVersionName = backup.appVersionName,
-                    semesterNames = backup.semesters.map { it.name },
-                    semesterCount = backup.semesters.size,
-                    courseCount = backup.courses.size
+                    semesterNames = validated.semesters.map { it.name },
+                    semesterCount = validated.semesters.size,
+                    courseCount = validated.courses.size,
+                    profileCount = validated.profiles.size,
                 )
                 LocalBackupPreviewResult(true, "已读取备份信息", preview)
             }.getOrElse { error ->

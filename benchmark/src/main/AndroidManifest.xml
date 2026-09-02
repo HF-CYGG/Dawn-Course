@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 仅 benchmark APK 请求；目标 app 仅在 benchmark 变体声明该 signature permission。 -->
+    <uses-permission android:name="com.dawncourse.app.permission.BENCHMARK_SEED" />
+</manifest>

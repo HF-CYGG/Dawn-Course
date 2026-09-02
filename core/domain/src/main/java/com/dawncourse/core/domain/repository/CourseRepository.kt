@@ -11,6 +11,10 @@ import kotlinx.coroutines.flow.Flow
  * 这种设计实现了业务逻辑与数据存储的解耦。
  */
 interface CourseRepository {
+    sealed class AtomicSaveResult {
+        data object Success : AtomicSaveResult()
+        data class Rejected(val message: String) : AtomicSaveResult()
+    }
     /**
      * 获取所有课程列表
      *
@@ -21,8 +25,6 @@ interface CourseRepository {
 
     fun getCoursesBySemester(semesterId: Long): Flow<List<Course>>
 
-    suspend fun getCoursesByOriginId(originId: Long): List<Course>
-    
     /**
      * 根据 ID 获取单个课程
      *
@@ -46,6 +48,48 @@ interface CourseRepository {
      * @return 插入的主键列表
      */
     suspend fun insertCourses(courses: List<Course>): List<Long>
+
+    /**
+     * 在同一 Room transaction 内复核目标学期并完成更新或拆分替换。
+     *
+     * 学期不存在或原编辑记录已消失时不写入任何课程。
+     */
+    suspend fun saveCoursesAtomically(
+        courses: List<Course>,
+        editingCourseId: Long
+    ): AtomicSaveResult
+
+    /**
+     * 在活动 Profile 选择锁与同一 Room transaction 中复核目标作用域并保存课程。
+     * Profile 或活动学期已变化时不得写入旧课表。
+     */
+    suspend fun saveCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+        editingCourseId: Long,
+    ): AtomicSaveResult
+
+    /** 在活动作用域锁和同一事务内删除一组课程。 */
+    suspend fun deleteCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courseIds: Set<Long>,
+    ): AtomicSaveResult
+
+    /** 在活动作用域锁和同一事务内恢复刚删除的一组课程。 */
+    suspend fun restoreCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+    ): AtomicSaveResult
+
+    /** 只在活动学期内原子撤销一个调课课程族，绝不跨 Profile 查询 originId。 */
+    suspend fun undoRescheduleIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        originId: Long,
+    ): AtomicSaveResult
     
     /**
      * 更新已有课程信息

@@ -1,0 +1,50 @@
+package com.dawncourse.core.domain.model
+
+/**
+ * Descriptor for one remotely published script.
+ */
+data class RemoteScriptDescriptor(
+    val scriptId: String,
+    val targetType: String,
+    val category: String,
+    val name: String,
+    val version: Int,
+    val releaseId: String,
+    val releaseStage: String,
+    val channel: String,
+    val url: String,
+    val metaUrl: String,
+    val sha256: String,
+    val signature: String,
+    val alg: String,
+    val priority: Int,
+    val schoolSystemTypes: List<String>,
+    val schoolIds: List<String>,
+    val rolloutPercent: Int,
+    val killSwitch: Boolean,
+    val minAppVersionCode: Long,
+    val maxAppVersionCode: Long?,
+    val parserApiVersion: Int,
+    val runnerContractVersion: Int,
+    val schoolBindingId: String?,
+    val selectionPolicy: String,
+    val dependencies: List<ScriptDependency>,
+    val changelog: String,
+    val scriptKey: String = "",
+    val bundleUrl: String = "",
+    val scopeKind: String = "global",
+    val scopeId: String = "",
+    val schoolSystemType: String = "UNKNOWN"
+)
+
+data class ScriptDependency(
+    val category: String,
+    val name: String,
+    val version: Int,
+    val releaseId: String = "",
+    val url: String = "",
+    val metaUrl: String = "",
+    val sha256: String = "",
+    val signature: String = "",
+    val alg: String = "rsa-sha256"
+)

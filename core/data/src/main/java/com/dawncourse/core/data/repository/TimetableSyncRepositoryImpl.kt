@@ -1,15 +1,12 @@
 package com.dawncourse.core.data.repository
 
-import androidx.room.withTransaction
-import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SyncCredentialType
 import com.dawncourse.core.domain.model.SyncErrorCode
 import com.dawncourse.core.domain.model.SyncProviderType
 import com.dawncourse.core.domain.model.TimetableSyncResult
-import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.CredentialsRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.TimetableSyncRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,21 +20,43 @@ import kotlinx.coroutines.flow.first
 @Singleton
 class TimetableSyncRepositoryImpl @Inject constructor(
     private val credentialsRepository: CredentialsRepository,
-    private val semesterRepository: SemesterRepository,
-    private val courseRepository: CourseRepository,
-    private val database: AppDatabase
+    private val profileRepository: TimetableProfileRepository,
+    private val profileSelectionCoordinator: ProfileSelectionCoordinator,
 ) : TimetableSyncRepository {
 
     override suspend fun syncCurrentSemester(): TimetableSyncResult {
-        val creds = credentialsRepository.getCredentials()
+        val capturedContext = profileRepository.observeActiveContext().first()
+            ?: return TimetableSyncResult.Failure(
+                code = SyncErrorCode.SERVER_ERROR,
+                message = "未设置活动课表",
+            )
+        val capturedSemester = capturedContext.semester
+            ?: return TimetableSyncResult.Failure(
+                code = SyncErrorCode.SERVER_ERROR,
+                message = "未设置当前学期",
+            )
+        val creds = credentialsRepository.getCredentials(capturedContext.profile.id)
             ?: return TimetableSyncResult.Failure(
                 code = SyncErrorCode.NO_CREDENTIALS,
                 message = "未绑定账号或口令"
             )
+        val capturedBindingId = profileSelectionCoordinator.ensureSourceBindingIfStillActive(
+            profileId = capturedContext.profile.id,
+            semesterId = capturedSemester.id,
+            provider = creds.provider,
+        ) ?: return TimetableSyncResult.Failure(
+            code = SyncErrorCode.SERVER_ERROR,
+            message = "同步来源绑定已失效或活动课表已变化",
+        )
 
         return when (creds.provider) {
             SyncProviderType.WAKEUP -> {
-                syncWakeUp(creds)
+                syncWakeUp(
+                    creds = creds,
+                    profileId = capturedContext.profile.id,
+                    semesterId = capturedSemester.id,
+                    sourceBindingId = capturedBindingId,
+                )
             }
             SyncProviderType.QIDI, SyncProviderType.ZF -> {
                 TimetableSyncResult.Failure(
@@ -54,7 +73,12 @@ class TimetableSyncRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun syncWakeUp(creds: com.dawncourse.core.domain.model.SyncCredentials): TimetableSyncResult {
+    private suspend fun syncWakeUp(
+        creds: com.dawncourse.core.domain.model.SyncCredentials,
+        profileId: Long,
+        semesterId: Long,
+        sourceBindingId: String,
+    ): TimetableSyncResult {
         if (creds.type != SyncCredentialType.TOKEN) {
             return TimetableSyncResult.Failure(
                 code = SyncErrorCode.AUTH_FAILED,
@@ -62,12 +86,6 @@ class TimetableSyncRepositoryImpl @Inject constructor(
             )
         }
         val token = creds.secret
-
-        val currentSemester = semesterRepository.getCurrentSemester().first()
-            ?: return TimetableSyncResult.Failure(
-                code = SyncErrorCode.SERVER_ERROR,
-                message = "未设置当前学期"
-            )
 
         val parsedCourses = try {
             fetchWakeUpCourses(token)
@@ -84,7 +102,7 @@ class TimetableSyncRepositoryImpl @Inject constructor(
         // 映射为领域模型
         val domainCourses = parsedCourses.map { rc ->
             Course(
-                semesterId = currentSemester.id,
+                semesterId = semesterId,
                 name = rc.name,
                 teacher = rc.teacher,
                 location = rc.location,
@@ -96,12 +114,18 @@ class TimetableSyncRepositoryImpl @Inject constructor(
             )
         }
 
-        // 原子替换：删除当前学期课程 -> 插入新课程
-        database.withTransaction {
-            courseRepository.deleteCoursesBySemester(currentSemester.id)
-            if (domainCourses.isNotEmpty()) {
-                courseRepository.insertCourses(domainCourses)
-            }
+        val committed = profileSelectionCoordinator.replaceCoursesForCapturedBinding(
+            profileId = profileId,
+            semesterId = semesterId,
+            provider = creds.provider,
+            sourceBindingId = sourceBindingId,
+            courses = domainCourses,
+        )
+        if (!committed) {
+            return TimetableSyncResult.Failure(
+                code = SyncErrorCode.UNKNOWN,
+                message = "同步目标或来源绑定已变化，未写入课程",
+            )
         }
 
         return TimetableSyncResult.Success(

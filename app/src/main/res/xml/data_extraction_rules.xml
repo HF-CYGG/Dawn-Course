@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!--
+        Dawn Course 的换机路径仅允许应用自身的 Backup / WebDAV。
+        Android 12+ 的设备间直传在部分厂商设备上可能不遵循 allowBackup=false，
+        因此这里对所有受支持的数据域采用默认拒绝；未来只能逐项评审后 allowlist。
+    -->
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

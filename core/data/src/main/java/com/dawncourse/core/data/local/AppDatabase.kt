@@ -4,8 +4,12 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.local.dao.SemesterDao
+import com.dawncourse.core.data.local.dao.SyncSourceBindingDao
+import com.dawncourse.core.data.local.dao.TimetableProfileDao
 import com.dawncourse.core.data.local.entity.CourseEntity
 import com.dawncourse.core.data.local.entity.SemesterEntity
+import com.dawncourse.core.data.local.entity.SyncSourceBindingEntity
+import com.dawncourse.core.data.local.entity.TimetableProfileEntity
 
 /**
  * 应用程序主数据库
@@ -15,9 +19,18 @@ import com.dawncourse.core.data.local.entity.SemesterEntity
  *
  * @property entities 数据库包含的实体表列表
  * @property version 数据库版本号，当表结构变更时需升级版本并提供迁移策略
- * @property exportSchema 是否导出 schema 文件（用于版本控制），此处设为 false 简化配置
+ * @property exportSchema 是否导出 schema 文件并纳入版本控制，用于迁移验证
  */
-@Database(entities = [CourseEntity::class, SemesterEntity::class], version = 5, exportSchema = false)
+@Database(
+    entities = [
+        CourseEntity::class,
+        SemesterEntity::class,
+        TimetableProfileEntity::class,
+        SyncSourceBindingEntity::class,
+    ],
+    version = 6,
+    exportSchema = true,
+)
 abstract class AppDatabase : RoomDatabase() {
     /**
      * 获取 CourseDao 实例
@@ -26,4 +39,6 @@ abstract class AppDatabase : RoomDatabase() {
      */
     abstract fun courseDao(): CourseDao
     abstract fun semesterDao(): SemesterDao
+    abstract fun timetableProfileDao(): TimetableProfileDao
+    abstract fun syncSourceBindingDao(): SyncSourceBindingDao
 }

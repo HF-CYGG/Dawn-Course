@@ -54,7 +54,7 @@ interface SemesterRepository {
     /**
      * 设置当前学期
      *
-     * 将指定 ID 的学期标记为当前学期，并自动取消其他学期的当前状态。
+     * 校验学期存在后，只更新 DataStore 中的当前选择 ID，不改写 Room 的旧 isCurrent 字段。
      *
      * @param id 要设置为当前的学期 ID
      */

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 允许全局明文流量 (作为兜底) -->
+    <!--
+      Jiaowu import (WebView) and WebDAV sync accept arbitrary user-supplied hosts,
+      many of which are campus intranets or self-hosted servers without TLS. A static
+      per-domain allowlist can't cover those, so cleartext stays permitted by default;
+      the app-side URL normalizers default new input to https:// and only fall back to
+      http:// when the user explicitly types it.
+    -->
     <base-config cleartextTrafficPermitted="true" />
-    
-    <!-- 显式允许特定域名的明文流量 -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">yyh163.xyz</domain>
-        <domain includeSubdomains="true">47.105.76.193</domain>
-    </domain-config>
 </network-security-config>

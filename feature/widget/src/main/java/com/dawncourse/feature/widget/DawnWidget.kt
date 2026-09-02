@@ -43,23 +43,17 @@ import androidx.glance.ImageProvider
 import androidx.glance.ColorFilter
 import com.dawncourse.feature.widget.R
 import com.dawncourse.core.domain.model.Course
-import com.dawncourse.core.domain.repository.CourseRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
-import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.repository.OperationalDataGate
+import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import java.time.format.DateTimeFormatter
 
 // 莫兰迪/马卡龙色系 (Day) / 深色适配 (Night)
@@ -130,142 +124,41 @@ class DawnWidget : GlanceAppWidget() {
             appContext,
             WidgetEntryPoint::class.java
         )
-        val repository = entryPoint.courseRepository()
-        val semesterRepository = entryPoint.semesterRepository()
-        val settingsRepository = entryPoint.settingsRepository()
-
-        val today = LocalDate.now()
-        
-        val semester = withContext(Dispatchers.IO) {
-            semesterRepository.getCurrentSemester().first()
-        }
-
-        val settings = withContext(Dispatchers.IO) {
-            settingsRepository.settings.first()
-        }
-        val sectionTimes = settings.sectionTimes
-
-        val termStartDate = semester?.let {
-            Instant.ofEpochMilli(it.startDate)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDate()
-        }
-        // 是否处于开学前（假期中）
-        val isBeforeSemesterStart = termStartDate != null && today.isBefore(termStartDate)
-        // 距离开学还有多少天（开学前才有意义）
-        val daysUntilSemesterStart = if (isBeforeSemesterStart && termStartDate != null) {
-            ChronoUnit.DAYS.between(today, termStartDate)
-        } else {
-            null
-        }
-        val currentWeek = if (semester != null && termStartDate != null && !isBeforeSemesterStart) {
-            val daysDiff = ChronoUnit.DAYS.between(termStartDate, today)
-            (daysDiff / 7).toInt() + 1
-        } else {
-            0 // 未开学或无学期时不显示周次
-        }
-        
-        val isSemesterEnded = semester != null && !isBeforeSemesterStart && currentWeek > semester.weekCount
-        
-        val currentDayOfWeek = today.dayOfWeek.value // 1 (Mon) - 7 (Sun)
-
-        val allCourses = withContext(Dispatchers.IO) {
-            if (semester != null) {
-                repository.getCoursesBySemester(semester.id).first()
-            } else {
-                emptyList()
-            }
-        }
-
-        val courses = if (isSemesterEnded || isBeforeSemesterStart) {
-            emptyList()
-        } else {
-            allCourses.filter { course ->
-                // 1. 匹配星期
-                if (course.dayOfWeek != currentDayOfWeek) return@filter false
-                
-                // 2. 匹配周次范围
-                if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@filter false
-                
-                // 3. 匹配单双周
-                when (course.weekType) {
-                    Course.WEEK_TYPE_ALL -> true
-                    Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
-                    Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
-                    else -> true
-                }
-            }.groupBy { "${it.startSection}-${it.name}" } // 临时修复：去重逻辑
-             .map { (_, courses) ->
-                 // 如果同一时间有同名课程（例如数据库中有重复条目），优先保留有地点的那个
-                 // groupBy 的 value 理论上不会为空，但仍做兜底，避免异常数据导致崩溃。
-                 courses.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 } ?: courses.first()
-             }
-             .sortedBy { it.startSection }
-        }
-
-        // 计算无课提示语
-        val emptyMessage = if (courses.isNotEmpty()) {
-            ""
-        } else {
-            if (isBeforeSemesterStart) {
-                if (daysUntilSemesterStart != null) {
-                    if (daysUntilSemesterStart == 0L) {
-                        "明天就要接受知识的洗礼了"
-                    } else {
-                        "距开学还有 ${daysUntilSemesterStart} 天"
-                    }
-                } else {
-                    "还未开学哦"
-                }
-            } else if (isSemesterEnded) {
-                "学期已结束 🎉"
-            } else {
-                val hasCourseThisWeek = allCourses.any { course ->
-                    if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@any false
-                    when (course.weekType) {
-                        Course.WEEK_TYPE_ALL -> true
-                        Course.WEEK_TYPE_ODD -> currentWeek % 2 != 0
-                        Course.WEEK_TYPE_EVEN -> currentWeek % 2 == 0
-                        else -> true
-                    }
-                }
-    
-                if (hasCourseThisWeek) {
-                    "今日已无课 ☕"
-                } else {
-                    val hasFutureCourses = allCourses.any { it.endWeek > currentWeek }
-                    if (hasFutureCourses) {
-                        "本周无课 🌴"
-                    } else {
-                        "好好享受假期吧 🎉"
-                    }
+        val readiness = entryPoint.operationalDataGate().readiness()
+        if (readiness != OperationalDataReadiness.READY) {
+            provideContent {
+                GlanceTheme {
+                    TimetableWidgetContent(
+                        courses = emptyList(),
+                        today = LocalDate.now(),
+                        currentWeek = 0,
+                        sectionTimes = emptyList(),
+                        emptyMessage = if (readiness == OperationalDataReadiness.STARTING) {
+                            "正在准备课表数据"
+                        } else {
+                            "请打开应用恢复课表数据"
+                        },
+                        isBeforeSemesterStart = false
+                    )
                 }
             }
+            return
         }
-        
-        val now = LocalTime.now()
-        val displayCourses = if (courses.isEmpty()) {
-            courses
-        } else {
-            courses.filter { course ->
-                isCourseCurrentOrFuture(course, sectionTimes, now)
-            }
-        }
-        val finalEmptyMessage = if (displayCourses.isNotEmpty()) {
-            ""
-        } else if (courses.isNotEmpty()) {
-            "今日课程已结束 🌙"
-        } else {
-            emptyMessage
-        }
-        val nextUpdateMillis = computeNextCourseEndMillis(courses, sectionTimes, today, now)
-        if (nextUpdateMillis != null) {
-            WidgetSyncManager.scheduleNextCourseUpdate(context, nextUpdateMillis)
+        val timeline = entryPoint.widgetTimelineBuilder().build()
+        if (timeline.nextUpdateMillis != null) {
+            WidgetSyncManager.scheduleNextCourseUpdate(context, timeline.nextUpdateMillis)
         }
 
         provideContent {
             GlanceTheme {
-                TimetableWidgetContent(displayCourses, today, currentWeek, sectionTimes, finalEmptyMessage, isBeforeSemesterStart)
+                TimetableWidgetContent(
+                    courses = timeline.displayCourses,
+                    today = timeline.today,
+                    currentWeek = timeline.currentWeek,
+                    sectionTimes = timeline.sectionTimes,
+                    emptyMessage = timeline.emptyMessage,
+                    isBeforeSemesterStart = timeline.isBeforeSemesterStart
+                )
             }
         }
     }
@@ -276,9 +169,9 @@ class DawnWidget : GlanceAppWidget() {
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface WidgetEntryPoint {
-        fun courseRepository(): CourseRepository
-        fun semesterRepository(): SemesterRepository
-        fun settingsRepository(): SettingsRepository
+        /** 在解析数据库依赖前读取无阻塞启动状态。 */
+        fun operationalDataGate(): OperationalDataGate
+        fun widgetTimelineBuilder(): WidgetTimelineBuilder
     }
 
     @Composable

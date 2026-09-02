@@ -1,0 +1,12 @@
+<resources>
+    <string name="import_destination_title">导入位置</string>
+    <string name="import_destination_hint">本次导入已锁定所选目标；切换课表不会改变提交位置。</string>
+    <string name="import_destination_new_semester">在“%1$s”中新建学期</string>
+    <string name="import_destination_new_profile">新建独立课表</string>
+    <string name="import_destination_new_profile_name">新课表名称</string>
+    <string name="import_destination_overwrite">覆盖“%1$s · %2$s”</string>
+    <string name="import_overwrite_confirm_title">确认覆盖学期</string>
+    <string name="import_overwrite_confirm_message">将覆盖“%1$s”的“%2$s”，替换 %3$d 条现有课程。其他课表和学期不会受影响。</string>
+    <string name="import_overwrite_confirm_action">确认覆盖</string>
+    <string name="import_overwrite_cancel">取消</string>
+</resources>

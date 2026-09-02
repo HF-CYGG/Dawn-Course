@@ -1,26 +1,47 @@
 package com.dawncourse.feature.timetable.notification
 
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.os.Build
+import android.util.Log
+import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
-import com.dawncourse.core.domain.repository.SemesterRepository
+import com.dawncourse.core.domain.repository.TimetableProfileRepository
+import com.dawncourse.core.domain.repository.OperationalDataGate
+import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
-import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
+import com.dawncourse.core.domain.usecase.GenerateTriggerHorizonUseCase
+import com.dawncourse.feature.timetable.R
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+import dagger.Lazy
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.ZoneId
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+
+/**
+ * 每日闹钟重建的进程级串行锁。
+ *
+ * 周期 Worker 与系统事件即时 Worker 使用不同唯一任务名，WorkManager 可能并发执行；
+ * 该锁确保两者不会交错对账同一批 TriggerKey。
+ */
+internal object DailySchedulerExecutionLock {
+    private val mutex = Mutex()
+
+    /**
+     * 在唯一临界区内执行闹钟 Desired/Scheduled 对账。
+     */
+    suspend fun <T> withLock(block: suspend () -> T): T = mutex.withLock {
+        block()
+    }
+}
 
 /**
  * 每日调度任务 (WorkManager)
@@ -30,310 +51,327 @@ import java.time.ZoneId
  * 1. 上课提醒 (Reminder)
  * 2. 自动静音 (Auto Mute)
  */
-class DailySchedulerWorker(
-    appContext: Context,
-    workerParams: WorkerParameters
+@HiltWorker
+class DailySchedulerWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val operationalDataGate: OperationalDataGate,
+    private val courseRepository: Lazy<CourseRepository>,
+    private val settingsRepository: Lazy<SettingsRepository>,
+    private val timetableProfileRepository: Lazy<TimetableProfileRepository>,
+    private val calculateWeekUseCase: CalculateWeekUseCase,
+    private val generateTriggerHorizonUseCase: GenerateTriggerHorizonUseCase,
+    private val triggerReconciler: TriggerReconciler,
+    private val appMuteSessionStore: AppMuteSessionStore,
+    private val muteRecoveryController: MuteRecoveryUserActionController,
+    private val triggerReadinessRetryScheduler: TriggerReadinessRetryScheduler
 ) : CoroutineWorker(appContext, workerParams) {
 
-    @EntryPoint
-    @InstallIn(SingletonComponent::class)
-    interface WorkerEntryPoint {
-        fun courseRepository(): CourseRepository
-        fun settingsRepository(): SettingsRepository
-        fun semesterRepository(): SemesterRepository
-        fun calculateWeekUseCase(): CalculateWeekUseCase
-    }
-
-    override suspend fun doWork(): Result {
-        // 使用 EntryPoint 在 Worker 中注入 Hilt 依赖
-        val entryPoint = EntryPointAccessors.fromApplication(
-            applicationContext,
-            WorkerEntryPoint::class.java
-        )
-        val courseRepo = entryPoint.courseRepository()
-        val settingsRepo = entryPoint.settingsRepository()
-        val semesterRepo = entryPoint.semesterRepository()
-        val calculateWeekUseCase = entryPoint.calculateWeekUseCase()
-        val settings = settingsRepo.settings.first()
-
-        // 如果所有相关功能都未开启，直接返回
-        if (!settings.enableClassReminder && !settings.enableAutoMute) return Result.success()
-
-        val currentSemester = semesterRepo.getCurrentSemester().first() ?: return Result.success()
-        val today = LocalDate.now()
-        val dayOfWeek = today.dayOfWeek.value // 1 (Mon) to 7 (Sun)
-        
-        // 计算当前周次
-        val currentWeek = calculateWeekUseCase(currentSemester.startDate)
-        if (currentWeek <= 0 || currentWeek > currentSemester.weekCount) return Result.success()
-
-        val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val allCourses = courseRepo.getAllCourses().first()
-        cancelExistingAlarms(allCourses, alarmManager)
-
-        val currentSemesterCourses = allCourses.filter { it.semesterId == currentSemester.id }
-        val todayCourses = currentSemesterCourses.filter { course ->
-            // 1. 检查星期
-            if (course.dayOfWeek != dayOfWeek) return@filter false
-            
-            // 2. 检查周次范围
-            if (currentWeek < course.startWeek || currentWeek > course.endWeek) return@filter false
-            
-            // 3. 检查单双周
-            when (course.weekType) {
-                Course.WEEK_TYPE_ODD -> if (currentWeek % 2 == 0) return@filter false
-                Course.WEEK_TYPE_EVEN -> if (currentWeek % 2 != 0) return@filter false
-            }
-            true
-        }
-
-        val reminderMinutes = settings.reminderMinutes
-        val sectionTimes = settings.sectionTimes
-        
-        todayCourses.forEach { course ->
-            // --- 调度上课提醒 ---
-            if (settings.enableClassReminder) {
-                if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
-                     val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                     val startTime = parseLocalTimeOrNull(startTimeStr)
-                     if (startTime != null) {
-                         val courseDateTime = LocalDateTime.of(today, startTime)
-                         // 计算提醒触发时间
-                         val triggerTime = courseDateTime.minusMinutes(reminderMinutes.toLong())
-                         
-                         // 仅调度未来的提醒
-                         if (triggerTime.isAfter(LocalDateTime.now())) {
-                            val intent = Intent(applicationContext, ReminderReceiver::class.java).apply {
-                                putExtra("COURSE_ID", course.id)
-                                 putExtra("COURSE_NAME", course.name)
-                                 putExtra("LOCATION", course.location)
-                             }
-                             // 使用 Course ID 作为 RequestCode，确保每个课程的 PendingIntent 唯一
-                             val pendingIntent = PendingIntent.getBroadcast(
-                                 applicationContext,
-                                 course.id.toInt(), 
-                                 intent,
-                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                             )
-                             
-                             setExactAlarm(alarmManager, triggerTime, pendingIntent)
-                         }
-                     } else {
-                         // 可恢复：时间字符串格式异常时仅跳过该课程的提醒调度，避免影响其它课程与 Worker 主流程
-                     }
-                }
-            }
-
-            // --- 调度自动静音 ---
-            if (settings.enableAutoMute) {
-                // 1. 上课时静音 (Mute)
-                if (sectionTimes.isNotEmpty() && course.startSection <= sectionTimes.size && course.startSection > 0) {
-                    val startTimeStr = sectionTimes[course.startSection - 1].startTime
-                    val startTime = parseLocalTimeOrNull(startTimeStr)
-                    if (startTime != null) {
-                        val startDateTime = LocalDateTime.of(today, startTime)
-
-                        if (startDateTime.isAfter(LocalDateTime.now())) {
-                            val endSection = course.startSection + course.duration - 1
-                            val endTimeStr = if (endSection <= sectionTimes.size && endSection > 0) {
-                                sectionTimes[endSection - 1].endTime
-                            } else {
-                                ""
-                            }
-                            val endTime = parseLocalTimeOrNull(endTimeStr)
-                            val endDateTime = if (endTime != null) {
-                                LocalDateTime.of(today, endTime)
-                            } else {
-                                null
-                            }
-                            val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
-                                action = SilenceReceiver.ACTION_MUTE
-                                putExtra("COURSE_ID", course.id)
-                                if (endDateTime != null) {
-                                    putExtra(
-                                        "UNMUTE_TIME_MILLIS",
-                                        endDateTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                                    )
-                                }
-                            }
-                            // 使用 ID + 10000 避免与提醒的 RequestCode 冲突
-                            val pendingIntent = PendingIntent.getBroadcast(
-                                applicationContext,
-                                course.id.toInt() + 10000,
-                                intent,
-                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                            )
-                            setExactAlarm(alarmManager, startDateTime, pendingIntent)
-                        }
-                    } else {
-                        // 可恢复：时间字符串异常时跳过本课程的自动静音闹钟
-                    }
-                }
-
-                // 2. 下课时取消静音 (Unmute)
-                val endSection = course.startSection + course.duration - 1
-                if (sectionTimes.isNotEmpty() && endSection <= sectionTimes.size && endSection > 0) {
-                    val endTimeStr = sectionTimes[endSection - 1].endTime
-                    val endTime = parseLocalTimeOrNull(endTimeStr)
-                    if (endTime != null) {
-                        val endDateTime = LocalDateTime.of(today, endTime)
-
-                        if (endDateTime.isAfter(LocalDateTime.now())) {
-                            val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
-                                action = SilenceReceiver.ACTION_UNMUTE
-                            }
-                            // 使用 ID + 20000
-                            val pendingIntent = PendingIntent.getBroadcast(
-                                applicationContext,
-                                course.id.toInt() + 20000,
-                                intent,
-                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                            )
-                            setExactAlarm(alarmManager, endDateTime, pendingIntent)
-                        }
-                    } else {
-                        // 可恢复：时间字符串异常时跳过本课程的取消静音闹钟
-                    }
-                }
-            }
-        }
-
-        return Result.success()
+    override suspend fun doWork(): Result = DailySchedulerExecutionLock.withLock {
+        doWorkLocked()
     }
 
     /**
-     * 将形如 "HH:mm" 或 "H:mm" 的时间字符串解析为 [LocalTime]
-     *
-     * 说明：
-     * - 时间数据来自用户配置/导入结果，理论上应规范，但仍可能出现不合法值
-     * - 本方法采用“返回 null 表示解析失败”的方式，避免抛异常影响 Worker 主流程
+     * 在进程级串行锁内读取课程并重建今日闹钟。
      */
-    private fun parseLocalTimeOrNull(value: String): LocalTime? {
-        val parts = value.split(":")
-        if (parts.size != 2) return null
-        val hour = parts[0].toIntOrNull() ?: return null
-        val minute = parts[1].toIntOrNull() ?: return null
-        if (hour !in 0..23) return null
-        if (minute !in 0..59) return null
-        return LocalTime.of(hour, minute)
-    }
-
-    private fun cancelExistingAlarms(courses: List<Course>, alarmManager: AlarmManager) {
-        courses.forEach { course ->
-            runCatching {
-                val reminderIntent = Intent(applicationContext, ReminderReceiver::class.java)
-                val reminderPendingIntent = PendingIntent.getBroadcast(
-                    applicationContext,
-                    course.id.toInt(),
-                    reminderIntent,
-                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-                )
-                if (reminderPendingIntent != null) {
-                    alarmManager.cancel(reminderPendingIntent)
-                    reminderPendingIntent.cancel()
-                }
-            }
-            runCatching {
-                val muteIntent = Intent(applicationContext, SilenceReceiver::class.java).apply {
-                    action = SilenceReceiver.ACTION_MUTE
-                }
-                val mutePendingIntent = PendingIntent.getBroadcast(
-                    applicationContext,
-                    course.id.toInt() + 10000,
-                    muteIntent,
-                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-                )
-                if (mutePendingIntent != null) {
-                    alarmManager.cancel(mutePendingIntent)
-                    mutePendingIntent.cancel()
-                }
-            }
-            runCatching {
-                val unmuteIntent = Intent(applicationContext, SilenceReceiver::class.java).apply {
-                    action = SilenceReceiver.ACTION_UNMUTE
-                }
-                val unmutePendingIntent = PendingIntent.getBroadcast(
-                    applicationContext,
-                    course.id.toInt() + 20000,
-                    unmuteIntent,
-                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-                )
-                if (unmutePendingIntent != null) {
-                    alarmManager.cancel(unmutePendingIntent)
-                    unmutePendingIntent.cancel()
-                }
-            }
+    private suspend fun doWorkLocked(): Result {
+        when (operationalDataGate.readiness()) {
+            OperationalDataReadiness.STARTING -> return Result.retry()
+            OperationalDataReadiness.RECOVERY_REQUIRED -> return Result.success()
+            OperationalDataReadiness.READY -> Unit
         }
-    }
-
-    private fun setExactAlarm(alarmManager: AlarmManager, triggerTime: LocalDateTime, pendingIntent: PendingIntent) {
-        val triggerMillis = triggerTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        
-        // Android 12 (API 31) 起，精确闹钟受系统权限与策略限制：
-        // - 若未获准使用精确闹钟，调用 setExact*/setAlarmClock 可能直接抛出 SecurityException
-        // - 这会导致 Worker 失败，并造成“提醒/静音”整体不可用
-        //
-        // 因此这里采用“能力判断 + SecurityException 兜底 + 降级策略”的组合：
-        // 1) Android 12+：优先通过 canScheduleExactAlarms() 判断是否允许精确闹钟
-        // 2) 允许则尝试 setExactAndAllowWhileIdle / setExact
-        // 3) 任意一步如果抛出 SecurityException，则降级为非精确闹钟（setAndAllowWhileIdle / set）
-        //
-        // 注意：降级为非精确闹钟后，触发时间可能存在偏差（系统会合并/延迟），但可以保证“不崩溃、尽力提醒”。
-        val canUseExactAlarm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            try {
-                alarmManager.canScheduleExactAlarms()
-            } catch (e: Throwable) {
-                // 极少数 ROM/系统实现可能存在兼容性问题：此处一律保守降级
-                false
+        var shouldRetry = false
+        try {
+            // 开机/升级/每日保底只补齐专用按 Key Worker，不再借 force replay 间接恢复。
+            muteRecoveryController.reconcilePersistedState()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "静音恢复状态对账失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+        }
+        try {
+            // Receiver 先写 journal 再等待 WorkManager；异步入队失败或进程中断后，
+            // 下一次启动/系统事件/每日对账在此恢复已经被系统消费的一次性触发器。
+            if (!triggerReadinessRetryScheduler.reconcilePending()) {
+                shouldRetry = true
+                Log.w(TAG, "触发就绪补投 journal 对账未完全入队")
             }
-        } else {
-            true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "触发就绪补投 journal 对账失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+        }
+        val snapshot = try {
+            val settings = settingsRepository.get().settings.first()
+            val now = Instant.now()
+            val zoneId = ZoneId.systemDefault()
+            // 先捕获同一 Flow 发射的 Profile + Semester，再读取课程；完成后复核，
+            // Profile 切换竞态时宁可交给下一次 reconcile，也不能注册旧课表的 Desired。
+            val activeContext = timetableProfileRepository.get().observeActiveContext().first()
+            val semester = activeContext?.semester
+            val courses = semester?.let { value ->
+                courseRepository.get().getCoursesBySemester(value.id).first()
+            }.orEmpty()
+            val verifiedContext = timetableProfileRepository.get().observeActiveContext().first()
+            if (activeContext?.profile?.id != verifiedContext?.profile?.id ||
+                activeContext?.semester?.id != verifiedContext?.semester?.id
+            ) {
+                return Result.retry()
+            }
+            SchedulingSnapshot(
+                settings = settings,
+                now = now,
+                zoneId = zoneId,
+                profileId = activeContext?.profile?.id,
+                semester = semester,
+                courses = courses,
+                currentWeek = semester?.let { value ->
+                    calculateWeekUseCase(value.startDate, now.toEpochMilli())
+                } ?: 0
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "课程调度快照读取失败: ${failure.javaClass.simpleName}")
+            return Result.retry()
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (canUseExactAlarm) {
-                try {
-                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-                    return
-                } catch (e: SecurityException) {
-                    // 继续走降级逻辑
-                } catch (e: Throwable) {
-                    // 任何异常都不应影响 Worker 主流程，继续走降级逻辑
-                }
+        val desired = try {
+            val profileId = snapshot.profileId
+            val semester = snapshot.semester
+            if (profileId == null || semester == null) {
+                emptyList()
+            } else {
+                generateTriggerHorizonUseCase(
+                    profileId = profileId,
+                    firstDate = snapshot.now.atZone(snapshot.zoneId).toLocalDate(),
+                    dayCount = TRIGGER_HORIZON_DAYS,
+                    now = snapshot.now,
+                    zoneId = snapshot.zoneId,
+                    semesterStartDateMillis = semester.startDate,
+                    semesterWeekCount = semester.weekCount,
+                    courses = snapshot.courses,
+                    settings = snapshot.settings
+                )
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "触发器生成失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+            null
+        }
+        val replayJournal = AppSystemScheduleReplayJournal(applicationContext)
+        // 捕获本轮代际；读取异常时仍强制幂等重放，但不允许清除未知或更新后的责任。
+        val replayClaim = captureSystemScheduleReplayClaim(replayJournal)
+        val forceReplay = shouldForceReplay(
+            inputForceReplay = inputData.getBoolean(ReminderScheduler.INPUT_FORCE_REPLAY, false),
+            markerPending = replayClaim.isPending,
+        )
+        var triggerReconciled = false
+        if (desired != null) {
+            try {
+                val muteSessionRecords = appMuteSessionStore.records()
+                triggerReconciler.reconcile(
+                    desired = desired,
+                    forceReplay = forceReplay,
+                    protectedUnmuteKeys = muteSessionRecords.mapTo(mutableSetOf()) { record -> record.key },
+                    retainedUnmuteAlarmKeys = muteSessionRecords
+                        .filter { record -> record.status == MuteSessionStatus.ACTIVE }
+                        .mapTo(mutableSetOf()) { record -> record.key }
+                )
+                triggerReconciled = true
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                Log.w(TAG, "系统触发器对账失败: ${failure.javaClass.simpleName}")
+                shouldRetry = true
+            }
+        }
 
-            // Android 6.0+：非精确但允许在 Doze 下执行，作为“尽力而为”的 fallback
-            try {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-            } catch (e: SecurityException) {
-                // 理论上非精确不需要精确闹钟权限，但依然做兜底，保证不崩溃
-                try {
-                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-                } catch (_: Throwable) {
-                }
-            } catch (_: Throwable) {
+        if (!acknowledgeSystemScheduleReplay(
+                journal = replayJournal,
+                claim = replayClaim,
+                triggerReconciled = triggerReconciled,
+            )
+        ) {
+            // 清理失败只会造成下一次幂等重放；当前 Worker 仍请求 retry，避免把责任静默遗留。
+            shouldRetry = true
+            Log.w(TAG, "系统事件 force replay marker 清理失败")
+        }
+
+        val surfaceRefreshJournal = AppCourseSurfaceRefreshJournal(applicationContext)
+        // 捕获本轮 Surface 责任代际；并发到达的新边界会因 compare-and-clear 保留下来。
+        val surfaceRefreshClaim = captureCourseSurfaceRefreshClaim(surfaceRefreshJournal)
+        var surfaceRefreshed = false
+        try {
+            if (snapshot.settings.enablePersistentNotification) {
+                // 不预先取消旧刷新；新通知与下一边界成功发布后由同一 PendingIntent 身份覆盖。
+                refreshCourseStatusNotification(
+                    semester = snapshot.semester,
+                    currentWeek = snapshot.currentWeek,
+                    courses = snapshot.courses,
+                    sectionTimes = snapshot.settings.sectionTimes,
+                    now = snapshot.now,
+                    zoneId = snapshot.zoneId
+                )
+            } else {
+                PersistentNotificationRefreshScheduler.cancel(applicationContext)
+                NotificationHelper.cancelCourseStatus(applicationContext)
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            // Android 4.4 - 5.x：无 Doze 概念，但仍可能存在 setExact 调用异常，统一做兜底
-            try {
-                if (canUseExactAlarm) {
-                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+            surfaceRefreshed = true
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "课程状态 Surface 刷新失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+        }
+        if (!acknowledgeCourseSurfaceRefresh(
+                journal = surfaceRefreshJournal,
+                claim = surfaceRefreshClaim,
+                surfaceRefreshed = surfaceRefreshed,
+            )
+        ) {
+            shouldRetry = true
+            Log.w(TAG, "课程状态 Surface refresh marker 清理失败")
+        }
+        return if (shouldRetry) Result.retry() else Result.success()
+    }
+
+    /**
+     * 生成课程状态通知，并只在下一真实边界或本地午夜安排一次刷新。
+     */
+    private fun refreshCourseStatusNotification(
+        semester: Semester?,
+        currentWeek: Int,
+        courses: List<Course>,
+        sectionTimes: List<com.dawncourse.core.domain.model.SectionTime>,
+        now: Instant,
+        zoneId: ZoneId
+    ) {
+        val initialPlan = PersistentNotificationPlanResolver.resolve(
+            now = now,
+            zoneId = zoneId,
+            currentWeek = currentWeek,
+            weekCount = semester?.weekCount ?: 0,
+            courses = courses,
+            sectionTimes = sectionTimes
+        )
+        // 数据读取、格式化与系统调度可能正好跨过课程边界；发布前用新时钟至多重算一次，
+        // 避免先展示已过期状态，再因过期 Alarm 被取消后永久失去刷新入口。
+        val plan = PersistentNotificationPlanResolver.recalculateForPublication(
+            initialPlan = initialPlan,
+            publicationNow = Instant.now(),
+            zoneId = zoneId,
+            currentWeek = currentWeek,
+            weekCount = semester?.weekCount ?: 0,
+            courses = courses,
+            sectionTimes = sectionTimes
+        )
+        val titleAndContent = when {
+            semester == null -> {
+                applicationContext.getString(R.string.course_status_no_semester_title) to
+                    applicationContext.getString(R.string.course_status_no_semester_content)
+            }
+            currentWeek !in 1..semester.weekCount -> {
+                applicationContext.getString(R.string.course_status_out_of_semester_title) to
+                    applicationContext.getString(R.string.course_status_out_of_semester_content)
+            }
+            plan.status == PersistentCourseStatus.IN_CLASS -> {
+                val current = plan.currentCourses.firstOrNull()
+                if (current == null) {
+                    noCoursesText()
                 } else {
-                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
+                    val label = formatCourseLabel(plan.currentCourses)
+                    val location = current.course.location.ifBlank {
+                        applicationContext.getString(R.string.course_status_location_unknown)
+                    }
+                    applicationContext.getString(R.string.course_status_in_class_title, label) to
+                        applicationContext.getString(
+                            R.string.course_status_in_class_content,
+                            formatTime(current.endAt, zoneId),
+                            location
+                        )
                 }
-            } catch (e: SecurityException) {
-                try {
-                    alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-                } catch (_: Throwable) {
-                }
-            } catch (_: Throwable) {
             }
+            plan.status == PersistentCourseStatus.UPCOMING -> {
+                val next = plan.nextCourses.firstOrNull()
+                if (next == null) {
+                    noCoursesText()
+                } else {
+                    val label = formatCourseLabel(plan.nextCourses)
+                    val location = next.course.location.ifBlank {
+                        applicationContext.getString(R.string.course_status_location_unknown)
+                    }
+                    applicationContext.getString(R.string.course_status_upcoming_title, label) to
+                        applicationContext.getString(
+                            R.string.course_status_upcoming_content,
+                            formatTime(next.startAt, zoneId),
+                            location
+                        )
+                }
+            }
+            plan.status == PersistentCourseStatus.FINISHED -> {
+                applicationContext.getString(R.string.course_status_finished_title) to
+                    applicationContext.getString(R.string.course_status_finished_content)
+            }
+            else -> noCoursesText()
+        }
+
+        NotificationHelper.showCourseStatus(
+            context = applicationContext,
+            title = titleAndContent.first,
+            content = titleAndContent.second
+        )
+        PersistentNotificationRefreshScheduler.schedule(applicationContext, plan.nextRefreshAt)
+    }
+
+    /**
+     * 返回“今天无课”的资源化展示文案。
+     */
+    private fun noCoursesText(): Pair<String, String> =
+        applicationContext.getString(R.string.course_status_no_courses_title) to
+            applicationContext.getString(R.string.course_status_no_courses_content)
+
+    /**
+     * 使用领域层稳定顺序选择主课程，并显式展示被折叠的课程数量。
+     */
+    private fun formatCourseLabel(courses: List<PersistentCourseOccurrence>): String {
+        val primaryName = courses.firstOrNull()?.course?.name.orEmpty()
+        val hiddenCount = (courses.size - 1).coerceAtLeast(0)
+        return if (hiddenCount == 0) {
+            primaryName
         } else {
-            // Android 4.3 及以下：仅支持非精确闹钟
-            try {
-                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMillis, pendingIntent)
-            } catch (_: Throwable) {
-            }
+            applicationContext.getString(
+                R.string.course_status_course_with_more,
+                primaryName,
+                hiddenCount
+            )
         }
     }
+
+    /**
+     * 以当前系统时区格式化课程边界。
+     */
+    private fun formatTime(value: Instant, zoneId: ZoneId): String =
+        value.atZone(zoneId).toLocalTime().format(STATUS_TIME_FORMATTER)
+
+    private companion object {
+        /** 课程状态通知使用的固定 24 小时时间格式。 */
+        val STATUS_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+        const val TRIGGER_HORIZON_DAYS = 2
+        const val TAG = "DailySchedulerWorker"
+    }
+
+    private data class SchedulingSnapshot(
+        val settings: com.dawncourse.core.domain.model.AppSettings,
+        val now: Instant,
+        val zoneId: ZoneId,
+        val profileId: Long?,
+        val semester: Semester?,
+        val courses: List<Course>,
+        val currentWeek: Int
+    )
 }

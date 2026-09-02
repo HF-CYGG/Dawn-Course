@@ -23,12 +23,22 @@ data class WebDavCredentials(
  * @property courses 课程列表
  */
 data class WebDavBackup(
-    val version: Int = 1,
+    val version: Int = CURRENT_VERSION,
     val lastModified: Long,
     val settings: AppSettings,
     val semesters: List<Semester>,
-    val courses: List<Course>
-)
+    val courses: List<Course>,
+    val sourceBindings: List<SyncSourceBinding>? = null,
+    val profiles: List<TimetableProfile>? = null,
+    val activeProfileId: Long? = null,
+    /** 当前选中的学期；v1 缺失时为 null，v2 无选择时必须显式写 0。 */
+    val selectedSemesterId: Long? = null
+) {
+    companion object {
+        /** 当前 WebDAV 备份格式版本。 */
+        const val CURRENT_VERSION = 4
+    }
+}
 
 /**
  * WebDAV 同步结果
