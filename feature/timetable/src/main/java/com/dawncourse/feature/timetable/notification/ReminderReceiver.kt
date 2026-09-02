@@ -21,8 +21,10 @@ import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 对新 TriggerKey URI 进行二次领域校验的课程提醒广播。 */
 class ReminderReceiver : BroadcastReceiver() {
@@ -87,7 +89,15 @@ class ReminderReceiver : BroadcastReceiver() {
             } catch (failure: Throwable) {
                 Log.e(TAG, "课程提醒广播处理失败: ${failure.javaClass.simpleName}")
             } finally {
-                pendingResult.finish()
+                try {
+                    withContext(NonCancellable) {
+                        if (!ReminderScheduler.triggerContinuationWorkAndAwait(context)) {
+                            Log.w(TAG, "课程提醒后的滚动续排未确认")
+                        }
+                    }
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }

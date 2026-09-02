@@ -21,8 +21,10 @@ import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 仅处理有效新 TriggerKey URI 的应用静音会话广播。 */
 class SilenceReceiver : BroadcastReceiver() {
@@ -120,7 +122,15 @@ class SilenceReceiver : BroadcastReceiver() {
             } catch (failure: Throwable) {
                 Log.e(TAG, "静音广播处理失败: ${failure.javaClass.simpleName}")
             } finally {
-                pendingResult.finish()
+                try {
+                    withContext(NonCancellable) {
+                        if (!ReminderScheduler.triggerContinuationWorkAndAwait(context)) {
+                            Log.w(TAG, "静音边界后的滚动续排未确认")
+                        }
+                    }
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }

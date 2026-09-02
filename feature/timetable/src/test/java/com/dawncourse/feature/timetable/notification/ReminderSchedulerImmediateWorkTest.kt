@@ -14,4 +14,13 @@ class ReminderSchedulerImmediateWorkTest {
         assertEquals("DailyReminderImmediateReconcile", ReminderScheduler.IMMEDIATE_WORK_NAME)
         assertEquals(ExistingWorkPolicy.APPEND_OR_REPLACE, ReminderScheduler.IMMEDIATE_WORK_POLICY)
     }
+
+    @Test
+    fun `触发后续排使用独立唯一串行链并保证尾部执行`() {
+        assertEquals("CourseTriggerScheduleContinuation", ReminderScheduler.CONTINUATION_WORK_NAME)
+        assertEquals(
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            ReminderScheduler.CONTINUATION_WORK_POLICY,
+        )
+    }
 }

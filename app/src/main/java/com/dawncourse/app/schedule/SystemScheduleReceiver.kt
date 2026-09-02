@@ -58,6 +58,8 @@ internal object SystemScheduleEventPolicy {
     private const val ACTION_MY_PACKAGE_REPLACED = "android.intent.action.MY_PACKAGE_REPLACED"
     private const val ACTION_TIME_SET = "android.intent.action.TIME_SET"
     private const val ACTION_TIMEZONE_CHANGED = "android.intent.action.TIMEZONE_CHANGED"
+    private const val ACTION_EXACT_ALARM_PERMISSION_CHANGED =
+        "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"
 
     /**
      * 判断指定广播是否需要重新建立课表提醒与 Widget 更新链路。
@@ -66,6 +68,7 @@ internal object SystemScheduleEventPolicy {
         ACTION_BOOT_COMPLETED,
         ACTION_MY_PACKAGE_REPLACED,
         ACTION_TIME_SET,
-        ACTION_TIMEZONE_CHANGED
+        ACTION_TIMEZONE_CHANGED,
+        ACTION_EXACT_ALARM_PERMISSION_CHANGED,
     )
 }

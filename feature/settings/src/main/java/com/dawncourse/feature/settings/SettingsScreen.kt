@@ -127,6 +127,7 @@ fun SettingsScreen(
     // 日历导出状态
     val calendarExportState by viewModel.calendarExportState.collectAsState()
     val autoMuteDndCapability by viewModel.autoMuteDndCapability.collectAsState()
+    val scheduleReliabilityAvailability by viewModel.scheduleReliabilityAvailability.collectAsState()
     
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -139,6 +140,7 @@ fun SettingsScreen(
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.refreshAutoMuteDndAvailability()
+        viewModel.refreshScheduleReliabilityAvailability()
     }
     
     val calendarExportLauncher = rememberLauncherForActivityResult(
@@ -307,6 +309,7 @@ fun SettingsScreen(
                 context = context,
                 viewModel = viewModel,
                 autoMuteDndCapability = autoMuteDndCapability,
+                scheduleReliabilityAvailability = scheduleReliabilityAvailability,
                 onRequestNotificationPermission = { onGranted ->
                     checkAndRequestNotificationPermission(onGranted)
                 },
@@ -955,6 +958,7 @@ private fun NotificationSection(
     context: Context,
     viewModel: SettingsViewModel,
     autoMuteDndCapability: AutoMuteDndCapability,
+    scheduleReliabilityAvailability: ScheduleReliabilityAvailability,
     onRequestNotificationPermission: ((() -> Unit) -> Unit),
     onRequestAutoMutePermission: () -> Unit
 ) {
@@ -1054,7 +1058,54 @@ private fun NotificationSection(
                 } else {
                     viewModel.setEnableAutoMute(false)
                 }
-            }
+            },
+            showDivider = true,
+        )
+        SettingRow(
+            title = "精确闹钟",
+            description = if (scheduleReliabilityAvailability.exactAlarmAvailable) {
+                "已可用；课程提醒与静音边界可按精确时间调度"
+            } else {
+                "当前不可用；将降级为非精确调度，可能延迟触发"
+            },
+            icon = { Icon(Icons.Default.Alarm, null) },
+            onClick = if (scheduleReliabilityAvailability.shouldRequestExactAlarmAccess) {
+                {
+                    val intent = Intent(
+                        Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        Uri.parse("package:${context.packageName}"),
+                    )
+                    runCatching { context.startActivity(intent) }
+                        .onFailure {
+                            Toast.makeText(context, "无法打开精确闹钟设置", Toast.LENGTH_SHORT).show()
+                        }
+                }
+            } else {
+                null
+            },
+            showArrow = scheduleReliabilityAvailability.shouldRequestExactAlarmAccess,
+            showDivider = true,
+        )
+        SettingRow(
+            title = "电池优化",
+            description = if (scheduleReliabilityAvailability.batteryOptimizationMayDelay) {
+                "系统省电策略可能延迟后台恢复，可在系统设置中检查 Dawn Course"
+            } else {
+                "Dawn Course 当前不受电池优化限制"
+            },
+            icon = { Icon(Icons.Default.BatterySaver, null) },
+            onClick = if (scheduleReliabilityAvailability.batteryOptimizationMayDelay) {
+                {
+                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    runCatching { context.startActivity(intent) }
+                        .onFailure {
+                            Toast.makeText(context, "无法打开电池优化设置", Toast.LENGTH_SHORT).show()
+                        }
+                }
+            } else {
+                null
+            },
+            showArrow = scheduleReliabilityAvailability.batteryOptimizationMayDelay,
         )
     }
 }

@@ -18,7 +18,8 @@ class SystemScheduleEventPolicyTest {
             "android.intent.action.BOOT_COMPLETED",
             "android.intent.action.MY_PACKAGE_REPLACED",
             "android.intent.action.TIME_SET",
-            "android.intent.action.TIMEZONE_CHANGED"
+            "android.intent.action.TIMEZONE_CHANGED",
+            "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED",
         )
 
         recoveryActions.forEach { action ->
@@ -31,5 +32,13 @@ class SystemScheduleEventPolicyTest {
         assertFalse(SystemScheduleEventPolicy.shouldRestore(null))
         assertFalse(SystemScheduleEventPolicy.shouldRestore("android.intent.action.DATE_CHANGED"))
         assertFalse(SystemScheduleEventPolicy.shouldRestore("com.dawncourse.widget.FORCE_UPDATE"))
+    }
+
+    @Test
+    fun `Manifest 订阅精确闹钟授权变化广播`() {
+        val manifest = java.io.File("src/main/AndroidManifest.xml").readText()
+        assertTrue(
+            manifest.contains("android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED"),
+        )
     }
 }

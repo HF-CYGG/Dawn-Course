@@ -86,6 +86,7 @@ class SettingsViewModel @Inject constructor(
     private val generateIcsUseCase: GenerateIcsUseCase,
     private val calendarExportRepository: CalendarExportRepository,
     private val autoMuteDndAvailabilityReader: AutoMuteDndAvailabilityReader,
+    private val scheduleReliabilityAvailabilityReader: ScheduleReliabilityAvailabilityReader,
 ) : ViewModel() {
 
     private val _credentialBindingEvents = MutableSharedFlow<CredentialBindingUiEvent>(extraBufferCapacity = 1)
@@ -113,6 +114,17 @@ class SettingsViewModel @Inject constructor(
     /** 系统设置返回前后以 ON_RESUME 实时权限为准，但绝不清除 enableAutoMute 期望。 */
     fun refreshAutoMuteDndAvailability() {
         _autoMuteDndCapability.value = autoMuteDndAvailabilityReader.readCapability()
+    }
+
+    private val _scheduleReliabilityAvailability = MutableStateFlow(
+        scheduleReliabilityAvailabilityReader.read(),
+    )
+    val scheduleReliabilityAvailability: StateFlow<ScheduleReliabilityAvailability> =
+        _scheduleReliabilityAvailability.asStateFlow()
+
+    /** 返回设置页后重新读取系统调度能力；读取结果不覆盖任何用户偏好。 */
+    fun refreshScheduleReliabilityAvailability() {
+        _scheduleReliabilityAvailability.value = scheduleReliabilityAvailabilityReader.read()
     }
 
     /** Room 中由 selected_semester_id 指向的当前学期。 */
