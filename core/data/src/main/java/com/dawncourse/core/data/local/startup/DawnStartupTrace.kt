@@ -1,6 +1,7 @@
 package com.dawncourse.core.data.local.startup
 
 import android.os.Trace
+import androidx.annotation.RequiresApi
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Dawn 冷启动关键路径的系统 Trace；任何业务异常都必须闭合对应 section。 */
@@ -83,6 +84,7 @@ internal object DawnStartupTrace {
     }
 
     /** 独立 API 29 调用点，避免 API 26-28 触达异步 Trace 方法。 */
+    @RequiresApi(android.os.Build.VERSION_CODES.Q)
     private object Api29Trace {
         fun beginAsyncSection(label: String, cookie: Int) {
             Trace.beginAsyncSection(label, cookie)
