@@ -37,6 +37,7 @@ class CourseAtomicSaveInstrumentationTest {
             database.courseDao(),
             database,
             Provider { error("scope coordinator is not used by these legacy atomic-save tests") },
+            OperationalDataMutationGate(),
         )
     }
 

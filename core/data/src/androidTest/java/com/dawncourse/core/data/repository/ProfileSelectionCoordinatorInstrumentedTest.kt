@@ -35,6 +35,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -53,6 +56,7 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     private lateinit var activeStore: ActiveProfileSelectionStore
     private lateinit var failingDataStore: WriteThenThrowDataStore
     private lateinit var coordinator: ProfileSelectionCoordinator
+    private lateinit var repairTransactionRunner: CountingProfileSelectionRepairTransactionRunner
 
     @Before
     fun setUp() {
@@ -65,6 +69,7 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         val delegate = PreferenceDataStoreFactory.create(scope = scope) { preferencesFile }
         failingDataStore = WriteThenThrowDataStore(delegate)
         activeStore = ActiveProfileSelectionStore(failingDataStore)
+        repairTransactionRunner = CountingProfileSelectionRepairTransactionRunner(database)
         coordinator = ProfileSelectionCoordinator(
             database = database,
             profileDao = database.timetableProfileDao(),
@@ -74,6 +79,8 @@ class ProfileSelectionCoordinatorInstrumentedTest {
             activeSelectionStore = activeStore,
             legacySemesterSelectionStore = SemesterSelectionStore(failingDataStore),
             credentialsRepository = FakeCredentialsRepository(),
+            mutationGate = OperationalDataMutationGate(),
+            repairTransactionRunner = repairTransactionRunner,
         )
     }
 
@@ -112,6 +119,74 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         val rejected = coordinator.setActiveSemester(second, semesterId)
         assertTrue(rejected is ProfileMutationResult.Rejected)
         assertEquals(null, database.timetableProfileDao().getProfileById(second)?.activeSemesterId)
+    }
+
+    @Test
+    fun invalidActiveSemesterRepairsOnceForMultipleSubscribersAndKeepsEmittingLaterSelectionChanges() = runBlocking {
+        val first = insertProfile("A", 0)
+        val second = insertProfile("B", 1)
+        val secondSemester = insertSemester(second)
+        database.timetableProfileDao().updateActiveSemesterId(first, 999L)
+        activeStore.selectProfile(first)
+        val transactionsBeforeObservation = repairTransactionRunner.transactionCount
+        val firstInitial = CompletableDeferred<Unit>()
+        val secondInitial = CompletableDeferred<Unit>()
+
+        val firstSubscriber = async(Dispatchers.Default) {
+            coordinator.observeActiveContext().onEach { firstInitial.complete(Unit) }.take(3).toList()
+        }
+        val secondSubscriber = async(Dispatchers.Default) {
+            coordinator.observeActiveContext().onEach { secondInitial.complete(Unit) }.take(3).toList()
+        }
+        firstInitial.await()
+        secondInitial.await()
+
+        assertEquals(transactionsBeforeObservation + 1, repairTransactionRunner.transactionCount)
+        assertEquals(null, database.timetableProfileDao().getProfileById(first)?.activeSemesterId)
+
+        coordinator.switch(second)
+        coordinator.setActiveSemester(second, secondSemester)
+
+        val firstContexts = firstSubscriber.await()
+        val secondContexts = secondSubscriber.await()
+        assertEquals(first, firstContexts.first()?.profile?.id)
+        assertEquals(first, secondContexts.first()?.profile?.id)
+        assertEquals(secondSemester, firstContexts.last()?.semester?.id)
+        assertEquals(secondSemester, secondContexts.last()?.semester?.id)
+    }
+
+    @Test
+    fun consistentActiveSemesterDoesNotOpenRepairTransactionOrWriteRepairData() = runBlocking {
+        val profileId = insertProfile("一致课表", 0)
+        val semesterId = insertSemester(profileId)
+        database.timetableProfileDao().updateActiveSemesterId(profileId, semesterId)
+        activeStore.selectProfile(profileId)
+        val transactionsBeforeObservation = repairTransactionRunner.transactionCount
+
+        val activeContext = coordinator.observeActiveContext().firstValue()
+
+        assertEquals(profileId, activeContext?.profile?.id)
+        assertEquals(semesterId, activeContext?.semester?.id)
+        assertEquals(transactionsBeforeObservation, repairTransactionRunner.transactionCount)
+        assertEquals(semesterId, database.timetableProfileDao().getProfileById(profileId)?.activeSemesterId)
+    }
+
+    @Test
+    fun newSubscriberReloadsDaoAndDataStoreAfterPreviousSubscribersStop() = runBlocking {
+        val first = insertProfile("A", 0)
+        val second = insertProfile("B", 1)
+        val firstSemester = insertSemester(first)
+        val secondSemester = insertSemester(second)
+        database.timetableProfileDao().updateActiveSemesterId(first, firstSemester)
+        activeStore.selectProfile(first)
+
+        assertEquals(firstSemester, coordinator.observeActiveContext().firstValue()?.semester?.id)
+        // Waiting past the shared upstream grace period proves replay is not used as a stale manual cache.
+        delay(5_500)
+        coordinator.switch(second)
+        coordinator.setActiveSemester(second, secondSemester)
+
+        assertEquals(secondSemester, coordinator.observeActiveContext().firstValue()?.semester?.id)
     }
 
     @Test
@@ -380,6 +455,7 @@ class ProfileSelectionCoordinatorInstrumentedTest {
         bindingDao = database.syncSourceBindingDao(),
         activeSelectionStore = activeStore,
         profileSelectionCoordinator = coordinator,
+        mutationGate = OperationalDataMutationGate(),
     )
 
     private class FakeCredentialsRepository : CredentialsRepository {
@@ -405,6 +481,18 @@ class ProfileSelectionCoordinatorInstrumentedTest {
                 throw failure
             }
             return updated
+        }
+    }
+
+    /** 保留真实 Room 执行，只统计 Profile 解析专用的修复事务入口。 */
+    private class CountingProfileSelectionRepairTransactionRunner(
+        database: AppDatabase,
+    ) : ProfileSelectionRepairTransactionRunner(database) {
+        var transactionCount = 0
+
+        override suspend fun <T> run(block: suspend () -> T): T {
+            transactionCount++
+            return super.run(block)
         }
     }
 }
