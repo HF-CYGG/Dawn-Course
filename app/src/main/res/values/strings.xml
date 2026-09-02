@@ -6,8 +6,10 @@
     <string name="database_recovery_marker_retry_required">无法持久保存恢复状态。为避免下次启动误用数据库，当前只允许重试保存恢复状态。</string>
     <string name="database_recovery_marker_retry_action">重试保存恢复状态</string>
     <string name="database_recovery_marker_retry_failed">仍无法保存恢复状态，请检查设备存储空间后重试。</string>
-    <string name="update_download_url_unsafe">更新下载地址不安全，已拒绝打开</string>
-    <string name="update_browser_unavailable">未找到浏览器，无法下载</string>
+    <string name="update_install_permission_required">需要允许 Dawn Course 安装未知来源应用，授权后请重新点击“下载并安装”。</string>
+    <string name="update_install_permission_unavailable">无法打开安装授权页，请在系统设置中允许 Dawn Course 安装应用。</string>
+    <string name="update_installer_unavailable">无法打开系统安装器，请稍后重试。</string>
+    <string name="update_package_unavailable">已下载的安装包不存在或不在安全目录中，请重新下载。</string>
     <string name="database_recovery_reason_key">此设备无法使用原数据库密钥。换机或 Keystore 失效时，请从应用自身的备份恢复。</string>
     <string name="database_recovery_reason_data">数据库未通过安全打开或完整性验证，已停止访问并保留原文件。</string>
     <string name="database_recovery_local_backup">从应用备份文件恢复</string>

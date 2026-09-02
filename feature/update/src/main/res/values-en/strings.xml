@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_download_and_install">Download and install</string>
+    <string name="update_downloading">Downloading</string>
+    <string name="update_downloading_percent">Downloading %1$d%%</string>
+    <string name="update_cancel_download">Cancel download</string>
+</resources>

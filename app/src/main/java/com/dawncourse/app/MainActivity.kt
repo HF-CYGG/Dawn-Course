@@ -7,6 +7,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -32,13 +34,15 @@ import com.dawncourse.feature.settings.SettingsScreen
 import com.dawncourse.feature.settings.ProfileManagementScreen
 import com.dawncourse.feature.import_module.QidiAutoSyncScreen
 import com.dawncourse.feature.timetable.TimetableRoute
-import android.net.Uri
 import android.widget.Toast
 import com.dawncourse.feature.update.UpdateDialog
 import com.dawncourse.feature.update.UpdateErrorDialog
 import com.dawncourse.feature.update.UpdateUiState
 import com.dawncourse.feature.update.UpdateViewModel
-import com.dawncourse.feature.update.isValidUpdateDownloadUrl
+import com.dawncourse.feature.update.DownloadedUpdatePackage
+import com.dawncourse.feature.update.InstallHandoffPhase
+import com.dawncourse.feature.update.UpdateInstallAction
+import com.dawncourse.feature.update.UpdateInstaller
 import dagger.hilt.android.AndroidEntryPoint
 
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import com.dawncourse.feature.timetable.CourseEditorScreen
 import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
@@ -58,8 +64,11 @@ import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import com.dawncourse.app.crash.CrashReportDialog
 import com.dawncourse.app.crash.CrashReporter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
@@ -159,6 +168,89 @@ class MainActivity : ComponentActivity() {
             // 全局 UpdateViewModel
             val updateViewModel: UpdateViewModel = hiltViewModel()
             val updateUiState by updateViewModel.uiState.collectAsState()
+
+            // 未知来源授权页返回后继续使用同一份已验证 APK，不重复下载。
+            var pendingUpdateFilePath by rememberSaveable { mutableStateOf<String?>(null) }
+            var pendingUpdateFileName by rememberSaveable { mutableStateOf<String?>(null) }
+            var pendingUpdateSha256 by rememberSaveable { mutableStateOf<String?>(null) }
+            var pendingUpdateVersionCode by rememberSaveable { mutableStateOf<Long?>(null) }
+            var pendingInstallAttemptId by rememberSaveable { mutableStateOf<Long?>(null) }
+            fun clearPendingUpdate() {
+                pendingUpdateFilePath = null
+                pendingUpdateFileName = null
+                pendingUpdateSha256 = null
+                pendingUpdateVersionCode = null
+                pendingInstallAttemptId = null
+            }
+            val systemInstallerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) {
+                // ACTION_VIEW 的结果不能作为安装成败依据；只要旧进程收到返回就恢复可重试入口。
+                val completedAttemptId = pendingInstallAttemptId
+                clearPendingUpdate()
+                completedAttemptId?.let(updateViewModel::restoreAvailableUpdate)
+            }
+            val unknownSourcePermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) {
+                val updatePackage = pendingUpdateFilePath?.let { filePath ->
+                    DownloadedUpdatePackage(
+                        filePath = filePath,
+                        fileName = pendingUpdateFileName.orEmpty(),
+                        expectedSha256 = pendingUpdateSha256.orEmpty(),
+                        expectedVersionCode = pendingUpdateVersionCode ?: -1L
+                    )
+                }
+                val installAttemptId = pendingInstallAttemptId
+                lifecycleScope.launch {
+                    try {
+                        val installAction = updatePackage?.let { packageInfo ->
+                            UpdateInstaller.prepare(this@MainActivity, packageInfo)
+                        }
+                        when (installAction) {
+                            is UpdateInstallAction.LaunchInstaller -> {
+                                if (installAttemptId == null ||
+                                    !updateViewModel.markInstallerPromptLaunched(installAttemptId)
+                                ) {
+                                    return@launch
+                                }
+                                runCatching { systemInstallerLauncher.launch(installAction.intent) }
+                                    .onFailure {
+                                        clearPendingUpdate()
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            getString(R.string.update_installer_unavailable),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        updateViewModel.restoreAvailableUpdate(installAttemptId)
+                                    }
+                            }
+                            is UpdateInstallAction.RequestPermission -> {
+                                clearPendingUpdate()
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    getString(R.string.update_install_permission_required),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                installAttemptId?.let(updateViewModel::restoreAvailableUpdate)
+                            }
+                            UpdateInstallAction.InvalidPackage, null -> {
+                                clearPendingUpdate()
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    getString(R.string.update_package_unavailable),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                installAttemptId?.let(updateViewModel::restoreAvailableUpdate)
+                            }
+                        }
+                    } catch (cancellation: CancellationException) {
+                        clearPendingUpdate()
+                        installAttemptId?.let(updateViewModel::restoreAvailableUpdate)
+                        throw cancellation
+                    }
+                }
+            }
 
             // 读取上一次启动时捕获的崩溃报告（如果有）
             //
@@ -412,32 +504,86 @@ class MainActivity : ComponentActivity() {
                                     UpdateDialog(
                                         info = state.updateInfo,
                                         onDismiss = { updateViewModel.dismissDialog() },
-                                        onUpdate = {
-                                            val url = state.updateInfo.downloadUrl
-                                            if (!isValidUpdateDownloadUrl(url)) {
-                                                android.widget.Toast.makeText(
-                                                    this@MainActivity,
-                                                    getString(R.string.update_download_url_unsafe),
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                                updateViewModel.dismissDialog()
-                                            } else {
-                                                try {
-                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                    startActivity(intent)
-                                                } catch (e: Exception) {
-                                                    android.widget.Toast.makeText(
-                                                        this@MainActivity,
-                                                        getString(R.string.update_browser_unavailable),
-                                                        android.widget.Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                            }
-                                        },
+                                        onUpdate = { updateViewModel.downloadUpdate(state.updateInfo) },
                                         onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) },
                                         isUpdate = true
                                     )
+                                }
+                                is UpdateUiState.Downloading -> {
+                                    UpdateDialog(
+                                        info = state.updateInfo,
+                                        onDismiss = { updateViewModel.dismissDialog() },
+                                        onUpdate = {},
+                                        onIgnore = {},
+                                        isUpdate = true,
+                                        isDownloading = true,
+                                        progressPercent = state.progressPercent
+                                    )
+                                }
+                                is UpdateUiState.ReadyToInstall -> {
+                                    LaunchedEffect(state.updatePackage.filePath) {
+                                        // Android 10+ 不允许后台任意拉起 Activity；等待主界面真正恢复前台。
+                                        lifecycle.currentStateFlow.first { lifecycleState ->
+                                            lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+                                        }
+                                        pendingUpdateFilePath = state.updatePackage.filePath
+                                        pendingUpdateFileName = state.updatePackage.fileName
+                                        pendingUpdateSha256 = state.updatePackage.expectedSha256
+                                        pendingUpdateVersionCode = state.updatePackage.expectedVersionCode
+                                        when (
+                                            val installAction = UpdateInstaller.prepare(
+                                                this@MainActivity,
+                                                state.updatePackage
+                                            )
+                                            ) {
+                                            is UpdateInstallAction.RequestPermission -> {
+                                                val attemptId = updateViewModel.markInstallHandoffStarted(
+                                                    state.updatePackage,
+                                                    InstallHandoffPhase.AWAITING_PERMISSION
+                                                ) ?: return@LaunchedEffect
+                                                pendingInstallAttemptId = attemptId
+                                                runCatching {
+                                                    unknownSourcePermissionLauncher.launch(installAction.intent)
+                                                }.onFailure {
+                                                    clearPendingUpdate()
+                                                    Toast.makeText(
+                                                        this@MainActivity,
+                                                        getString(R.string.update_install_permission_unavailable),
+                                                        Toast.LENGTH_LONG
+                                                    ).show()
+                                                    updateViewModel.restoreAvailableUpdate(attemptId)
+                                                }
+                                            }
+                                            is UpdateInstallAction.LaunchInstaller -> {
+                                                val attemptId = updateViewModel.markInstallHandoffStarted(
+                                                    state.updatePackage,
+                                                    InstallHandoffPhase.INSTALLER_PROMPT_LAUNCHED
+                                                ) ?: return@LaunchedEffect
+                                                pendingInstallAttemptId = attemptId
+                                                runCatching {
+                                                    systemInstallerLauncher.launch(installAction.intent)
+                                                }
+                                                    .onFailure {
+                                                        clearPendingUpdate()
+                                                        Toast.makeText(
+                                                            this@MainActivity,
+                                                            getString(R.string.update_installer_unavailable),
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                        updateViewModel.restoreAvailableUpdate(attemptId)
+                                                    }
+                                            }
+                                            UpdateInstallAction.InvalidPackage -> {
+                                                clearPendingUpdate()
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    getString(R.string.update_package_unavailable),
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                                updateViewModel.restoreAvailableUpdate()
+                                            }
+                                        }
+                                    }
                                 }
                                 is UpdateUiState.VersionInfo -> {
                                     UpdateDialog(

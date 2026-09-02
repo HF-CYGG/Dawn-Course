@@ -27,6 +27,43 @@ data class TimetableLayoutItem(
  */
 object TimetableLayoutEngine {
 
+    private const val TEACHING_CLASS_MARKER = " 教学班:"
+    private val LEGACY_TEACHER_CONFIRMATION_MARKERS = listOf(
+        " 教学班组成:",
+        " 考核方式:",
+        " 课程学时组成:"
+    )
+
+    /** 当前周同一课程的业务语义，用于忽略历史存储记录的身份差异。 */
+    private data class CurrentWeekCourseSemanticKey(
+        val semesterId: Long,
+        val name: String,
+        val teacher: String,
+        val location: String,
+        val dayOfWeek: Int,
+        val startSection: Int,
+        val duration: Int,
+        val startWeek: Int,
+        val endWeek: Int,
+        val weekType: Int,
+        val isModified: Boolean,
+        val note: String
+    )
+
+    private fun legacyCompatibleTeacher(teacher: String): String {
+        val teachingClassMarkerIndex = teacher.indexOf(TEACHING_CLASS_MARKER)
+        if (teachingClassMarkerIndex <= 0) return teacher
+
+        val suffix = teacher.substring(teachingClassMarkerIndex + TEACHING_CLASS_MARKER.length)
+        return if (LEGACY_TEACHER_CONFIRMATION_MARKERS.any { it in suffix }) {
+            teacher.substring(0, teachingClassMarkerIndex)
+        } else {
+            teacher
+        }
+    }
+
+    private fun legacyCompatibleLocation(location: String): String = location.removePrefix("本部 ")
+
     /**
      * 计算布局项列表
      *
@@ -78,7 +115,24 @@ object TimetableLayoutEngine {
             }
 
             if (currentWeekCourses.isNotEmpty()) {
-                currentWeekCourses.forEach { list.add(it to true) }
+                currentWeekCourses
+                    .distinctBy { course ->
+                        CurrentWeekCourseSemanticKey(
+                            semesterId = course.semesterId,
+                            name = course.name,
+                            teacher = legacyCompatibleTeacher(course.teacher),
+                            location = legacyCompatibleLocation(course.location),
+                            dayOfWeek = course.dayOfWeek,
+                            startSection = course.startSection,
+                            duration = course.duration,
+                            startWeek = course.startWeek,
+                            endWeek = course.endWeek,
+                            weekType = course.weekType,
+                            isModified = course.isModified,
+                            note = course.note
+                        )
+                    }
+                    .forEach { list.add(it to true) }
             } else if (!hideNonThisWeek) {
                 group.maxByOrNull { it.id }?.let { list.add(it to false) }
             }

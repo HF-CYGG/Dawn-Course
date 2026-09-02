@@ -48,7 +48,7 @@ enum class UpdateType(val label: String, val colorHex: Long) {
  * @property content 更新内容详情
  * @property downloadUrl 安装包下载地址
  * @property releaseDate 发布日期
- * @property sha256 文件校验值（可选）
+ * @property sha256 文件校验值；解析层允许为空，但应用内下载安装会强制要求合法值
  * @property type 更新类型，默认为标准更新
  */
 data class UpdateInfo(

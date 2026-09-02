@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_download_and_install">下载并安装</string>
+    <string name="update_downloading">下载中</string>
+    <string name="update_downloading_percent">下载中 %1$d%%</string>
+    <string name="update_cancel_download">取消下载</string>
+</resources>

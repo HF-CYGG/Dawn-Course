@@ -1,8 +1,14 @@
 package com.dawncourse.feature.update
 
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import retrofit2.Retrofit
+import retrofit2.Callback
+import retrofit2.Response
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
+import retrofit2.http.Headers
+import retrofit2.http.Url
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +16,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import retrofit2.Call
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * 更新检查 API 接口定义
@@ -20,8 +28,12 @@ interface UpdateApi {
      * 获取最新版本信息
      * 请求 version.json 文件
      */
-    @GET("version.json")
-    fun getUpdateInfo(): Call<UpdateInfo>
+    @Headers(
+        "Accept: application/vnd.github.raw+json",
+        "X-GitHub-Api-Version: 2022-11-28"
+    )
+    @GET
+    fun getUpdateInfo(@Url endpointUrl: String): Call<UpdateInfo>
 }
 
 /**
@@ -30,11 +42,13 @@ interface UpdateApi {
  *
  * 主要职责：
  * 1. 封装 Retrofit 网络请求
- * 2. 只使用已确认的 HTTPS 元数据入口
+ * 2. 优先请求固定的自建元数据节点，并在失败时顺序降级
  * 3. 统一异常处理，返回 Result 类型
  */
 @Singleton
-class UpdateRepository @Inject constructor() {
+class UpdateRepository @Inject constructor(
+    private val packageDownloader: UpdatePackageDownloader
+) {
     /**
      * 检查更新失败异常（可恢复）
      *
@@ -48,53 +62,63 @@ class UpdateRepository @Inject constructor() {
         cause: Throwable? = null
     ) : Exception(userMessage, cause)
 
-    // 配置 OkHttpClient，设置超时和连接规格
-    private val client = OkHttpClient.Builder()
+    // 基础客户端集中保留连接规格；每个元数据节点在创建 Retrofit 时设置自己的总超时。
+    private val baseClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
         .readTimeout(15, TimeUnit.SECONDS)
-        // 独立更新服务器可能使用较旧 TLS 配置，因此客户端需同时兼容现代 TLS 与兼容 TLS。
+        // 默认仍只允许 TLS；创建具体节点客户端时才对白名单自建入口开放 HTTP。
         .connectionSpecs(buildUpdateConnectionSpecs())
         .build()
 
     /**
      * 创建 Retrofit API 实例
-     * @param baseUrl 基础 URL
+     * @param endpoint 节点地址与总请求超时
      */
-    private fun createApi(baseUrl: String): UpdateApi {
+    private fun createApi(endpoint: UpdateEndpointConfig): UpdateApi {
+        val endpointClient = baseClient.newBuilder()
+            .callTimeout(endpoint.requestTimeoutSeconds, TimeUnit.SECONDS)
+            .connectionSpecs(buildUpdateMetadataConnectionSpecs(endpoint))
+            .build()
         return Retrofit.Builder()
-            .baseUrl(baseUrl)
-            .client(client)
+            .baseUrl(endpoint.baseUrl)
+            .client(endpointClient)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(UpdateApi::class.java)
     }
 
     private val endpointConfigs = buildUpdateEndpointConfigs()
-    // 更新元数据只保留一个经确认的 HTTPS 入口。
-    private val primaryEndpoint by lazy { endpointConfigs[0] }
-    private val primaryApi by lazy { createApi(primaryEndpoint.baseUrl) }
 
     /**
      * 检查更新
-     * 仅请求已确认的 HTTPS 元数据入口；请求成功也必须通过下载链接校验后才返回成功。
+     * 按顺序请求写死的可信元数据入口；请求成功也必须通过下载链接和哈希校验。
      *
      * @return Result<UpdateInfo> 更新信息结果封装
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         try {
-            val body = requestUpdateInfo(primaryApi, primaryEndpoint.label, "${primaryEndpoint.baseUrl}version.json")
+            val body = resolveUpdateInfoFromEndpoints(endpointConfigs) { endpoint ->
+                requestUpdateInfo(
+                    api = createApi(endpoint),
+                    endpointLabel = endpoint.label,
+                    endpointUrl = endpoint.versionInfoUrl
+                )
+            }
             return@withContext Result.success(body)
-        } catch (failure: UpdateEndpointRequestException) {
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: UpdateEndpointsExhaustedException) {
             val exception = UpdateCheckException(
                 userMessage = "检查更新失败，请稍后重试",
-                debugDetails = listOf(failure),
-                cause = failure
+                debugDetails = failure.failures,
+                cause = failure.failures.lastOrNull() ?: failure
             )
             return@withContext Result.failure(exception)
         } catch (failure: Throwable) {
+            val endpoint = endpointConfigs.first()
             val endpointFailure = UpdateEndpointRequestException(
-                endpointLabel = primaryEndpoint.label,
-                endpointUrl = "${primaryEndpoint.baseUrl}version.json",
+                endpointLabel = endpoint.label,
+                endpointUrl = endpoint.versionInfoUrl,
                 stage = "request",
                 detail = failure.message ?: "unknown_error",
                 cause = failure
@@ -109,37 +133,95 @@ class UpdateRepository @Inject constructor() {
     }
 
     /**
+     * 在应用私有目录下载并验证更新 APK。
+     *
+     * 下载取消必须继续向上传播，避免用户关闭弹窗后仍在后台写文件。
+     */
+    suspend fun downloadUpdate(
+        updateInfo: UpdateInfo,
+        onProgress: (Int?) -> Unit
+    ): Result<DownloadedUpdatePackage> {
+        return try {
+            Result.success(packageDownloader.download(updateInfo, onProgress))
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            Result.failure(failure)
+        }
+    }
+
+    /**
      * 执行一次更新信息请求，并在失败时返回带节点上下文的异常。
      */
-    private fun requestUpdateInfo(api: UpdateApi, endpointLabel: String, endpointUrl: String): UpdateInfo {
-        try {
-            val response = api.getUpdateInfo().execute()
-            val body = response.body()
-            if (response.isSuccessful && body != null) {
-                return validateUpdateInfo(body)
-                    ?: throw UpdateEndpointRequestException(
+    private suspend fun requestUpdateInfo(
+        api: UpdateApi,
+        endpointLabel: String,
+        endpointUrl: String
+    ): UpdateInfo = suspendCancellableCoroutine { continuation ->
+        val call = try {
+            api.getUpdateInfo(endpointUrl)
+        } catch (failure: Exception) {
+            continuation.resumeWithException(
+                UpdateEndpointRequestException(
+                    endpointLabel = endpointLabel,
+                    endpointUrl = endpointUrl,
+                    stage = "request",
+                    detail = failure.message ?: "unknown_error",
+                    cause = failure
+                )
+            )
+            return@suspendCancellableCoroutine
+        }
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback<UpdateInfo> {
+            override fun onResponse(call: Call<UpdateInfo>, response: Response<UpdateInfo>) {
+                if (!continuation.isActive) return
+                val body = response.body()
+                val actualResponseUrl = response.raw().request.url.toString()
+                val result = when {
+                    !isExpectedUpdateMetadataResponseUrl(endpointUrl, actualResponseUrl) -> Result.failure(
+                        UpdateEndpointRequestException(
+                            endpointLabel = endpointLabel,
+                            endpointUrl = endpointUrl,
+                            stage = "redirect",
+                            detail = "更新元数据响应离开了预期来源或协议"
+                        )
+                    )
+                    !response.isSuccessful || body == null -> Result.failure(
+                        UpdateEndpointRequestException(
+                            endpointLabel = endpointLabel,
+                            endpointUrl = endpointUrl,
+                            stage = "http",
+                            detail = "HTTP ${response.code()}（响应为空或状态异常）"
+                        )
+                    )
+                    else -> validateUpdateInfo(body)?.let(Result.Companion::success) ?: Result.failure(
+                        UpdateEndpointRequestException(
+                            endpointLabel = endpointLabel,
+                            endpointUrl = endpointUrl,
+                            stage = "validation",
+                            detail = "更新元数据中的下载链接或 SHA-256 未通过安全校验"
+                        )
+                    )
+                }
+                result.fold(
+                    onSuccess = continuation::resume,
+                    onFailure = continuation::resumeWithException
+                )
+            }
+
+            override fun onFailure(call: Call<UpdateInfo>, failure: Throwable) {
+                if (!continuation.isActive) return
+                continuation.resumeWithException(
+                    UpdateEndpointRequestException(
                         endpointLabel = endpointLabel,
                         endpointUrl = endpointUrl,
-                        stage = "validation",
-                        detail = "更新元数据中的下载链接未通过 HTTPS 安全校验"
+                        stage = "request",
+                        detail = failure.message ?: "unknown_error",
+                        cause = failure
                     )
+                )
             }
-            throw UpdateEndpointRequestException(
-                endpointLabel = endpointLabel,
-                endpointUrl = endpointUrl,
-                stage = "http",
-                detail = "HTTP ${response.code()}（响应为空或状态异常）"
-            )
-        } catch (e: UpdateEndpointRequestException) {
-            throw e
-        } catch (e: Throwable) {
-            throw UpdateEndpointRequestException(
-                endpointLabel = endpointLabel,
-                endpointUrl = endpointUrl,
-                stage = "request",
-                detail = e.message ?: "unknown_error",
-                cause = e
-            )
-        }
+        })
     }
 }
