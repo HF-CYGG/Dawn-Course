@@ -11,6 +11,7 @@ import com.dawncourse.core.domain.model.LocalBackupData
 import com.dawncourse.core.domain.model.WebDavBackup
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -58,9 +59,14 @@ enum class DatabaseRecoveryActionFailure {
 /** 不依赖 AppDatabase 的恢复输入读取器。 */
 internal class DatabaseRecoveryBackupReader(
     private val context: Context,
-    private val client: OkHttpClient = OkHttpClient()
+    private val clientFactory: () -> OkHttpClient = ::OkHttpClient,
+    private val gsonFactory: () -> Gson = { GsonBuilder().create() },
 ) {
-    private val gson = GsonBuilder().create()
+    /** 恢复页仅在用户实际选择 WebDAV 恢复时创建网络客户端。 */
+    private val client: OkHttpClient by lazy(clientFactory)
+
+    /** 本地或 WebDAV 恢复真正开始解析备份时才创建 JSON 解析器。 */
+    private val gson: Gson by lazy(gsonFactory)
 
     /** SAF 只读取当前用户选择的 URI，并限制最大字节数。 */
     fun readLocal(uri: Uri): Result<ValidatedBackupRestore> = runCatching {

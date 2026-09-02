@@ -162,37 +162,46 @@ class DatabaseStartupRuntime @Inject constructor(
     /** 外层锁已持有；这里不得等待 UI 或发起需要用户输入的操作。 */
     private fun initializeWhileLocked(): DatabaseStartupInitialization<AppDatabase> {
         DawnStartupTrace.section(DawnStartupTrace.RECOVERY_CHECK) {
-            when (recoveryBootstrap.recoverInterruptedInstall()) {
-                DatabaseRecoveryInstallRecovery.FAILED -> {
-                    return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
-                }
-                DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE -> {
-                    if (recoveryFiles.readRecoveryReason() == null) {
+            // 常态冷启动只扫描每个 marker 所在目录一次。任何已有 marker 或目录无法可靠读取
+            // 时，都必须完整执行原有顺序，不能因优化遗漏 journal、恢复页状态或补偿 marker。
+            if (
+                DatabaseStartupRecoveryMarkerSnapshot.capture(
+                    noBackupFilesDirectory = context.noBackupFilesDir,
+                    databaseFile = databaseFile,
+                ).requiresFullRecoveryCheck
+            ) {
+                when (recoveryBootstrap.recoverInterruptedInstall()) {
+                    DatabaseRecoveryInstallRecovery.FAILED -> {
                         return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
                     }
+                    DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE -> {
+                        if (recoveryFiles.readRecoveryReason() == null) {
+                            return enterRecovery(DatabaseRecoveryReason.RecoveryStateCorrupt)
+                        }
+                    }
+                    DatabaseRecoveryInstallRecovery.NO_WORK,
+                    DatabaseRecoveryInstallRecovery.COMMITTED -> Unit
                 }
-                DatabaseRecoveryInstallRecovery.NO_WORK,
-                DatabaseRecoveryInstallRecovery.COMMITTED -> Unit
-            }
-            recoveryFiles.readRecoveryReason()?.let { reason ->
-                val reconciled = runCatching {
-                    recoveryFiles.ensureQuarantined()
-                    reason
-                }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
-                return DatabaseStartupInitialization.RecoveryRequired(reconciled)
-            }
-            if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
-                return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
-            }
-            // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
-            // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
-            //
-            // 位置必须在上面两步之后：先让 readRecoveryReason 的既有恢复原因优先（避免重复
-            // 隔离），再让 recoverIncompleteMigration 把可能半迁移的文件集收敛为一致的主库，
-            // 然后才隔离它。标记在恢复动作提交成功后由 DatabaseRecoveryBootstrapCoordinator
-            // 与 recoveryFiles marker 一并清除。
-            if (backupRecoveryRequiredStore.isRequired()) {
-                return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
+                recoveryFiles.readRecoveryReason()?.let { reason ->
+                    val reconciled = runCatching {
+                        recoveryFiles.ensureQuarantined()
+                        reason
+                    }.getOrElse { DatabaseRecoveryReason.RecoveryStateCorrupt }
+                    return DatabaseStartupInitialization.RecoveryRequired(reconciled)
+                }
+                if (migrationFiles.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
+                    return enterRecovery(DatabaseRecoveryReason.CrashRecoveryFailed)
+                }
+                // 备份恢复补偿失败：结构可能有效但内容不一致的数据库不得直接打开使用，强制进入
+                // 恢复流程（写入 recoveryFiles 标记并隔离主库，与其它恢复原因完全同构）。
+                //
+                // 位置必须在上面两步之后：先让 readRecoveryReason 的既有恢复原因优先（避免重复
+                // 隔离），再让 recoverIncompleteMigration 把可能半迁移的文件集收敛为一致的主库，
+                // 然后才隔离它。标记在恢复动作提交成功后由 DatabaseRecoveryBootstrapCoordinator
+                // 与 recoveryFiles marker 一并清除。
+                if (backupRecoveryRequiredStore.isRequired()) {
+                    return enterRecovery(DatabaseRecoveryReason.RestoreFailed)
+                }
             }
         }
 
@@ -340,6 +349,44 @@ class DatabaseStartupRuntime @Inject constructor(
         const val DATABASE_NAME = "dawn_course.db"
         private const val DEFAULT_PROFILE_ID = 1L
         private const val DEFAULT_PROFILE_NAME = "默认课表"
+    }
+}
+
+/**
+ * 恢复检查的常态快速路径。
+ *
+ * 只识别既有启动顺序会读取的 base marker；AtomicFile 的残留备份从未被旧逻辑单独视为
+ * 有效 marker，因此不能在这里扩大恢复条件。目录不可读取时保守回退完整检查。
+ */
+internal data class DatabaseStartupRecoveryMarkerSnapshot(
+    val requiresFullRecoveryCheck: Boolean,
+) {
+    companion object {
+        fun capture(
+            noBackupFilesDirectory: File,
+            databaseFile: File,
+        ): DatabaseStartupRecoveryMarkerSnapshot {
+            val recoveryEntries = readDirectoryNames(File(noBackupFilesDirectory, "database-recovery"))
+            val backupEntries = readDirectoryNames(File(noBackupFilesDirectory, "recovery"))
+            val databaseEntries = readDirectoryNames(requireNotNull(databaseFile.parentFile))
+            if (recoveryEntries == null || backupEntries == null || databaseEntries == null) {
+                return DatabaseStartupRecoveryMarkerSnapshot(requiresFullRecoveryCheck = true)
+            }
+            return DatabaseStartupRecoveryMarkerSnapshot(
+                requiresFullRecoveryCheck =
+                    "bootstrap-install-v1" in recoveryEntries ||
+                        "recovery-state-v1" in recoveryEntries ||
+                        "backup_restore_required" in backupEntries ||
+                        "${databaseFile.name}.sqlcipher-migration.journal" in databaseEntries,
+            )
+        }
+
+        /** 不存在的目录等价于空快照；其它异常一律返回 null 以保守走完整恢复检查。 */
+        private fun readDirectoryNames(directory: File): Set<String>? = when {
+            !directory.exists() -> emptySet()
+            !directory.isDirectory -> null
+            else -> directory.listFiles()?.mapTo(mutableSetOf(), File::getName)
+        }
     }
 }
 

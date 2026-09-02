@@ -216,16 +216,18 @@ class MainActivity : ComponentActivity() {
                         // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
                         // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
                         runCatching {
-                            ReminderScheduler.triggerImmediateWork(
-                                applicationContext,
-                                forceReplay = false
-                            )
-                            // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
-                            WidgetSyncManager.updateWidgetNow(applicationContext)
-                            if (scheduleRevision.hasEnabledSystemSchedule) {
-                                ReminderScheduler.scheduleDailyWork(applicationContext)
-                            } else {
-                                ReminderScheduler.cancelWork(applicationContext)
+                            runStartupBackgroundWork {
+                                ReminderScheduler.triggerImmediateWork(
+                                    applicationContext,
+                                    forceReplay = false,
+                                )
+                                // Profile、学期或课程切换必须与系统触发器同时收敛，避免 Widget 暂留旧课表。
+                                WidgetSyncManager.updateWidgetNow(applicationContext)
+                                if (scheduleRevision.hasEnabledSystemSchedule) {
+                                    ReminderScheduler.scheduleDailyWork(applicationContext)
+                                } else {
+                                    ReminderScheduler.cancelWork(applicationContext)
+                                }
                             }
                         }.onFailure {
                             android.util.Log.w(
@@ -245,7 +247,9 @@ class MainActivity : ComponentActivity() {
                         settings.webDavAutoSyncIntervalUnit
                     ) {
                         runCatching {
-                            WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                            runStartupBackgroundWork {
+                                WebDavAutoSyncScheduler.schedule(applicationContext, settings)
+                            }
                         }.onFailure {
                             android.util.Log.w(
                                 "MainActivity",

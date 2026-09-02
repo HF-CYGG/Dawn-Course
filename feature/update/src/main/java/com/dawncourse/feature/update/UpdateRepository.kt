@@ -34,7 +34,20 @@ interface UpdateApi {
  * 3. 统一异常处理，返回 Result 类型
  */
 @Singleton
-class UpdateRepository @Inject constructor() {
+open class UpdateHttpClientFactory @Inject constructor() {
+    /** 创建更新检查专用客户端，允许旧 TLS 服务端在 HTTPS 前提下保持兼容。 */
+    open fun create(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .connectionSpecs(buildUpdateConnectionSpecs())
+        .build()
+}
+
+@Singleton
+class UpdateRepository @Inject constructor(
+    private val clientFactory: UpdateHttpClientFactory,
+) {
+
     /**
      * 检查更新失败异常（可恢复）
      *
@@ -48,25 +61,15 @@ class UpdateRepository @Inject constructor() {
         cause: Throwable? = null
     ) : Exception(userMessage, cause)
 
-    // 配置 OkHttpClient，设置超时和连接规格
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
-        .readTimeout(15, TimeUnit.SECONDS)
-        // 独立更新服务器可能使用较旧 TLS 配置，因此客户端需同时兼容现代 TLS 与兼容 TLS。
-        .connectionSpecs(buildUpdateConnectionSpecs())
-        .build()
+    /** 仅在首次更新检查构建 Retrofit 时创建，避免 Hilt 图构造阻塞冷启动。 */
+    private val client: OkHttpClient by lazy(clientFactory::create)
 
     /**
      * 创建 Retrofit API 实例
      * @param baseUrl 基础 URL
      */
     private fun createApi(baseUrl: String): UpdateApi {
-        return Retrofit.Builder()
-            .baseUrl(baseUrl)
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(UpdateApi::class.java)
+        return buildUpdateApi(baseUrl, client)
     }
 
     private val endpointConfigs = buildUpdateEndpointConfigs()
@@ -143,3 +146,11 @@ class UpdateRepository @Inject constructor() {
         }
     }
 }
+
+/** 创建 Retrofit API；调用方已在惰性 client 首次访问后才会进入该方法。 */
+private fun buildUpdateApi(baseUrl: String, client: OkHttpClient): UpdateApi = Retrofit.Builder()
+    .baseUrl(baseUrl)
+    .client(client)
+    .addConverterFactory(GsonConverterFactory.create())
+    .build()
+    .create(UpdateApi::class.java)

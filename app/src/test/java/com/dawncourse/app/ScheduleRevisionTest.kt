@@ -4,8 +4,15 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.model.Semester
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -116,5 +123,37 @@ class ScheduleRevisionTest {
         )
 
         assertNotEquals(first, second)
+    }
+
+    @Test
+    fun `调度版本的课程映射在默认计算调度器上执行`() = runBlocking {
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "schedule-revision-test")
+        }
+        val dispatcher = executor.asCoroutineDispatcher()
+        var upstreamThreadName: String? = null
+
+        try {
+            val result = scheduleRevisionFlow(
+                settings = flow {
+                    upstreamThreadName = Thread.currentThread().name
+                    emit(settings)
+                },
+                activeSemesterSchedule = flowOf(
+                    ActiveSemesterSchedule(
+                        profileId = semester.profileId,
+                        semester = semester,
+                        courses = listOf(course),
+                    )
+                ),
+                computationDispatcher = dispatcher,
+            ).first()
+
+            assertTrue(result is MainUiState.Success)
+            assertTrue(upstreamThreadName?.contains("schedule-revision-test") == true)
+        } finally {
+            dispatcher.close()
+            executor.shutdownNow()
+        }
     }
 }

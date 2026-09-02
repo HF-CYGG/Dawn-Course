@@ -15,12 +15,15 @@ import com.dawncourse.feature.timetable.notification.MuteSessionRecord
 import com.dawncourse.core.domain.model.TriggerKey
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -177,6 +180,23 @@ internal fun pairActiveSemesterSchedule(
     }
 }
 
+/** 将课程映射和稳定排序放到默认计算调度器，避免首次订阅占用主线程。 */
+internal fun scheduleRevisionFlow(
+    settings: Flow<AppSettings>,
+    activeSemesterSchedule: Flow<ActiveSemesterSchedule>,
+    computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): Flow<MainUiState> = combine(settings, activeSemesterSchedule) { currentSettings, activeSchedule ->
+    MainUiState.Success(
+        settings = currentSettings,
+        scheduleRevision = ScheduleRevision.create(
+            settings = currentSettings,
+            semester = activeSchedule.semester,
+            courses = activeSchedule.courses,
+            profileId = activeSchedule.profileId,
+        )
+    )
+}.flowOn(computationDispatcher)
+
 /**
  * 主 Activity 的 ViewModel
  *
@@ -209,20 +229,10 @@ class MainViewModel @Inject constructor(
         coursesBySemester = courseRepository::getCoursesBySemester
     )
 
-    val uiState: StateFlow<MainUiState> = combine(
-        settingsRepository.settings,
-        activeSemesterSchedule
-    ) { settings, activeSchedule ->
-        MainUiState.Success(
-            settings = settings,
-            scheduleRevision = ScheduleRevision.create(
-                settings = settings,
-                semester = activeSchedule.semester,
-                courses = activeSchedule.courses,
-                profileId = activeSchedule.profileId
-            )
-        )
-    }
+    val uiState: StateFlow<MainUiState> = scheduleRevisionFlow(
+        settings = settingsRepository.settings,
+        activeSemesterSchedule = activeSemesterSchedule,
+    )
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),

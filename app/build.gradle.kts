@@ -51,6 +51,7 @@ android {
 
     buildTypes {
         release {
+            buildConfigField("boolean", "BENCHMARK_MODE", "false")
             // 本地 minified 冒烟显式使用 debug 签名；普通 release 永不自动降级签名。
             signingConfig = signingConfigs.getByName(
                 if (releaseSmokeEnabled.get()) "debug" else "release"
@@ -60,21 +61,25 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
+            buildConfigField("boolean", "BENCHMARK_MODE", "false")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         // Macrobenchmark 使用接近 release 的配置，但只使用本地 debug 签名，绝不用于发布。
         create("benchmark") {
             initWith(getByName("release"))
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         // 以下变体由 Baseline Profile 插件用于生成/验证；仅覆盖签名，关键性能开关由插件控制。
         create("benchmarkRelease") {
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         create("nonMinifiedRelease") {
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
@@ -87,6 +92,7 @@ android {
     // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
