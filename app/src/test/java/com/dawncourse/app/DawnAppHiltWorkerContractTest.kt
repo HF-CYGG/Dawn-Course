@@ -39,7 +39,8 @@ class DawnAppHiltWorkerContractTest {
 
         assertTrue(source.contains("StartupSnapshotRuntime"))
         assertTrue(source.contains("startupSnapshotRuntime.start()"))
-        assertTrue(source.contains("startupSnapshotRuntime.invalidate()"))
+        assertTrue(source.contains("invalidateSnapshot = startupSnapshotRuntime::invalidate"))
+        assertTrue(source.contains("WidgetSyncManager.enterRecoveryState"))
         assertTrue(
             source.indexOf("startupSnapshotRuntime.start()") <
                 source.indexOf("databaseStartupRuntime.start()")

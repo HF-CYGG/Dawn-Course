@@ -5,6 +5,7 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
+import com.dawncourse.feature.widget.policy.WidgetTimelineBoundaryPolicy
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -131,7 +132,7 @@ class WidgetTimelineBuilder @Inject constructor(
                 emptyMessage
             },
             isBeforeSemesterStart = isBeforeSemesterStart,
-            nextUpdateMillis = computeNextCourseEndMillis(courses, sectionTimes, today, now),
+            nextUpdateMillis = computeNextCourseBoundaryMillis(courses, sectionTimes, today, now),
             sourceCourseCount = allCourses.size
             )
         )
@@ -225,24 +226,19 @@ class WidgetTimelineBuilder @Inject constructor(
         return now.isBefore(endTime)
     }
 
-    private fun computeNextCourseEndMillis(
+    private fun computeNextCourseBoundaryMillis(
         courses: List<Course>,
         sectionTimes: List<SectionTime>,
         today: LocalDate,
         now: LocalTime
-    ): Long? {
-        if (courses.isEmpty() || sectionTimes.isEmpty()) return null
-        val nextEndTime = courses.mapNotNull { course ->
-            val endSectionIndex = course.startSection + course.duration - 2
-            sectionTimes.getOrNull(endSectionIndex)?.endTime
-                ?.let(::parseSectionTime)
-                ?.takeIf { it.isAfter(now) }
-        }.minOrNull() ?: return null
-        val triggerAt = today.atTime(nextEndTime)
-            .atZone(ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
-        return triggerAt.takeIf { it > Instant.now().toEpochMilli() }
+    ): Long? = ZoneId.systemDefault().let { zoneId ->
+        WidgetTimelineBoundaryPolicy.nextFutureBoundaryMillis(
+            courses = courses,
+            sectionTimes = sectionTimes,
+            today = today,
+            zoneId = zoneId,
+            nowMillis = today.atTime(now).atZone(zoneId).toInstant().toEpochMilli(),
+        )
     }
 
     private fun parseSectionTime(value: String): LocalTime? {
@@ -252,8 +248,8 @@ class WidgetTimelineBuilder @Inject constructor(
         if (parts.size == 2) {
             val hour = parts[0].toIntOrNull()
             val minute = parts[1].toIntOrNull()
-            if (hour == 24 && minute != null && minute in 0..59) {
-                return LocalTime.of(23, 59)
+            if (hour == 24) {
+                return if (minute == 0) LocalTime.MAX else null
             }
         }
         val formatters = listOf(

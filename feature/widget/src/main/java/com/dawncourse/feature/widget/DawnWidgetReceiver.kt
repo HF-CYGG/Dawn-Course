@@ -2,10 +2,17 @@ package com.dawncourse.feature.widget
 
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import com.dawncourse.feature.widget.policy.WidgetBroadcastAction
+import com.dawncourse.feature.widget.policy.WidgetBroadcastActionPolicy
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Widget 广播接收器
@@ -17,13 +24,29 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = DawnWidget()
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == "com.dawncourse.widget.FORCE_UPDATE" ||
-            intent.action == Intent.ACTION_TIME_CHANGED ||
-            intent.action == Intent.ACTION_DATE_CHANGED ||
-            intent.action == Intent.ACTION_TIMEZONE_CHANGED) {
-            // 包括 DATE_CHANGED 在内的所有系统更新入口均先判定 Widget 实例。
-            runCatching { WidgetSyncManager.restoreAfterSystemEvent(context) }
-                .onFailure { Log.w(TAG, "widget system-event restore failed", it) }
+        when (WidgetBroadcastActionPolicy.resolve(intent.action)) {
+            WidgetBroadcastAction.RESTORE_AFTER_SYSTEM_EVENT -> {
+                runCatching { WidgetSyncManager.restoreAfterSystemEvent(context) }
+                    .onFailure { Log.w(TAG, "widget system-event restore failed", it) }
+            }
+            WidgetBroadcastAction.REFRESH_WIDGET_CONTENT -> {
+                val pendingResult = goAsync()
+                val appContext = context.applicationContext
+                receiverScope.launch {
+                    try {
+                        WidgetSyncManager.enqueueImmediateWidgetUpdateAndAwait(appContext)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (failure: Throwable) {
+                        Log.w(TAG, "persist widget content refresh failed", failure)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                // 本分支独占 PendingResult；不得再委托 Glance 触发第二次 goAsync()。
+                return
+            }
+            WidgetBroadcastAction.DELEGATE_TO_GLANCE -> Unit
         }
         super.onReceive(context, intent)
     }
@@ -38,15 +61,10 @@ class DawnWidgetReceiver : GlanceAppWidgetReceiver() {
         super.onDisabled(context)
         runCatching { WidgetSyncManager.cancelUpdate(context) }
             .onFailure { Log.w(TAG, "widget work cancellation failed", it) }
-        
-        // 当用户移除所有 Widget 实例时，主动取消“午夜刷新”闹钟：
-        // - 避免无 Widget 时仍每天触发闹钟唤醒
-        // - 减少后台开销，符合“本地优先/长期维护”的资源控制原则
-        runCatching { MidnightUpdateReceiver.cancelNextMidnightUpdate(context) }
-            .onFailure { Log.w(TAG, "midnight alarm cancellation failed", it) }
     }
 
     private companion object {
         private const val TAG = "DawnWidgetReceiver"
+        private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

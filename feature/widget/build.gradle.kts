@@ -67,4 +67,6 @@ dependencies {
 
     // Widget 恢复策略的纯 JVM 单元测试。
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

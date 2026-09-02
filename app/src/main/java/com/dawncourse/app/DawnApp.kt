@@ -2,6 +2,7 @@ package com.dawncourse.app
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.startup.AppInitializer
 import androidx.work.Configuration
@@ -10,6 +11,7 @@ import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
 import com.dawncourse.core.data.local.startup.DatabaseRuntimeState
 import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
+import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,7 +78,16 @@ class DawnApp : Application(), Configuration.Provider {
                         if (state is DatabaseRuntimeState.RecoveryRequired ||
                             state == DatabaseRuntimeState.StartupBlocked
                         ) {
-                            startupSnapshotRuntime.invalidate()
+                            DatabaseRecoverySurfaceTransition.execute(
+                                publishSafeSystemSurface = {
+                                    runCatching {
+                                        WidgetSyncManager.enterRecoveryState(this@DawnApp)
+                                    }.onFailure { failure ->
+                                        Log.w(TAG, "enter recovery-safe Widget state failed", failure)
+                                    }
+                                },
+                                invalidateSnapshot = startupSnapshotRuntime::invalidate,
+                            )
                         }
                     }
                 }
@@ -102,6 +113,7 @@ class DawnApp : Application(), Configuration.Provider {
     }
 
     companion object {
+        private const val TAG = "DawnApp"
         private val hiltWorkerFactoryInitializationGate = DawnAppInitializationGate()
 
         /** 供仅 benchmark 源集的 Provider 等待完整的 Application 初始化。 */
@@ -110,4 +122,5 @@ class DawnApp : Application(), Configuration.Provider {
         ): DawnAppInitializationGate.AwaitResult =
             hiltWorkerFactoryInitializationGate.await(timeoutMillis)
     }
+
 }
