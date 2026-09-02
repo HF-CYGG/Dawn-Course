@@ -104,6 +104,61 @@ class DatabaseStartupRuntime @Inject constructor(
     /** 用户二次确认后放弃不可访问数据并创建空加密库。 */
     suspend fun abandonInaccessibleData(): DatabaseRecoveryActionResult = recoveryBootstrap.abandon()
 
+    /**
+     * 备份补偿失败后的在线 fail-closed 入口：先持久 marker，再撤销当前进程的业务访问。
+     * 物理移动数据库只能由受控重启后的冷启动流程执行。
+     */
+    internal suspend fun enterBackupRestoreRecovery(): BackupRecoveryActivation {
+        val activation = try {
+            backupRecoveryRequiredStore.markRequired()
+            check(backupRecoveryRequiredStore.isRequired()) {
+                "恢复保护标记未能确认写入"
+            }
+            BackupRecoveryActivation.MarkerPersisted
+        } catch (failure: Throwable) {
+            BackupRecoveryActivation.MarkerPersistenceFailed(failure)
+        }
+        enterBackupRestoreRecovery(activation)
+        return activation
+    }
+
+    /**
+     * 由已持有写入 lease 的恢复协议在 marker 状态已经明确后调用。
+     *
+     * 不在此处再次落盘，避免“标记已预置但二次写入失败”把 Runtime 错误地切到
+     * MARKER_RETRY_REQUIRED；RESTART_REQUIRED 的前提就是调用方已经验证 marker 存在。
+     */
+    internal fun enterBackupRestoreRecovery(activation: BackupRecoveryActivation) {
+        controller.enterRuntimeRecovery(
+            reason = DatabaseRecoveryReason.RestoreFailed,
+            entryMode = when (activation) {
+                BackupRecoveryActivation.MarkerPersisted -> DatabaseRecoveryEntryMode.RESTART_REQUIRED
+                is BackupRecoveryActivation.MarkerPersistenceFailed -> {
+                    DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED
+                }
+            },
+        )
+    }
+
+    /** marker 首次写入失败时，只允许从阻塞恢复页重试这一动作。 */
+    suspend fun retryBackupRestoreRecoveryMarker(): Boolean {
+        val state = state.value as? DatabaseRuntimeState.RecoveryRequired ?: return false
+        if (state.entryMode != DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED) return false
+        return try {
+            backupRecoveryRequiredStore.markRequired()
+            check(backupRecoveryRequiredStore.isRequired()) {
+                "恢复保护标记未能确认写入"
+            }
+            controller.enterRuntimeRecovery(
+                reason = DatabaseRecoveryReason.RestoreFailed,
+                entryMode = DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            )
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /** 外层锁已持有；这里不得等待 UI 或发起需要用户输入的操作。 */
     private fun initializeWhileLocked(): DatabaseStartupInitialization<AppDatabase> {
         when (recoveryBootstrap.recoverInterruptedInstall()) {
@@ -281,6 +336,12 @@ class DatabaseStartupRuntime @Inject constructor(
         private const val DEFAULT_PROFILE_ID = 1L
         private const val DEFAULT_PROFILE_NAME = "默认课表"
     }
+}
+
+/** 补偿失败后在线恢复门禁的持久化结果，marker 失败必须是可判定状态。 */
+internal sealed interface BackupRecoveryActivation {
+    data object MarkerPersisted : BackupRecoveryActivation
+    data class MarkerPersistenceFailed(val failure: Throwable) : BackupRecoveryActivation
 }
 
 /**

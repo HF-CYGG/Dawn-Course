@@ -14,6 +14,8 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
 
 /**
  * 每日提醒调度器（WorkManager）
@@ -69,21 +71,82 @@ object ReminderScheduler {
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
+
+            // 一次性系统/课程边界事件若只成功写入 marker、未成功交给 WorkManager，
+            // 应用启动时立即补投。系统事件需要重放全部 Desired；Surface 事件只需刷新状态。
+            val systemReplayPending = captureSystemScheduleReplayClaim(
+                AppSystemScheduleReplayJournal(context),
+            ).isPending
+            val surfaceRefreshPending = captureCourseSurfaceRefreshClaim(
+                AppCourseSurfaceRefreshJournal(context),
+            ).isPending
+            if (systemReplayPending) {
+                enqueueImmediateWork(context, forceReplay = true)
+            } else if (surfaceRefreshPending) {
+                enqueueImmediateWork(context, forceReplay = false)
+            }
         }.onFailure { Log.w(TAG, "scheduleDailyWork failed", it) }
     }
 
     fun triggerImmediateWork(context: Context, forceReplay: Boolean = false) {
         runCatching {
-            val request = OneTimeWorkRequestBuilder<DailySchedulerWorker>()
-                .setInputData(createImmediateWorkData(forceReplay))
-                .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                IMMEDIATE_WORK_NAME,
-                IMMEDIATE_WORK_POLICY,
-                request
-            )
+            if (forceReplay) {
+                runCatching { AppSystemScheduleReplayJournal(context).markPending() }
+            }
+            enqueueImmediateWork(context, forceReplay)
         }.onFailure { Log.w(TAG, "triggerImmediateWork failed", it) }
     }
+
+    /** 系统广播必须等到 WorkManager 确认命令已持久化后才能结束 goAsync。 */
+    suspend fun triggerImmediateWorkAndAwait(
+        context: Context,
+        forceReplay: Boolean = false,
+    ): Boolean = try {
+        val enqueue = suspend { enqueueImmediateWorkAndAwait(context, forceReplay) }
+        if (forceReplay) {
+            persistAndEnqueueSystemScheduleReplay(
+                journal = AppSystemScheduleReplayJournal(context),
+                enqueue = enqueue,
+            )
+        } else {
+            enqueue()
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Exception) {
+        Log.w(TAG, "triggerImmediateWorkAndAwait failed", failure)
+        false
+    }
+
+    /** 课程边界 Alarm 被消费前先持久化责任，再确认即时刷新任务已经入队。 */
+    suspend fun triggerCourseSurfaceRefreshWorkAndAwait(context: Context): Boolean = try {
+        persistAndEnqueueCourseSurfaceRefresh(
+            journal = AppCourseSurfaceRefreshJournal(context),
+        ) {
+            enqueueImmediateWorkAndAwait(context, forceReplay = false)
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Exception) {
+        Log.w(TAG, "triggerCourseSurfaceRefreshWorkAndAwait failed", failure)
+        false
+    }
+
+    private suspend fun enqueueImmediateWorkAndAwait(
+        context: Context,
+        forceReplay: Boolean,
+    ): Boolean = withTimeoutOrNull(IMMEDIATE_ENQUEUE_TIMEOUT_MILLIS) {
+        awaitWorkManagerOperation(enqueueImmediateWork(context, forceReplay))
+    } ?: false
+
+    private fun enqueueImmediateWork(context: Context, forceReplay: Boolean) =
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            IMMEDIATE_WORK_NAME,
+            IMMEDIATE_WORK_POLICY,
+            OneTimeWorkRequestBuilder<DailySchedulerWorker>()
+                .setInputData(createImmediateWorkData(forceReplay))
+                .build(),
+        )
 
     /** 构建可单元测试的即时对账输入。 */
     internal fun createImmediateWorkData(forceReplay: Boolean): Data = workDataOf(
@@ -123,4 +186,6 @@ object ReminderScheduler {
         val nextTarget = if (nowInZone.isBefore(todayTarget)) todayTarget else todayTarget.plusDays(1)
         return Duration.between(nowInZone, nextTarget).toMillis().coerceAtLeast(0L)
     }
+
+    private const val IMMEDIATE_ENQUEUE_TIMEOUT_MILLIS = 5_000L
 }

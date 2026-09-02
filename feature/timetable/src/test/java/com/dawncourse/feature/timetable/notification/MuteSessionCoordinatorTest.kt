@@ -327,6 +327,14 @@ class MuteSessionCoordinatorTest {
             )
             return true
         }
+        override fun requireUserAction(key: TriggerKey): Boolean {
+            val current = storedRecords[key] ?: return false
+            storedRecords[key] = current.copy(
+                status = MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED,
+                recoveryAttempt = MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS
+            )
+            return true
+        }
     }
 
     private class FakeRingerController(

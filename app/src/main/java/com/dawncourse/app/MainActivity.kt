@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import com.dawncourse.feature.update.UpdateDialog
 import com.dawncourse.feature.update.UpdateErrorDialog
 import com.dawncourse.feature.update.UpdateUiState
 import com.dawncourse.feature.update.UpdateViewModel
+import com.dawncourse.feature.update.isValidUpdateDownloadUrl
 import dagger.hilt.android.AndroidEntryPoint
 
 import androidx.compose.material3.CircularProgressIndicator
@@ -124,13 +126,27 @@ class MainActivity : ComponentActivity() {
         // 设置 Compose 内容视图
         setContent {
             val databaseState by databaseStartupRuntime.state.collectAsState()
+            var automaticRecoveryRestartAttempted by rememberSaveable { mutableStateOf(false) }
             when (val startupState = databaseState) {
                 DatabaseRuntimeState.Starting -> Box(modifier = Modifier.fillMaxSize())
-                is DatabaseRuntimeState.RecoveryRequired -> DatabaseRecoveryScreen(
-                    reason = startupState.reason,
-                    runtime = databaseStartupRuntime,
-                    onRestartRequired = { ControlledProcessRestarter.restart(this@MainActivity) }
-                )
+                is DatabaseRuntimeState.RecoveryRequired -> {
+                    // 只有 marker 已确认落盘时才首次自动交给独立进程重启。启动跳板失败时
+                    // 不改变该页状态，用户仍可使用同一页的手动“安全重启”入口重试。
+                    if (!automaticRecoveryRestartAttempted &&
+                        DatabaseRecoveryRestartPolicy.shouldAutoRestart(startupState)
+                    ) {
+                        LaunchedEffect(startupState) {
+                            automaticRecoveryRestartAttempted = true
+                            ControlledProcessRestarter.restart(this@MainActivity)
+                        }
+                    }
+                    DatabaseRecoveryScreen(
+                        reason = startupState.reason,
+                        entryMode = startupState.entryMode,
+                        runtime = databaseStartupRuntime,
+                        onRestartRequired = { ControlledProcessRestarter.restart(this@MainActivity) }
+                    )
+                }
                 DatabaseRuntimeState.StartupBlocked -> DatabaseStartupBlockedScreen()
                 DatabaseRuntimeState.Ready -> {
             val viewModel = remember {
@@ -398,12 +414,25 @@ class MainActivity : ComponentActivity() {
                                         onDismiss = { updateViewModel.dismissDialog() },
                                         onUpdate = {
                                             val url = state.updateInfo.downloadUrl
-                                            try {
-                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                startActivity(intent)
-                                            } catch (e: Exception) {
-                                                android.widget.Toast.makeText(this@MainActivity, "未找到浏览器，无法下载", android.widget.Toast.LENGTH_SHORT).show()
+                                            if (!isValidUpdateDownloadUrl(url)) {
+                                                android.widget.Toast.makeText(
+                                                    this@MainActivity,
+                                                    getString(R.string.update_download_url_unsafe),
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                                updateViewModel.dismissDialog()
+                                            } else {
+                                                try {
+                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                    startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    android.widget.Toast.makeText(
+                                                        this@MainActivity,
+                                                        getString(R.string.update_browser_unavailable),
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                             }
                                         },
                                         onIgnore = { updateViewModel.ignoreVersion(state.updateInfo.versionCode) },

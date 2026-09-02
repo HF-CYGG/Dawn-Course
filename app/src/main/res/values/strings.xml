@@ -1,6 +1,13 @@
 <resources>
     <string name="database_recovery_title">需要恢复课表数据</string>
     <string name="database_recovery_explanation">系统没有创建或覆盖新数据库。请选择应用备份或 WebDAV 恢复；只有在确认不再需要旧数据时才能放弃。</string>
+    <string name="database_recovery_restart_required">当前进程已停止数据库访问。必须安全重启后，才能隔离不一致的数据并继续恢复。</string>
+    <string name="database_recovery_restart_action">安全重启并继续恢复</string>
+    <string name="database_recovery_marker_retry_required">无法持久保存恢复状态。为避免下次启动误用数据库，当前只允许重试保存恢复状态。</string>
+    <string name="database_recovery_marker_retry_action">重试保存恢复状态</string>
+    <string name="database_recovery_marker_retry_failed">仍无法保存恢复状态，请检查设备存储空间后重试。</string>
+    <string name="update_download_url_unsafe">更新下载地址不安全，已拒绝打开</string>
+    <string name="update_browser_unavailable">未找到浏览器，无法下载</string>
     <string name="database_recovery_reason_key">此设备无法使用原数据库密钥。换机或 Keystore 失效时，请从应用自身的备份恢复。</string>
     <string name="database_recovery_reason_data">数据库未通过安全打开或完整性验证，已停止访问并保留原文件。</string>
     <string name="database_recovery_local_backup">从应用备份文件恢复</string>

@@ -267,8 +267,12 @@ class WebDavSyncRepositoryImpl @Inject internal constructor(
                 .get()
                 .build()
             try {
-                val response = client.newCall(request).execute()
-                WebDavResponse(response.code, response.body?.string())
+                client.newCall(request).execute().use { response ->
+                    val body = response.body?.byteStream()?.use { input ->
+                        BoundedBackupInput.readUtf8(input)
+                    }
+                    WebDavResponse(response.code, body)
+                }
             } catch (_: Exception) {
                 WebDavResponse(-1, null)
             }

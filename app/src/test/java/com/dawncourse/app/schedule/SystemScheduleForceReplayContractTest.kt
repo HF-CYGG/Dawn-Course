@@ -13,6 +13,11 @@ class SystemScheduleForceReplayContractTest {
             "src/main/java/com/dawncourse/app/schedule/SystemScheduleReceiver.kt"
         ).readText()
 
-        assertTrue(source.contains("triggerImmediateWork(appContext, forceReplay = true)"))
+        assertTrue(source.contains("goAsync()"))
+        assertTrue(
+            Regex("triggerImmediateWorkAndAwait\\(\\s*appContext,\\s*forceReplay\\s*=\\s*true")
+                .containsMatchIn(source)
+        )
+        assertTrue(source.contains("pendingResult.finish()"))
     }
 }

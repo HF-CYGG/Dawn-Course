@@ -25,8 +25,6 @@ interface CourseRepository {
 
     fun getCoursesBySemester(semesterId: Long): Flow<List<Course>>
 
-    suspend fun getCoursesByOriginId(originId: Long): List<Course>
-    
     /**
      * 根据 ID 获取单个课程
      *
@@ -70,6 +68,27 @@ interface CourseRepository {
         semesterId: Long,
         courses: List<Course>,
         editingCourseId: Long,
+    ): AtomicSaveResult
+
+    /** 在活动作用域锁和同一事务内删除一组课程。 */
+    suspend fun deleteCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courseIds: Set<Long>,
+    ): AtomicSaveResult
+
+    /** 在活动作用域锁和同一事务内恢复刚删除的一组课程。 */
+    suspend fun restoreCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+    ): AtomicSaveResult
+
+    /** 只在活动学期内原子撤销一个调课课程族，绝不跨 Profile 查询 originId。 */
+    suspend fun undoRescheduleIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        originId: Long,
     ): AtomicSaveResult
     
     /**

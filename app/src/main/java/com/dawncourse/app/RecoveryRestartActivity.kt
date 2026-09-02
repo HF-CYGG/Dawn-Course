@@ -51,7 +51,8 @@ class RecoveryRestartActivity : Activity() {
 
 /** 只有跳板 Activity 启动成功后才移交重启；启动失败时绝不终止当前进程。 */
 object ControlledProcessRestarter {
-    fun restart(activity: Activity) {
+    /** 返回跳板 Activity 是否已成功启动；失败时调用方必须保留手动重启入口。 */
+    fun restart(activity: Activity): Boolean {
         val started = runCatching {
             activity.startActivity(
                 Intent(activity, RecoveryRestartActivity::class.java)
@@ -59,6 +60,6 @@ object ControlledProcessRestarter {
             )
         }.isSuccess
         // 跳板与主 Activity 可能共享 task affinity；这里不能 finishAffinity，否则会连跳板一起结束。
-        if (!started) return
+        return started
     }
 }

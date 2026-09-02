@@ -23,7 +23,8 @@ class ReceiverReadinessRetryContractTest {
             )
             assertTrue(
                 "$fileName 未就绪分支应入队持久重试",
-                text.contains("triggerReadinessRetryScheduler().enqueue(key")
+                Regex("""triggerReadinessRetryScheduler\(\)\s*\.enqueue\(key""")
+                    .containsMatchIn(text)
             )
             // 未就绪分支不得再按具体状态收窄入队条件：STARTING 与 RECOVERY_REQUIRED
             // 都会让一次性广播丢事件，都必须入队。
@@ -71,6 +72,18 @@ class ReceiverReadinessRetryContractTest {
         assertTrue(
             module.contains("WorkManagerTriggerReadinessRetryScheduler") &&
                 module.contains(": TriggerReadinessRetryScheduler")
+        )
+    }
+
+    @Test
+    fun `课程边界 Receiver 必须先持久化刷新责任再等待 WorkManager`() {
+        val receiver = source("PersistentNotificationRefreshReceiver.kt")
+        assertTrue(
+            receiver.contains("triggerCourseSurfaceRefreshWorkAndAwait")
+        )
+        assertFalse(
+            "课程边界不能绕过独立刷新 journal 直接入队",
+            receiver.contains("triggerImmediateWorkAndAwait")
         )
     }
 }

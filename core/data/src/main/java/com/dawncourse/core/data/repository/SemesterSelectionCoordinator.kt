@@ -23,7 +23,8 @@ import kotlinx.coroutines.sync.withLock
 @Singleton
 class SemesterSelectionCoordinator @Inject constructor(
     private val semesterDao: SemesterDao,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val mutationGate: OperationalDataMutationGate,
 ) {
     private val mutationMutex = Mutex()
 
@@ -46,7 +47,7 @@ class SemesterSelectionCoordinator @Inject constructor(
 
     /** 恢复与导出共用的持锁选择解析入口。 */
     internal suspend fun <T> withResolvedSelectionLock(block: suspend (Long) -> T): T =
-        mutationMutex.withLock {
+        withOperationalMutation {
             initializeLegacyBridgeLocked()
             val selected = settingsRepository.selectedSemesterId.first()
             val resolved = selected?.takeIf { semesterDao.getSemesterById(it) != null } ?: NO_SELECTION_ID
@@ -54,36 +55,42 @@ class SemesterSelectionCoordinator @Inject constructor(
         }
 
     suspend fun insertSemester(semester: SemesterEntity, shouldSelect: Boolean): Long =
-        mutationMutex.withLock {
+        withOperationalMutation {
             val insertedId = semesterDao.insertSemester(semester)
             if (shouldSelect) settingsRepository.selectSemester(insertedId)
             insertedId
         }
 
-    suspend fun updateSemester(semester: SemesterEntity) = mutationMutex.withLock {
+    suspend fun updateSemester(semester: SemesterEntity) = withOperationalMutation {
         semesterDao.updateSemester(semester)
     }
 
-    suspend fun deleteSemester(semester: SemesterEntity) = mutationMutex.withLock {
+    suspend fun deleteSemester(semester: SemesterEntity) = withOperationalMutation {
         val selectedBeforeDelete = settingsRepository.selectedSemesterId.first()
         semesterDao.deleteSemesterAndCourses(semester)
         if (selectedBeforeDelete == semester.id) settingsRepository.clearSelectedSemester()
     }
 
-    suspend fun deleteAllSemesters() = mutationMutex.withLock {
+    suspend fun deleteAllSemesters() = withOperationalMutation {
         semesterDao.deleteAllSemestersAndCourses()
         settingsRepository.clearSelectedSemester()
     }
 
-    suspend fun setCurrentSemester(id: Long) = mutationMutex.withLock {
+    suspend fun setCurrentSemester(id: Long) = withOperationalMutation {
         if (id > 0L && semesterDao.getSemesterById(id) != null) {
             settingsRepository.selectSemester(id)
         }
     }
 
-    private suspend fun initializeLegacyBridge() = mutationMutex.withLock {
+    private suspend fun initializeLegacyBridge() = withOperationalMutation {
         initializeLegacyBridgeLocked()
     }
+
+    /** 遗留协调器虽已无生产消费者，仍必须服从恢复失败后的进程级写入隔离。 */
+    private suspend fun <T> withOperationalMutation(block: suspend () -> T): T =
+        mutationGate.withMutation {
+            mutationMutex.withLock { block() }
+        }
 
     private suspend fun initializeLegacyBridgeLocked() {
         val legacySemesterId = semesterDao.getLegacyCurrentSemesterOnce()?.id

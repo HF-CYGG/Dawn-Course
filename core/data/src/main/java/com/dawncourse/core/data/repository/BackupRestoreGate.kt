@@ -121,6 +121,7 @@ internal object BackupPayloadValidator {
 
         val courseIds = courses.map { course ->
             require(course.id > 0L) { "课程 ID 必须为正数" }
+            require(course.originId >= 0L) { "课程 originId 不能为负数" }
             require(course.name.isNotBlank()) { "课程名称不能为空" }
             require(course.semesterId in semesterById) { "课程引用了不存在的学期" }
             require(course.dayOfWeek in 1..7) { "课程星期超出范围" }
@@ -137,6 +138,17 @@ internal object BackupPayloadValidator {
             course.id
         }
         require(courseIds.distinct().size == courseIds.size) { "备份包含重复课程 ID" }
+        val courseById = courses.associateBy { it.id }
+        courses.asSequence()
+            .filter { course -> course.originId > 0L }
+            .groupBy { course -> course.originId }
+            .forEach { (originId, family) ->
+                val familySemesterIds = family.mapTo(linkedSetOf()) { course -> course.semesterId }
+                courseById[originId]?.let { anchor -> familySemesterIds += anchor.semesterId }
+                require(familySemesterIds.size == 1) {
+                    "课程 originId 跨越了学期或 Profile 边界"
+                }
+            }
 
         val sourceBindings = when {
             payload.version <= 3 -> {

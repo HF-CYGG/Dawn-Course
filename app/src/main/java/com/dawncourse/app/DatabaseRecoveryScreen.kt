@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.dawncourse.core.data.local.startup.DatabaseRecoveryActionFailure
 import com.dawncourse.core.data.local.startup.DatabaseRecoveryActionResult
 import com.dawncourse.core.data.local.startup.DatabaseRecoveryReason
+import com.dawncourse.core.data.local.startup.DatabaseRecoveryEntryMode
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
 import com.dawncourse.core.domain.model.WebDavCredentials
 import kotlinx.coroutines.launch
@@ -46,6 +47,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun DatabaseRecoveryScreen(
     reason: DatabaseRecoveryReason,
+    entryMode: DatabaseRecoveryEntryMode,
     runtime: DatabaseStartupRuntime,
     onRestartRequired: () -> Unit
 ) {
@@ -57,6 +59,7 @@ fun DatabaseRecoveryScreen(
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var confirmAbandon by rememberSaveable { mutableStateOf(false) }
+    val markerRetryFailedMessage = stringResource(R.string.database_recovery_marker_retry_failed)
 
     fun submit(action: suspend () -> DatabaseRecoveryActionResult) {
         if (busy) return
@@ -101,66 +104,91 @@ fun DatabaseRecoveryScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy,
-                    onClick = {
-                        localBackupLauncher.launch(arrayOf("application/json", "application/octet-stream"))
+                when (entryMode) {
+                    DatabaseRecoveryEntryMode.RESTART_REQUIRED -> {
+                        Text(stringResource(R.string.database_recovery_restart_required))
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy,
+                            onClick = onRestartRequired,
+                        ) {
+                            Text(stringResource(R.string.database_recovery_restart_action))
+                        }
                     }
-                ) {
-                    Text(stringResource(R.string.database_recovery_local_backup))
-                }
+                    DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED -> {
+                        Text(stringResource(R.string.database_recovery_marker_retry_required))
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy,
+                            onClick = {
+                                busy = true
+                                message = null
+                                scope.launch {
+                                    if (!runtime.retryBackupRestoreRecoveryMarker()) {
+                                        message = markerRetryFailedMessage
+                                    }
+                                    busy = false
+                                }
+                            },
+                        ) {
+                            Text(stringResource(R.string.database_recovery_marker_retry_action))
+                        }
+                    }
+                    DatabaseRecoveryEntryMode.ACTIONS_AVAILABLE -> {
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy,
+                            onClick = {
+                                localBackupLauncher.launch(
+                                    arrayOf("application/json", "application/octet-stream")
+                                )
+                            }
+                        ) {
+                            Text(stringResource(R.string.database_recovery_local_backup))
+                        }
 
-                Text(
-                    text = stringResource(R.string.database_recovery_webdav_title),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                OutlinedTextField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = serverUrl,
-                    enabled = !busy,
-                    onValueChange = { serverUrl = it },
-                    label = { Text(stringResource(R.string.database_recovery_webdav_server)) },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = username,
-                    enabled = !busy,
-                    onValueChange = { username = it },
-                    label = { Text(stringResource(R.string.database_recovery_webdav_username)) },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = password,
-                    enabled = !busy,
-                    onValueChange = { password = it },
-                    label = { Text(stringResource(R.string.database_recovery_webdav_password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true
-                )
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy && serverUrl.isNotBlank(),
-                    onClick = {
-                        val credentials = WebDavCredentials(
-                            serverUrl = serverUrl.trim(),
-                            username = username,
-                            password = password
+                        Text(
+                            text = stringResource(R.string.database_recovery_webdav_title),
+                            style = MaterialTheme.typography.titleMedium
                         )
-                        submit { runtime.restoreFromWebDav(credentials) }
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(), value = serverUrl, enabled = !busy,
+                            onValueChange = { serverUrl = it },
+                            label = { Text(stringResource(R.string.database_recovery_webdav_server)) },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(), value = username, enabled = !busy,
+                            onValueChange = { username = it },
+                            label = { Text(stringResource(R.string.database_recovery_webdav_username)) },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(), value = password, enabled = !busy,
+                            onValueChange = { password = it },
+                            label = { Text(stringResource(R.string.database_recovery_webdav_password)) },
+                            visualTransformation = PasswordVisualTransformation(), singleLine = true
+                        )
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy && serverUrl.isNotBlank(),
+                            onClick = {
+                                submit {
+                                    runtime.restoreFromWebDav(
+                                        WebDavCredentials(serverUrl.trim(), username, password)
+                                    )
+                                }
+                            }
+                        ) {
+                            Text(stringResource(R.string.database_recovery_webdav_restore))
+                        }
+                        OutlinedButton(
+                            modifier = Modifier.fillMaxWidth(), enabled = !busy,
+                            onClick = { confirmAbandon = true }
+                        ) {
+                            Text(stringResource(R.string.database_recovery_abandon))
+                        }
                     }
-                ) {
-                    Text(stringResource(R.string.database_recovery_webdav_restore))
-                }
-
-                OutlinedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !busy,
-                    onClick = { confirmAbandon = true }
-                ) {
-                    Text(stringResource(R.string.database_recovery_abandon))
                 }
                 if (busy) CircularProgressIndicator()
                 message?.let { Text(text = it, color = MaterialTheme.colorScheme.error) }
@@ -168,7 +196,7 @@ fun DatabaseRecoveryScreen(
         }
     }
 
-    if (confirmAbandon) {
+    if (confirmAbandon && entryMode == DatabaseRecoveryEntryMode.ACTIONS_AVAILABLE) {
         AlertDialog(
             onDismissRequest = { if (!busy) confirmAbandon = false },
             title = { Text(stringResource(R.string.database_recovery_abandon_confirm_title)) },

@@ -41,6 +41,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
     private val bindingDao: SyncSourceBindingDao,
     private val activeSelectionStore: ActiveProfileSelectionStore,
     private val profileSelectionCoordinator: ProfileSelectionCoordinator,
+    private val mutationGate: OperationalDataMutationGate,
 ) : ImportCommitRepository {
 
     override suspend fun preview(request: ImportCommitRequest): Result<ImportCommitImpact> = try {
@@ -81,8 +82,9 @@ class ImportCommitRepositoryImpl @Inject constructor(
         Result.failure(failure)
     }
 
-    override suspend fun commit(request: ImportCommitRequest): ImportCommitResult =
-        profileSelectionCoordinator.withProfileMutationLock {
+    override suspend fun commit(request: ImportCommitRequest): ImportCommitResult = try {
+        mutationGate.withMutation {
+            profileSelectionCoordinator.withProfileMutationLock {
             try {
                 validateRequest(request)
                 val selectionPreimage = if (request.expectedSourceBindingId == null) {
@@ -138,7 +140,13 @@ class ImportCommitRepositoryImpl @Inject constructor(
             } catch (failure: Throwable) {
                 ImportCommitResult.Rejected(failure.message ?: "导入目标无效，未写入数据")
             }
+            }
         }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Throwable) {
+        ImportCommitResult.Rejected(failure.message ?: "课程数据正在恢复隔离中，未写入导入结果")
+    }
 
     /** Room 事务内按目标写入，并保留刚好足够的回滚信息。 */
     private suspend fun commitInTransaction(request: ImportCommitRequest): DatabaseMutation =

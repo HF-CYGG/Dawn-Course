@@ -1910,7 +1910,14 @@ fun QidiAutoSyncScreen(
                     }
                 },
                 onPageTitle = { t -> if (t.isNotBlank()) title = t },
-                onPageFinished = { wv, _ ->
+                onPageFinished = { wv, callbackUrl ->
+                    // WebView 回调 URL 是浏览器实际完成加载的地址；绝不能信任页面脚本
+                    // 返回的 location.href 来决定是否注入密码或更新绑定入口。
+                    val currentWebViewUrl = wv.url?.takeIf(String::isNotBlank) ?: callbackUrl
+                    if (currentWebViewUrl.isNotBlank()) {
+                        addressBar = currentWebViewUrl
+                        importViewModel.updateWebUrl(currentWebViewUrl)
+                    }
                     val fallbackFlowActive = termReadFallbackTriggered && (
                         importUiState.showLlmConsentDialog ||
                             importUiState.isLoading ||
@@ -1940,12 +1947,6 @@ fun QidiAutoSyncScreen(
                                 val hasSelect = txt.contains("\"hasSelect\":true")
                                 val hasMenu = txt.contains("\"hasMenu\":true")
                                 val loggedIn = txt.contains("\"loggedIn\":true")
-                                val hrefMatch = Regex("\"href\":\"(.*?)\"").find(txt)
-                                val pageHref = hrefMatch?.groups?.get(1)?.value?.replace("\\/", "/").orEmpty()
-                                if (pageHref.isNotBlank()) {
-                                    addressBar = pageHref
-                                    importViewModel.updateWebUrl(pageHref)
-                                }
                                 if (fallbackFlowActive) {
                                     return@launch
                                 }
@@ -1962,9 +1963,8 @@ fun QidiAutoSyncScreen(
                                 captchaUrl = if (yzm && yzmSrc.isNotBlank()) yzmSrc else ""
                                 val shouldTryFallback = !needManualLogin && !isLogin && !isKebiao && !hasSelect && !hasMenu
                                 if (shouldTryFallback && !triedJwglxtFallback) {
-                                    val sourceUrl = if (pageHref.isNotBlank()) pageHref else addressBar
-                                    val fallbackUrl = buildJwglxtFallbackUrl(sourceUrl)
-                                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != sourceUrl) {
+                                    val fallbackUrl = buildJwglxtFallbackUrl(currentWebViewUrl)
+                                    if (!fallbackUrl.isNullOrBlank() && fallbackUrl != currentWebViewUrl) {
                                         triedJwglxtFallback = true
                                         endpointCheckFailed = false
                                         addressBar = fallbackUrl
@@ -1985,21 +1985,46 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 val creds = credsForAutoFill
-                                val autoFillKey = if (pageHref.isNotBlank()) pageHref else addressBar
                                 if (isLogin && creds != null && creds.type == SyncCredentialType.PASSWORD) {
-                                    if (autoFillKey.isNotBlank() && autoFillKey != lastAutoFillUrl) {
-                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace(
+                                    val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                    // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
+                                    val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl
+                                    if (
+                                        WebViewCredentialAutofillPolicy.canAutoFill(
+                                            savedEndpointUrl = creds.endpointUrl,
+                                            currentWebViewUrl = injectionUrl,
+                                        ) && injectionUrl.isNotBlank() && injectionUrl != lastAutoFillUrl
+                                    ) {
+                                        val credentialScript = baseJs.replace(
                                             "{{USERNAME}}",
                                             escapeJavaScriptSingleQuoted(creds.username ?: "")
                                         )
                                             .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        suspendEvaluateJs(wv, js)
-                                        lastAutoFillUrl = autoFillKey
-                                        if (showProgressDialog) {
-                                            addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                        val guardedScript = WebViewCredentialAutofillPolicy
+                                            .wrapCredentialScriptForVerifiedOrigin(
+                                                savedEndpointUrl = creds.endpointUrl,
+                                                credentialScript = credentialScript,
+                                            )
+                                        if (guardedScript == null) {
+                                            if (showProgressDialog) {
+                                                addLog("绑定入口无效，跳过自动填充", SyncLogType.WARNING)
+                                            }
+                                        } else {
+                                            val result = parseJsReturn(suspendEvaluateJs(wv, guardedScript))
+                                            if (result == "autofill_origin_mismatch") {
+                                                if (showProgressDialog) {
+                                                    addLog("页面已跳转到非绑定入口，跳过自动填充", SyncLogType.INFO)
+                                                }
+                                            } else {
+                                                lastAutoFillUrl = injectionUrl
+                                                if (showProgressDialog) {
+                                                    addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                                }
+                                            }
                                         }
+                                    } else if (showProgressDialog) {
+                                        addLog("当前页面不是绑定入口，跳过自动填充，请手动登录", SyncLogType.INFO)
                                     }
                                 }
                                 if (needManualLogin) {
@@ -2013,15 +2038,15 @@ fun QidiAutoSyncScreen(
                                     }
                                 }
                                 if (!needManualLogin && !isKebiao && !hasSelect && (hasMenu || loggedIn)) {
-                                    if (pageHref.isNotBlank() && pageHref != lastZfMenuJumpUrl) {
+                                    if (currentWebViewUrl.isNotBlank() && currentWebViewUrl != lastZfMenuJumpUrl) {
                                         val openMenuJs = viewModel.getScriptContent("zf_open_menu.js", "js")
                                         suspendEvaluateJs(wv, openMenuJs)
-                                        lastZfMenuJumpUrl = pageHref
+                                        lastZfMenuJumpUrl = currentWebViewUrl
                                         addLog("尝试打开课表页面", SyncLogType.ACTION)
                                     }
                                 }
-                                if (pageHref.isNotBlank()) {
-                                    val updated = viewModel.updateEndpointIfNeeded(pageHref, provider)
+                                if (currentWebViewUrl.isNotBlank()) {
+                                    val updated = viewModel.updateEndpointIfNeeded(currentWebViewUrl, provider)
                                     if (updated) {
                                         subTitle = "已自动记录登录入口，后续可直接“开始同步（$providerName）”。"
                                         if (showProgressDialog) {
@@ -2029,7 +2054,7 @@ fun QidiAutoSyncScreen(
                                         }
                                     }
                                     if (showProgressDialog) {
-                                        addLog("当前地址：$pageHref", SyncLogType.INFO)
+                                        addLog("当前地址：$currentWebViewUrl", SyncLogType.INFO)
                                     }
                                 }
                                 if (isKebiao) {
@@ -2055,19 +2080,45 @@ fun QidiAutoSyncScreen(
                             try {
                                 val creds = credsForAutoFill
                                 if (creds != null && creds.type == SyncCredentialType.PASSWORD) {
-                                    if (addressBar.isNotBlank() && addressBar != lastAutoFillUrl) {
-                                        val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
-                                        val js = baseJs.replace(
+                                    val baseJs = viewModel.getScriptContent("zf_autofill.js", "js")
+                                    // 脚本拉取期间页面可能继续跳转，因此注入前读取 WebView 当前 URL。
+                                    val injectionUrl = wv.url?.takeIf(String::isNotBlank) ?: currentWebViewUrl
+                                    if (
+                                        WebViewCredentialAutofillPolicy.canAutoFill(
+                                            savedEndpointUrl = creds.endpointUrl,
+                                            currentWebViewUrl = injectionUrl,
+                                        ) && injectionUrl.isNotBlank() && injectionUrl != lastAutoFillUrl
+                                    ) {
+                                        val credentialScript = baseJs.replace(
                                             "{{USERNAME}}",
                                             escapeJavaScriptSingleQuoted(creds.username ?: "")
                                         )
                                             .replace("{{PASSWORD}}", escapeJavaScriptSingleQuoted(creds.secret))
                                             .replace("{{CLICK_LOGIN}}", (!needManualLogin).toString())
-                                        suspendEvaluateJs(wv, js)
-                                        lastAutoFillUrl = addressBar
-                                        if (showProgressDialog) {
-                                            addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                        val guardedScript = WebViewCredentialAutofillPolicy
+                                            .wrapCredentialScriptForVerifiedOrigin(
+                                                savedEndpointUrl = creds.endpointUrl,
+                                                credentialScript = credentialScript,
+                                            )
+                                        if (guardedScript == null) {
+                                            if (showProgressDialog) {
+                                                addLog("绑定入口无效，跳过自动填充", SyncLogType.WARNING)
+                                            }
+                                        } else {
+                                            val result = parseJsReturn(suspendEvaluateJs(wv, guardedScript))
+                                            if (result == "autofill_origin_mismatch") {
+                                                if (showProgressDialog) {
+                                                    addLog("页面已跳转到非绑定入口，跳过自动填充", SyncLogType.INFO)
+                                                }
+                                            } else {
+                                                lastAutoFillUrl = injectionUrl
+                                                if (showProgressDialog) {
+                                                    addLog("已执行自动填充脚本", SyncLogType.ACTION)
+                                                }
+                                            }
                                         }
+                                    } else if (showProgressDialog) {
+                                        addLog("当前页面不是绑定入口，跳过自动填充，请手动登录", SyncLogType.INFO)
                                     }
                                 }
                                 val stateJs = viewModel.getScriptContent("zf_check_table_state.js", "js")
@@ -2501,12 +2552,15 @@ class QidiSyncViewModel @Inject constructor(
      *
      * @return 是否发生更新
      */
-    suspend fun updateEndpointIfNeeded(href: String, provider: SyncProviderType): Boolean {
+    suspend fun updateEndpointIfNeeded(currentWebViewUrl: String, provider: SyncProviderType): Boolean {
         val target = resolveCapturedTargetOrNull() ?: return false
         val creds = credentialsRepository.getCredentials(target.profileId) ?: return false
         if (creds.provider != provider) return false
         captureBindingForTarget(target, provider) ?: return false
-        val normalized = normalizeEndpoint(href)
+        if (!WebViewCredentialAutofillPolicy.canUpdateSavedEndpoint(creds.endpointUrl, currentWebViewUrl)) {
+            return false
+        }
+        val normalized = normalizeEndpoint(currentWebViewUrl)
         if (normalized.isBlank()) return false
         if (creds.endpointUrl == normalized) return false
         credentialsRepository.saveCredentials(

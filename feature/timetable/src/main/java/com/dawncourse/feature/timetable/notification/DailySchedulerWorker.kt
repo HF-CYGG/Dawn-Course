@@ -63,7 +63,8 @@ class DailySchedulerWorker @AssistedInject constructor(
     private val generateTriggerHorizonUseCase: GenerateTriggerHorizonUseCase,
     private val triggerReconciler: TriggerReconciler,
     private val appMuteSessionStore: AppMuteSessionStore,
-    private val muteRecoveryController: MuteRecoveryUserActionController
+    private val muteRecoveryController: MuteRecoveryUserActionController,
+    private val triggerReadinessRetryScheduler: TriggerReadinessRetryScheduler
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result = DailySchedulerExecutionLock.withLock {
@@ -79,6 +80,7 @@ class DailySchedulerWorker @AssistedInject constructor(
             OperationalDataReadiness.RECOVERY_REQUIRED -> return Result.success()
             OperationalDataReadiness.READY -> Unit
         }
+        var shouldRetry = false
         try {
             // 开机/升级/每日保底只补齐专用按 Key Worker，不再借 force replay 间接恢复。
             muteRecoveryController.reconcilePersistedState()
@@ -86,6 +88,20 @@ class DailySchedulerWorker @AssistedInject constructor(
             throw cancellation
         } catch (failure: Exception) {
             Log.w(TAG, "静音恢复状态对账失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+        }
+        try {
+            // Receiver 先写 journal 再等待 WorkManager；异步入队失败或进程中断后，
+            // 下一次启动/系统事件/每日对账在此恢复已经被系统消费的一次性触发器。
+            if (!triggerReadinessRetryScheduler.reconcilePending()) {
+                shouldRetry = true
+                Log.w(TAG, "触发就绪补投 journal 对账未完全入队")
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "触发就绪补投 journal 对账失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
         }
         val snapshot = try {
             val settings = settingsRepository.get().settings.first()
@@ -122,7 +138,6 @@ class DailySchedulerWorker @AssistedInject constructor(
             return Result.retry()
         }
 
-        var shouldRetry = false
         val desired = try {
             val profileId = snapshot.profileId
             val semester = snapshot.semester
@@ -148,7 +163,14 @@ class DailySchedulerWorker @AssistedInject constructor(
             shouldRetry = true
             null
         }
-        val forceReplay = inputData.getBoolean(ReminderScheduler.INPUT_FORCE_REPLAY, false)
+        val replayJournal = AppSystemScheduleReplayJournal(applicationContext)
+        // 捕获本轮代际；读取异常时仍强制幂等重放，但不允许清除未知或更新后的责任。
+        val replayClaim = captureSystemScheduleReplayClaim(replayJournal)
+        val forceReplay = shouldForceReplay(
+            inputForceReplay = inputData.getBoolean(ReminderScheduler.INPUT_FORCE_REPLAY, false),
+            markerPending = replayClaim.isPending,
+        )
+        var triggerReconciled = false
         if (desired != null) {
             try {
                 val muteSessionRecords = appMuteSessionStore.records()
@@ -160,6 +182,7 @@ class DailySchedulerWorker @AssistedInject constructor(
                         .filter { record -> record.status == MuteSessionStatus.ACTIVE }
                         .mapTo(mutableSetOf()) { record -> record.key }
                 )
+                triggerReconciled = true
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
@@ -168,6 +191,21 @@ class DailySchedulerWorker @AssistedInject constructor(
             }
         }
 
+        if (!acknowledgeSystemScheduleReplay(
+                journal = replayJournal,
+                claim = replayClaim,
+                triggerReconciled = triggerReconciled,
+            )
+        ) {
+            // 清理失败只会造成下一次幂等重放；当前 Worker 仍请求 retry，避免把责任静默遗留。
+            shouldRetry = true
+            Log.w(TAG, "系统事件 force replay marker 清理失败")
+        }
+
+        val surfaceRefreshJournal = AppCourseSurfaceRefreshJournal(applicationContext)
+        // 捕获本轮 Surface 责任代际；并发到达的新边界会因 compare-and-clear 保留下来。
+        val surfaceRefreshClaim = captureCourseSurfaceRefreshClaim(surfaceRefreshJournal)
+        var surfaceRefreshed = false
         try {
             if (snapshot.settings.enablePersistentNotification) {
                 // 不预先取消旧刷新；新通知与下一边界成功发布后由同一 PendingIntent 身份覆盖。
@@ -183,11 +221,21 @@ class DailySchedulerWorker @AssistedInject constructor(
                 PersistentNotificationRefreshScheduler.cancel(applicationContext)
                 NotificationHelper.cancelCourseStatus(applicationContext)
             }
+            surfaceRefreshed = true
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
             Log.w(TAG, "课程状态 Surface 刷新失败: ${failure.javaClass.simpleName}")
             shouldRetry = true
+        }
+        if (!acknowledgeCourseSurfaceRefresh(
+                journal = surfaceRefreshJournal,
+                claim = surfaceRefreshClaim,
+                surfaceRefreshed = surfaceRefreshed,
+            )
+        ) {
+            shouldRetry = true
+            Log.w(TAG, "课程状态 Surface refresh marker 清理失败")
         }
         return if (shouldRetry) Result.retry() else Result.success()
     }

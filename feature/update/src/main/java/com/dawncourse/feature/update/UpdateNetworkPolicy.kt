@@ -1,10 +1,10 @@
 /**
- * 文件说明：统一定义更新检查的网络连接策略与更新节点地址。
- * 由于版本文件来自独立服务器，客户端需要兼容多种连接方式，
- * 并优先选择当前已验证可直连的更新入口。
+ * 文件说明：统一定义更新检查的安全网络策略与可信元数据入口。
+ * 更新元数据与下载链接都属于不可信网络输入，必须在进入 UI 前收敛为 HTTPS。
  */
 package com.dawncourse.feature.update
 
+import java.net.URI
 import okhttp3.ConnectionSpec
 
 /**
@@ -23,34 +23,45 @@ data class UpdateEndpointConfig(
  *
  * 顺序说明：
  * 1. 优先使用现代 TLS；
- * 2. 如独立服务器 TLS 配置较旧，再退到兼容 TLS；
- * 3. 保留明文能力，仅用于现有代码的兼容兜底，不改变远端数据格式。
+ * 2. 兼容仍符合 HTTPS 要求的旧 TLS 服务端；
+ * 3. 更新链路绝不允许明文 HTTP。
  */
 fun buildUpdateConnectionSpecs(): List<ConnectionSpec> {
     return listOf(
         ConnectionSpec.MODERN_TLS,
-        ConnectionSpec.COMPATIBLE_TLS,
-        ConnectionSpec.CLEARTEXT
+        ConnectionSpec.COMPATIBLE_TLS
     )
 }
 
 /**
  * 构建更新检查的节点列表。
  *
- * 当前策略：
- * 1. 主地址优先走已验证可访问的 HTTP IP:10000；
- * 2. 备用地址保留域名 HTTP:10000，便于后续域名入口恢复后继续兜底；
- * 3. 仅调整客户端访问入口，不改独立服务器版本文件内容。
+ * 仅保留已确认的公开 GitHub Raw HTTPS 元数据入口，避免将更新信任链降级到
+ * 未经确认的备用服务。
  */
 fun buildUpdateEndpointConfigs(): List<UpdateEndpointConfig> {
     return listOf(
         UpdateEndpointConfig(
-            label = "主地址",
-            baseUrl = "http://47.105.76.193:10000/"
-        ),
-        UpdateEndpointConfig(
-            label = "备用地址",
-            baseUrl = "http://yyh163.xyz:10000/"
+            label = "GitHub Raw",
+            baseUrl = "https://raw.githubusercontent.com/HF-CYGG/DawnCourse-server/main/"
         )
     )
+}
+
+/**
+ * 判断远端元数据提供的下载链接能否安全交给系统浏览器。
+ *
+ * 不对输入做补全或修正：任何非 HTTPS、缺少主机名或包含 userInfo 的链接都直接拒绝，
+ * 以免攻击者借元数据将 Intent 导向本地文件、ContentProvider 或自定义 Scheme。
+ */
+fun isValidUpdateDownloadUrl(downloadUrl: String): Boolean = runCatching {
+    val uri = URI(downloadUrl)
+    uri.scheme.equals("https", ignoreCase = true) &&
+        !uri.host.isNullOrBlank() &&
+        uri.userInfo == null
+}.getOrDefault(false)
+
+/** 只有通过下载链接校验的元数据才可作为成功结果继续向 UI 传播。 */
+fun validateUpdateInfo(updateInfo: UpdateInfo): UpdateInfo? {
+    return updateInfo.takeIf { isValidUpdateDownloadUrl(it.downloadUrl) }
 }

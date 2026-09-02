@@ -69,8 +69,11 @@ interface CourseDao {
      * @param originId 原始课程 ID
      * @return 匹配的课程实体列表
      */
-    @Query("SELECT * FROM courses WHERE originId = :originId")
-    suspend fun getCoursesByOriginId(originId: Long): List<CourseEntity>
+    @Query(
+        "SELECT * FROM courses " +
+            "WHERE semesterId = :semesterId AND originId = :originId ORDER BY id"
+    )
+    suspend fun getCoursesByOriginId(semesterId: Long, originId: Long): List<CourseEntity>
     
     /**
      * 根据 ID 查询单门课程

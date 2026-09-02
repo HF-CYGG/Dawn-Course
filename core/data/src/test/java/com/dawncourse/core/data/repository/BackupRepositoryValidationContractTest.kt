@@ -29,6 +29,17 @@ class BackupRepositoryValidationContractTest {
         assertTrue(builder.contains("database.withTransaction"))
     }
 
+    @Test
+    fun localAndWebDavImportsUseBoundedStreamingReaderBeforeJsonParsing() {
+        val local = source("LocalBackupRepositoryImpl.kt")
+        val webDav = source("WebDavSyncRepositoryImpl.kt")
+
+        assertTrue(local.contains("BoundedBackupInput.readUtf8"))
+        assertTrue(webDav.contains("BoundedBackupInput.readUtf8"))
+        assertTrue(!local.contains("bufferedReader().readText()"))
+        assertTrue(!webDav.contains("response.body?.string()"))
+    }
+
     private fun source(name: String): String {
         val candidates = listOf(
             File("src/main/java/com/dawncourse/core/data/repository/$name"),

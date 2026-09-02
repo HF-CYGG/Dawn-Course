@@ -52,6 +52,7 @@ class ProfileSelectionCoordinator @Inject constructor(
     private val activeSelectionStore: ActiveProfileSelectionStore,
     private val legacySemesterSelectionStore: SemesterSelectionStore,
     private val credentialsRepository: CredentialsRepository,
+    private val mutationGate: OperationalDataMutationGate,
 ) {
     private val mutationMutex = Mutex()
 
@@ -64,6 +65,17 @@ class ProfileSelectionCoordinator @Inject constructor(
         mutationMutex.withLock { block() }
 
     /**
+     * 将“门状态检查 + Profile 选择锁 + Room 事务”放在一个线性化区间。
+     *
+     * [withProfileMutationLock] 仅供已持有 [OperationalDataMutationGate.Lease] 的恢复协议或
+     * 已从外层取得 gate 的导入提交复用，普通公开写入口必须使用本方法。
+     */
+    private suspend fun <T> withOperationalProfileMutation(block: suspend () -> T): T =
+        mutationGate.withMutation {
+            mutationMutex.withLock { block() }
+        }
+
+    /**
      * 在 Profile 选择锁内取得并消费稳定上下文。
      *
      * 导出必须让活动 Profile 的解析与 Room 快照处于同一线性化区间，
@@ -71,7 +83,7 @@ class ProfileSelectionCoordinator @Inject constructor(
      */
     internal suspend fun <T> withResolvedActiveContext(
         block: suspend (ActiveTimetableContext) -> T,
-    ): T = mutationMutex.withLock {
+    ): T = withOperationalProfileMutation {
         val profileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         val profile = profileDao.getProfileById(profileId)
             ?: throw IllegalStateException("无法解析活动课表")
@@ -80,7 +92,9 @@ class ProfileSelectionCoordinator @Inject constructor(
 
     /** 首次仅从遗留学期键桥接；之后无效 ID 稳定回退到排序第一项。 */
     fun observeActiveContext(): Flow<ActiveTimetableContext?> = flow {
-        mutationMutex.withLock { resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first()) }
+        withOperationalProfileMutation {
+            resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
+        }
         emitAll(
             activeSelectionStore.activeProfileId.flatMapLatest { profileId ->
                 profileId?.let(profileDao::observeProfileById)?.flatMapLatest { profile ->
@@ -96,7 +110,9 @@ class ProfileSelectionCoordinator @Inject constructor(
     }
 
     fun observeProfiles(): Flow<List<TimetableProfile>> = flow {
-        mutationMutex.withLock { resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first()) }
+        withOperationalProfileMutation {
+            resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
+        }
         emitAll(profileDao.observeAllProfiles().map { rows -> rows.map { it.toDomain() } })
     }
 
@@ -104,7 +120,9 @@ class ProfileSelectionCoordinator @Inject constructor(
         semesterDao.getSemestersByProfile(profileId).map { rows -> rows.map { it.toDomain() } }
 
     fun observeProfileSummaries(): Flow<List<TimetableProfileSummary>> = flow {
-        mutationMutex.withLock { resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first()) }
+        withOperationalProfileMutation {
+            resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
+        }
         emitAll(
             combine(
                 profileDao.observeAllProfiles(), semesterDao.getAllSemesters(),
@@ -224,9 +242,9 @@ class ProfileSelectionCoordinator @Inject constructor(
         success(updated, validSemester(updated))
     }
 
-    suspend fun previewDeletion(profileId: Long): ProfileDeletionImpact? = mutationMutex.withLock {
+    suspend fun previewDeletion(profileId: Long): ProfileDeletionImpact? = withOperationalProfileMutation {
         resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
-        val profile = profileDao.getProfileById(profileId) ?: return@withLock null
+        val profile = profileDao.getProfileById(profileId) ?: return@withOperationalProfileMutation null
         ProfileDeletionImpact(
             profileId = profileId, profileName = profile.name,
             semesterCount = semesterDao.countByProfile(profileId),
@@ -285,7 +303,7 @@ class ProfileSelectionCoordinator @Inject constructor(
     }
 
     /** SemesterRepository 的全部写操作复用同一把锁，且绝不写 selected_semester_id。 */
-    suspend fun insertSemester(semester: Semester): Long = mutationMutex.withLock {
+    suspend fun insertSemester(semester: Semester): Long = withOperationalProfileMutation {
         require(semester.profileId > 0L) { "学期必须显式指定 Profile" }
         database.withTransaction {
             val profile = profileDao.getProfileById(semester.profileId)
@@ -296,7 +314,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
     }
 
-    suspend fun updateSemester(semester: Semester) = mutationMutex.withLock {
+    suspend fun updateSemester(semester: Semester) = withOperationalProfileMutation {
         require(semester.profileId > 0L) { "学期必须显式指定 Profile" }
         database.withTransaction {
             val existing = semesterDao.getSemesterById(semester.id)
@@ -306,7 +324,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
     }
 
-    suspend fun deleteSemester(semester: Semester) = mutationMutex.withLock {
+    suspend fun deleteSemester(semester: Semester) = withOperationalProfileMutation {
         database.withTransaction {
             val existing = semesterDao.getSemesterById(semester.id)
                 ?: throw IllegalArgumentException("学期不存在")
@@ -319,7 +337,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
     }
 
-    suspend fun deleteAllSemesters() = mutationMutex.withLock {
+    suspend fun deleteAllSemesters() = withOperationalProfileMutation {
         database.withTransaction {
             profileDao.clearAllActiveSemesterIds()
             bindingDao.deleteAll()
@@ -328,7 +346,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         }
     }
 
-    suspend fun setCurrentSemester(id: Long) = mutationMutex.withLock {
+    suspend fun setCurrentSemester(id: Long) = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         database.withTransaction {
             val semester = semesterDao.getSemesterById(id) ?: return@withTransaction
@@ -345,9 +363,9 @@ class ProfileSelectionCoordinator @Inject constructor(
         profileId: Long,
         semesterId: Long,
         block: suspend () -> T,
-    ): T? = mutationMutex.withLock {
+    ): T? = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
-        if (activeProfileId != profileId) return@withLock null
+        if (activeProfileId != profileId) return@withOperationalProfileMutation null
         database.withTransaction {
             val profile = profileDao.getProfileById(profileId) ?: return@withTransaction null
             val semester = semesterDao.getSemesterById(semesterId) ?: return@withTransaction null
@@ -363,12 +381,14 @@ class ProfileSelectionCoordinator @Inject constructor(
         profileId: Long,
         semesterId: Long,
         action: suspend (ActiveTimetableContext) -> T,
-    ): T? = mutationMutex.withLock {
+    ): T? = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
-        if (activeProfileId != profileId) return@withLock null
-        val profile = profileDao.getProfileById(profileId) ?: return@withLock null
-        val semester = semesterDao.getSemesterById(semesterId) ?: return@withLock null
-        if (profile.activeSemesterId != semesterId || semester.profileId != profileId) return@withLock null
+        if (activeProfileId != profileId) return@withOperationalProfileMutation null
+        val profile = profileDao.getProfileById(profileId) ?: return@withOperationalProfileMutation null
+        val semester = semesterDao.getSemesterById(semesterId) ?: return@withOperationalProfileMutation null
+        if (profile.activeSemesterId != semesterId || semester.profileId != profileId) {
+            return@withOperationalProfileMutation null
+        }
         action(success(profile, semester).activeContext)
     }
 
@@ -382,9 +402,9 @@ class ProfileSelectionCoordinator @Inject constructor(
         profileId: Long,
         semesterId: Long,
         provider: SyncProviderType,
-    ): String? = mutationMutex.withLock {
+    ): String? = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
-        if (activeProfileId != profileId) return@withLock null
+        if (activeProfileId != profileId) return@withOperationalProfileMutation null
         database.withTransaction {
             val profile = profileDao.getProfileById(profileId) ?: return@withTransaction null
             val semester = semesterDao.getSemesterById(semesterId) ?: return@withTransaction null
@@ -417,22 +437,22 @@ class ProfileSelectionCoordinator @Inject constructor(
     suspend fun saveCredentialsAndRebindIfActive(
         profileId: Long,
         credentials: SyncCredentials,
-    ): CredentialBindingMutationResult = mutationMutex.withLock {
+    ): CredentialBindingMutationResult = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         if (activeProfileId != profileId) {
-            return@withLock CredentialBindingMutationResult.Rejected("活动课表已变化")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动课表已变化")
         }
         val profile = profileDao.getProfileById(profileId)
-            ?: return@withLock CredentialBindingMutationResult.Rejected("课表不存在")
+            ?: return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("课表不存在")
         val semester = profile.activeSemesterId?.let { semesterDao.getSemesterById(it) }
         if (profile.activeSemesterId != null && semester?.profileId != profileId) {
-            return@withLock CredentialBindingMutationResult.Rejected("活动学期不属于目标课表")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动学期不属于目标课表")
         }
         val oldBinding = semester?.let { bindingDao.getBySemesterOnce(it.id) }
         if (oldBinding != null &&
             (oldBinding.profileId != profileId || oldBinding.semesterId != semester.id)
         ) {
-            return@withLock CredentialBindingMutationResult.Rejected("同步来源绑定归属异常")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("同步来源绑定归属异常")
         }
         val previousCredentials = credentialsRepository.getCredentials(profileId)
         try {
@@ -441,10 +461,10 @@ class ProfileSelectionCoordinator @Inject constructor(
             val rollbackFailure = restoreCredentials(profileId, previousCredentials)
             if (rollbackFailure != null) {
                 failure.addSuppressed(rollbackFailure)
-                return@withLock CredentialBindingMutationResult.Inconsistent("凭据写入失败且无法恢复原凭据")
+                return@withOperationalProfileMutation CredentialBindingMutationResult.Inconsistent("凭据写入失败且无法恢复原凭据")
             }
             if (failure is CancellationException) throw failure
-            return@withLock CredentialBindingMutationResult.Rejected("凭据写入失败")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("凭据写入失败")
         }
         try {
             val sourceBindingId = database.withTransaction {
@@ -488,10 +508,10 @@ class ProfileSelectionCoordinator @Inject constructor(
     /** 清除凭据与 binding，先使文件失效，再在同一锁内使旧网络任务失效。 */
     suspend fun clearCredentialsAndUnbindIfActive(
         profileId: Long,
-    ): CredentialBindingMutationResult = mutationMutex.withLock {
+    ): CredentialBindingMutationResult = withOperationalProfileMutation {
         val activeProfileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         if (activeProfileId != profileId || profileDao.getProfileById(profileId) == null) {
-            return@withLock CredentialBindingMutationResult.Rejected("活动课表已变化")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("活动课表已变化")
         }
         val previousCredentials = credentialsRepository.getCredentials(profileId)
         try {
@@ -500,10 +520,10 @@ class ProfileSelectionCoordinator @Inject constructor(
             val rollbackFailure = restoreCredentials(profileId, previousCredentials)
             if (rollbackFailure != null) {
                 failure.addSuppressed(rollbackFailure)
-                return@withLock CredentialBindingMutationResult.Inconsistent("清除凭据失败且无法恢复")
+                return@withOperationalProfileMutation CredentialBindingMutationResult.Inconsistent("清除凭据失败且无法恢复")
             }
             if (failure is CancellationException) throw failure
-            return@withLock CredentialBindingMutationResult.Rejected("清除凭据失败")
+            return@withOperationalProfileMutation CredentialBindingMutationResult.Rejected("清除凭据失败")
         }
         try {
             database.withTransaction { bindingDao.deleteByProfile(profileId) }
@@ -527,7 +547,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         provider: SyncProviderType,
         sourceBindingId: String,
         courses: List<Course>,
-    ): Boolean = mutationMutex.withLock {
+    ): Boolean = withOperationalProfileMutation {
         database.withTransaction {
             if (profileDao.getProfileById(profileId) == null) return@withTransaction false
             val semester = semesterDao.getSemesterById(semesterId) ?: return@withTransaction false
@@ -753,7 +773,7 @@ class ProfileSelectionCoordinator @Inject constructor(
         profileDao.deleteById(profileId)
     }
 
-    private suspend fun mutate(block: suspend () -> ProfileMutationResult): ProfileMutationResult = mutationMutex.withLock {
+    private suspend fun mutate(block: suspend () -> ProfileMutationResult): ProfileMutationResult = withOperationalProfileMutation {
         try {
             block()
         } catch (failure: BusinessRejection) {

@@ -102,22 +102,22 @@ class WorkManagerMuteRecoveryScheduler @Inject constructor(
         /** 过去时刻立即执行，未来时刻使用非负延迟。 */
         internal fun calculateDelayMillis(now: Instant, runAt: Instant): Long =
             Duration.between(now, runAt).toMillis().coerceAtLeast(0L)
+    }
+}
 
-        /** 完成回调直接执行，内部只读取已经完成的 Future，不阻塞调用线程。 */
-        private val DIRECT_EXECUTOR = Executor { command -> command.run() }
+/** 完成回调直接执行，内部只读取已经完成的 Future，不阻塞调用线程。 */
+private val workManagerOperationExecutor = Executor { command -> command.run() }
 
-        /** 把 WorkManager Operation.result 转换为可取消的非阻塞挂起结果。 */
-        private suspend fun awaitWorkManagerOperation(operation: Operation): Boolean {
-            val future = operation.result
-            return awaitEnqueueCompletion { complete ->
-                future.addListener(
-                    {
-                        complete(runCatching { future.get(); true }.getOrDefault(false))
-                    },
-                    DIRECT_EXECUTOR
-                )
-            }
-        }
+/** 把 WorkManager Operation.result 转换为可取消的非阻塞挂起结果。 */
+internal suspend fun awaitWorkManagerOperation(operation: Operation): Boolean {
+    val future = operation.result
+    return awaitEnqueueCompletion { complete ->
+        future.addListener(
+            {
+                complete(runCatching { future.get(); true }.getOrDefault(false))
+            },
+            workManagerOperationExecutor
+        )
     }
 }
 
@@ -138,6 +138,7 @@ class MuteRecoveryWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val silenceHelper: SilenceHelper,
+    private val coordinator: MuteSessionCoordinator,
     private val notificationHelper: MuteRecoveryNotificationHelper
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
@@ -163,15 +164,25 @@ class MuteRecoveryWorker @AssistedInject constructor(
             throw cancellation
         } catch (failure: Exception) {
             Log.e(TAG, "静音恢复 Worker 处理失败: ${failure.javaClass.simpleName}")
-            // SharedPreferences commit / 存储 IO 异常不是终态：ACTIVE/PENDING 恢复责任
-            // 与震动状态可能仍持久保留，直接 Result.failure() 会让用户在不重开应用的
-            // 情况下长期收不到响铃。有限次数内交给 WorkManager 退避重试；到上限后刷新
-            // 用户可见的恢复提醒作为兜底入口，再收敛为 success 以免无限占用后台配额。
-            if (runAttemptCount + 1 < MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS) {
+            // REPLACE 会重置 WorkManager.runAttemptCount，因此异常也必须推进持久在责任
+            // 记录上的 recoveryAttempt。只有确认已进入 EXHAUSTED 或责任已不存在，才允许
+            // 收敛成功；持久写入或警示刷新失败都继续重试。
+            try {
+                when (coordinator.recordWorkerFailure(key)) {
+                    is MuteRecoveryOutcome.RetryRequired -> Result.retry()
+                    MuteRecoveryOutcome.Exhausted,
+                    MuteRecoveryOutcome.NoAction -> {
+                        notificationHelper.refreshForCurrentState()
+                        Result.success()
+                    }
+                    MuteRecoveryOutcome.Recovered,
+                    MuteRecoveryOutcome.ResponsibilityReleased -> Result.retry()
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (persistenceFailure: Exception) {
+                Log.e(TAG, "静音恢复失败次数持久化失败: ${persistenceFailure.javaClass.simpleName}")
                 Result.retry()
-            } else {
-                runCatching { notificationHelper.refreshForCurrentState() }
-                Result.success()
             }
         }
     }

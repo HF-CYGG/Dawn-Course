@@ -2,6 +2,13 @@
 <resources>
     <string name="database_recovery_title">Timetable data recovery required</string>
     <string name="database_recovery_explanation">No new database was created and the existing database was not overwritten. Restore from an app backup or WebDAV; discard the old data only if you are certain it is no longer needed.</string>
+    <string name="database_recovery_restart_required">Database access has stopped in this process. Restart safely to isolate the inconsistent data before continuing recovery.</string>
+    <string name="database_recovery_restart_action">Restart safely and continue recovery</string>
+    <string name="database_recovery_marker_retry_required">The recovery state could not be saved. To prevent the database from being trusted on the next launch, only retrying the recovery marker is available.</string>
+    <string name="database_recovery_marker_retry_action">Retry saving recovery state</string>
+    <string name="database_recovery_marker_retry_failed">The recovery state still could not be saved. Check device storage and try again.</string>
+    <string name="update_download_url_unsafe">The update download address is unsafe and was blocked.</string>
+    <string name="update_browser_unavailable">No browser is available to download the update.</string>
     <string name="database_recovery_reason_key">This device cannot use the original database key. After changing devices or if the Keystore key becomes invalid, restore from a backup created by the app.</string>
     <string name="database_recovery_reason_data">The database could not be opened securely or failed integrity verification. Access has stopped and the original files have been preserved.</string>
     <string name="database_recovery_local_backup">Restore from app backup</string>

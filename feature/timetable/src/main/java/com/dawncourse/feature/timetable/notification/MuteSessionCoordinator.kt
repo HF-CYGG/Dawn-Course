@@ -81,7 +81,7 @@ interface MuteSessionPersistence {
     fun restoreExhaustedAfterFailedRetry(key: TriggerKey): Boolean
 
     /** 任一恢复 Work 无法入队时升级为显式用户处理责任。 */
-    fun requireUserAction(key: TriggerKey): Boolean = false
+    fun requireUserAction(key: TriggerKey): Boolean
 }
 
 /** 与 Android AudioManager 解耦的铃声状态。 */
@@ -213,6 +213,18 @@ class MuteSessionCoordinator @Inject constructor(
     /** 恢复 Work 无法持久入队时发布显式用户责任。 */
     @Synchronized
     fun requireUserAction(key: TriggerKey): Boolean = persistence.requireUserAction(key)
+
+    /**
+     * Worker 自身发生基础设施异常时也使用持久失败次数推进状态机。
+     *
+     * 不能依赖 WorkManager 的 runAttemptCount：系统事件会以新的唯一 Work 替换旧请求，
+     * 该计数会归零；持久在静音责任上的 recoveryAttempt 才能保证有限重试最终收敛。
+     */
+    @Synchronized
+    fun recordWorkerFailure(key: TriggerKey): MuteRecoveryOutcome {
+        if (persistence.record(key) == null) return MuteRecoveryOutcome.NoAction
+        return recordFailure(key)
+    }
 
     /** 记录失败并把第 N 次失败转换为用户必须处理的耗尽状态。 */
     private fun recordFailure(key: TriggerKey): MuteRecoveryOutcome {

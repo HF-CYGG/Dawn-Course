@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** Runtime 外层锁、状态和句柄发布的纯 JVM 测试。 */
@@ -106,5 +107,65 @@ class DatabaseStartupRuntimeControllerTest {
 
         assertEquals(DatabaseRuntimeState.StartupBlocked, controller.state.value)
         assertEquals(OperationalDataReadiness.RECOVERY_REQUIRED, controller.readiness())
+    }
+
+    @Test
+    fun readyCanEnterRuntimeRecoveryAndRejectNewHandleAccess() {
+        val database = Any()
+        val controller = readyController(database)
+
+        controller.enterRuntimeRecovery(
+            DatabaseRecoveryReason.RestoreFailed,
+            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+        )
+
+        assertEquals(
+            DatabaseRuntimeState.RecoveryRequired(
+                DatabaseRecoveryReason.RestoreFailed,
+                DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            ),
+            controller.state.value,
+        )
+        assertEquals(OperationalDataReadiness.RECOVERY_REQUIRED, controller.readiness())
+        assertThrows(IllegalStateException::class.java) { controller.requireReadyHandle() }
+    }
+
+    @Test
+    fun markerRetryCanOnlyAdvanceToRestartRequiredAndNeverBackToReady() {
+        val controller = readyController(Any())
+        controller.enterRuntimeRecovery(
+            DatabaseRecoveryReason.RestoreFailed,
+            DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED,
+        )
+
+        controller.enterRuntimeRecovery(
+            DatabaseRecoveryReason.RestoreFailed,
+            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+        )
+        assertEquals(
+            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            (controller.state.value as DatabaseRuntimeState.RecoveryRequired).entryMode,
+        )
+
+        controller.enterRuntimeRecovery(
+            DatabaseRecoveryReason.RestoreFailed,
+            DatabaseRecoveryEntryMode.ACTIONS_AVAILABLE,
+        )
+        assertEquals(
+            DatabaseRecoveryEntryMode.RESTART_REQUIRED,
+            (controller.state.value as DatabaseRuntimeState.RecoveryRequired).entryMode,
+        )
+    }
+
+    private fun readyController(database: Any): DatabaseStartupRuntimeController<Any> {
+        val controller = DatabaseStartupRuntimeController(
+            criticalSection = DatabaseStartupCriticalSection { block -> block() },
+            initializer = DatabaseStartupInitializer {
+                DatabaseStartupInitialization.Ready(database, migratedPlaintextThisRun = false)
+            },
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        controller.start(CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        return controller
     }
 }

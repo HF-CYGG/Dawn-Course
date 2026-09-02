@@ -5,6 +5,10 @@ import android.content.Context
 import android.content.Intent
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * 系统事件后的课表调度恢复广播接收器。
@@ -22,8 +26,25 @@ class SystemScheduleReceiver : BroadcastReceiver() {
         }
 
         val appContext = context.applicationContext
-        ReminderScheduler.triggerImmediateWork(appContext, forceReplay = true)
-        WidgetSyncManager.restoreAfterSystemEvent(appContext)
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                if (!ReminderScheduler.triggerImmediateWorkAndAwait(
+                        appContext,
+                        forceReplay = true,
+                    )
+                ) {
+                    Log.w(TAG, "系统事件调度恢复任务未确认入队")
+                }
+                WidgetSyncManager.restoreAfterSystemEvent(appContext)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "SystemScheduleReceiver"
     }
 }
 

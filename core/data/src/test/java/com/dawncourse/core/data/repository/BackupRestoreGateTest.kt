@@ -166,6 +166,83 @@ class BackupRestoreGateTest {
         assertTrue(result.isSuccess)
     }
 
+    @Test
+    fun crossProfileOriginReferenceFailsBeforeCommit() = runBlocking {
+        var commitCalled = false
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                version = 4,
+                semesters = listOf(
+                    semester(id = 11L, profileId = 7L),
+                    semester(id = 22L, profileId = 8L),
+                ),
+                courses = listOf(
+                    course(id = 100L, semesterId = 11L),
+                    course(id = 200L, semesterId = 22L, originId = 100L),
+                ),
+                selectedSemesterId = null,
+                profiles = listOf(
+                    TimetableProfile(7L, "d8b80996-3127-4a4f-a348-ae9110805f56", "A", 11L),
+                    TimetableProfile(8L, "c8335904-33f5-4754-90a5-e289cb74b04b", "B", 22L),
+                ),
+                sourceBindings = emptyList(),
+                activeProfileId = 7L,
+            )
+        ) { commitCalled = true }
+
+        assertTrue(result.isFailure)
+        assertFalse(commitCalled)
+    }
+
+    @Test
+    fun sameOriginFamilyAcrossSemestersFailsBeforeCommitEvenWhenAnchorIsDangling() = runBlocking {
+        var commitCalled = false
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                version = 4,
+                semesters = listOf(
+                    semester(id = 11L, profileId = 7L),
+                    semester(id = 12L, profileId = 7L),
+                ),
+                courses = listOf(
+                    course(id = 201L, semesterId = 11L, originId = 999L),
+                    course(id = 202L, semesterId = 12L, originId = 999L),
+                ),
+                selectedSemesterId = null,
+                profiles = listOf(
+                    TimetableProfile(7L, "d8b80996-3127-4a4f-a348-ae9110805f56", "A", 11L),
+                ),
+                sourceBindings = emptyList(),
+                activeProfileId = 7L,
+            )
+        ) { commitCalled = true }
+
+        assertTrue(result.isFailure)
+        assertFalse(commitCalled)
+    }
+
+    @Test
+    fun danglingOriginFamilyInsideOneSemesterRemainsCompatible() = runBlocking {
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                version = 4,
+                semesters = listOf(semester(id = 11L, profileId = 7L)),
+                courses = listOf(
+                    course(id = 201L, semesterId = 11L, originId = 999L),
+                    course(id = 202L, semesterId = 11L, originId = 999L),
+                ),
+                selectedSemesterId = null,
+                profiles = listOf(
+                    TimetableProfile(7L, "d8b80996-3127-4a4f-a348-ae9110805f56", "A", 11L),
+                ),
+                sourceBindings = emptyList(),
+                activeProfileId = 7L,
+            )
+        ) { }
+
+        assertTrue(result.isSuccess)
+    }
+
     private fun validPayload(
         version: Int = 2,
         settings: AppSettings? = AppSettings(),
@@ -200,7 +277,7 @@ class BackupRestoreGateTest {
         isCurrent = isCurrent
     )
 
-    private fun course(id: Long, semesterId: Long) = Course(
+    private fun course(id: Long, semesterId: Long, originId: Long = 0L) = Course(
         id = id,
         semesterId = semesterId,
         name = "课程$id",
@@ -208,6 +285,7 @@ class BackupRestoreGateTest {
         startSection = 1,
         duration = 2,
         startWeek = 1,
-        endWeek = 16
+        endWeek = 16,
+        originId = originId,
     )
 }

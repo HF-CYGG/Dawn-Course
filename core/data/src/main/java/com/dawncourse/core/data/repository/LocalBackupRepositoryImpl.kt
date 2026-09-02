@@ -43,7 +43,7 @@ class LocalBackupRepositoryImpl @Inject internal constructor(
             if (inputStream == null) {
                 throw IllegalStateException("无法读取备份文件")
             }
-            val json = inputStream.use { it.bufferedReader().readText() }
+            val json = inputStream.use { input -> BoundedBackupInput.readUtf8(input) }
             gson.fromJson(json, LocalBackupData::class.java)
         }
     }

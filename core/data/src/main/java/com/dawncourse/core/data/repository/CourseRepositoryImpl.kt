@@ -24,6 +24,7 @@ class CourseRepositoryImpl @Inject constructor(
     private val courseDao: CourseDao,
     private val database: AppDatabase,
     private val profileSelectionCoordinator: Provider<ProfileSelectionCoordinator>,
+    private val mutationGate: OperationalDataMutationGate,
 ) : CourseRepository {
 
     /**
@@ -43,15 +44,6 @@ class CourseRepositoryImpl @Inject constructor(
     }
 
     /**
-     * 根据原始 ID 获取课程列表
-     *
-     * 通常用于查找由同一门课程调课分裂出的所有记录。
-     */
-    override suspend fun getCoursesByOriginId(originId: Long): List<Course> {
-        return courseDao.getCoursesByOriginId(originId).map { it.toDomain() }
-    }
-
-    /**
      * 根据 ID 获取课程
      * 将数据库实体转换为领域模型。
      */
@@ -64,18 +56,18 @@ class CourseRepositoryImpl @Inject constructor(
      * 将领域模型转换为数据库实体并保存。
      */
     override suspend fun insertCourse(course: Course): Long {
-        return courseDao.insertCourse(course.toEntity())
+        return mutationGate.withMutation { courseDao.insertCourse(course.toEntity()) }
     }
 
     override suspend fun insertCourses(courses: List<Course>): List<Long> {
-        return courseDao.insertCourses(courses.map { it.toEntity() })
+        return mutationGate.withMutation { courseDao.insertCourses(courses.map { it.toEntity() }) }
     }
 
     override suspend fun saveCoursesAtomically(
         courses: List<Course>,
         editingCourseId: Long
-    ): CourseRepository.AtomicSaveResult = database.withTransaction {
-        saveCoursesLocked(courses, editingCourseId)
+    ): CourseRepository.AtomicSaveResult = mutationGate.withMutation {
+        database.withTransaction { saveCoursesLocked(courses, editingCourseId) }
     }
 
     override suspend fun saveCoursesIfScopeActive(
@@ -88,6 +80,96 @@ class CourseRepositoryImpl @Inject constructor(
         semesterId = semesterId,
     ) {
         saveCoursesLocked(courses, editingCourseId)
+    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+
+    override suspend fun deleteCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courseIds: Set<Long>,
+    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
+        profileId = profileId,
+        semesterId = semesterId,
+    ) {
+        if (courseIds.isEmpty()) return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Success
+        val current = courseIds.map { id -> courseDao.getCourseById(id) }
+        if (current.any { entity -> entity == null || entity.semesterId != semesterId }) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                "课程已变化或不属于当前学期，请刷新后重试"
+            )
+        }
+        courseIds.forEach { id -> courseDao.deleteCourseById(id) }
+        CourseRepository.AtomicSaveResult.Success
+    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+
+    override suspend fun restoreCoursesIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        courses: List<Course>,
+    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
+        profileId = profileId,
+        semesterId = semesterId,
+    ) {
+        if (courses.isEmpty() || courses.any { course -> course.semesterId != semesterId || course.id <= 0L }) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                "待恢复课程不属于当前学期"
+            )
+        }
+        if (courses.any { course -> courseDao.getCourseById(course.id) != null }) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                "课程 ID 已被占用，请刷新后重试"
+            )
+        }
+        courseDao.insertCourses(courses.map { course -> course.toEntity() })
+        CourseRepository.AtomicSaveResult.Success
+    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+
+    override suspend fun undoRescheduleIfScopeActive(
+        profileId: Long,
+        semesterId: Long,
+        originId: Long,
+    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
+        profileId = profileId,
+        semesterId = semesterId,
+    ) {
+        if (originId <= 0L) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected("课程族标识无效")
+        }
+        val siblings = courseDao.getCoursesByOriginId(semesterId, originId).map { entity -> entity.toDomain() }
+        if (siblings.isEmpty()) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                "调课记录已变化，请刷新后重试"
+            )
+        }
+        if (siblings.size <= 1 && siblings.none { course -> course.isModified }) {
+            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Success
+        }
+        val template = siblings.firstOrNull { course -> !course.isModified }
+            ?: return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                "缺少原课程片段，无法安全撤销调课"
+            )
+        val allWeeks = siblings.flatMapTo(linkedSetOf()) { course ->
+            (course.startWeek..course.endWeek).filter { week ->
+                when (course.weekType) {
+                    Course.WEEK_TYPE_ODD -> week % 2 != 0
+                    Course.WEEK_TYPE_EVEN -> week % 2 == 0
+                    else -> true
+                }
+            }
+        }
+        val restored = convertWeeksToSegments(allWeeks).map { (start, end, type) ->
+            template.copy(
+                id = 0L,
+                startWeek = start,
+                endWeek = end,
+                weekType = type,
+                isModified = false,
+                note = "",
+                originId = 0L,
+            )
+        }
+        siblings.forEach { course -> courseDao.deleteCourseById(course.id) }
+        courseDao.insertCourses(restored.map { course -> course.toEntity() })
+        CourseRepository.AtomicSaveResult.Success
     } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
 
     /** 调用方必须已经持有 Room transaction。 */
@@ -123,25 +205,48 @@ class CourseRepositoryImpl @Inject constructor(
         return CourseRepository.AtomicSaveResult.Success
     }
 
+    private fun convertWeeksToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {
+        val pending = weeks.toMutableSet()
+        val segments = mutableListOf<Triple<Int, Int, Int>>()
+        while (pending.isNotEmpty()) {
+            val first = pending.minOrNull() ?: break
+            var endAll = first
+            while (pending.contains(endAll + 1)) endAll += 1
+            var endParity = first
+            while (pending.contains(endParity + 2)) endParity += 2
+            val allCount = endAll - first + 1
+            val parityCount = (endParity - first) / 2 + 1
+            if (allCount >= parityCount) {
+                segments += Triple(first, endAll, Course.WEEK_TYPE_ALL)
+                (first..endAll).forEach(pending::remove)
+            } else {
+                val type = if (first % 2 == 0) Course.WEEK_TYPE_EVEN else Course.WEEK_TYPE_ODD
+                segments += Triple(first, endParity, type)
+                (first..endParity step 2).forEach(pending::remove)
+            }
+        }
+        return segments
+    }
+
     /**
      * 更新课程
      */
     override suspend fun updateCourse(course: Course) {
-        courseDao.updateCourse(course.toEntity())
+        mutationGate.withMutation { courseDao.updateCourse(course.toEntity()) }
     }
 
     /**
      * 删除课程
      */
     override suspend fun deleteCourse(course: Course) {
-        courseDao.deleteCourse(course.toEntity())
+        mutationGate.withMutation { courseDao.deleteCourse(course.toEntity()) }
     }
 
     /**
      * 根据 ID 删除课程
      */
     override suspend fun deleteCourseById(id: Long) {
-        courseDao.deleteCourseById(id)
+        mutationGate.withMutation { courseDao.deleteCourseById(id) }
     }
 
     /**
@@ -150,7 +255,7 @@ class CourseRepositoryImpl @Inject constructor(
      * 调用 DAO 层进行事务处理，确保原子性。
      */
     override suspend fun updateAllCoursesDuration(duration: Int) {
-        courseDao.updateAllCoursesDuration(duration)
+        mutationGate.withMutation { courseDao.updateAllCoursesDuration(duration) }
     }
 
     override suspend fun getMaxWeekInSemester(semesterId: Long): Int {
@@ -158,10 +263,10 @@ class CourseRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteCoursesBySemester(semesterId: Long) {
-        courseDao.deleteCoursesBySemester(semesterId)
+        mutationGate.withMutation { courseDao.deleteCoursesBySemester(semesterId) }
     }
 
     override suspend fun deleteAllCourses() {
-        courseDao.deleteAllCourses()
+        mutationGate.withMutation { courseDao.deleteAllCourses() }
     }
 }

@@ -98,7 +98,12 @@ class SilenceReceiver : BroadcastReceiver() {
                                 // Key 交给 WorkManager 持久重试，就绪后按同一显式 Intent 补投，
                                 // 避免自动静音永久丢失。
                                 // MUTE 的窗口以 courseEnd 为界，不需要非精确迟到宽限，精度传 null。
-                                entryPoint.triggerReadinessRetryScheduler().enqueue(key, precision = null)
+                                val enqueued = entryPoint.triggerReadinessRetryScheduler()
+                                    .enqueue(key, precision = null)
+                                if (!enqueued) {
+                                    // scheduler 已先同步写入独立 journal；不要输出 Key/课程数据。
+                                    Log.w(TAG, "自动静音补投任务入队未确认，将由后续对账重放")
+                                }
                             }
                         }
                         TriggerKind.UNMUTE -> recoverOwnedSession(

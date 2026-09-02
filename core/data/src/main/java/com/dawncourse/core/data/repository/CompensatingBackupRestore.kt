@@ -8,6 +8,7 @@ import com.dawncourse.core.domain.model.TimetableProfile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import com.dawncourse.core.data.local.startup.BackupRecoveryActivation
 
 /** 恢复开始前采集的完整可补偿状态。 */
 internal data class BackupRestorePreImage(
@@ -28,10 +29,14 @@ internal class BackupRestoreRolledBackException(cause: Throwable) :
 /** 新状态失败且旧状态无法完整补偿，必须进入 RecoveryRequired。 */
 internal class BackupRecoveryRequiredException(
     cause: Throwable,
-    compensationFailures: List<Throwable>
+    compensationFailures: List<Throwable>,
+    val recoveryActivation: BackupRecoveryActivation,
 ) : IllegalStateException("备份恢复补偿失败，必须进入数据恢复流程", cause) {
     init {
         compensationFailures.forEach(::addSuppressed)
+        if (recoveryActivation is BackupRecoveryActivation.MarkerPersistenceFailed) {
+            addSuppressed(recoveryActivation.failure)
+        }
     }
 }
 
@@ -49,7 +54,7 @@ internal object CompensatingBackupRestore {
             List<SyncSourceBinding>,
         ) -> Unit,
         replaceSettingsAndSelection: suspend (AppSettings, Long?, Long?) -> Unit,
-        persistRecoveryRequired: suspend () -> Unit
+        enterRecoveryRequired: suspend () -> BackupRecoveryActivation
     ): Result<Unit> {
         try {
             replaceRoom(
@@ -101,14 +106,18 @@ internal object CompensatingBackupRestore {
                 return Result.failure(BackupRestoreRolledBackException(applyFailure))
             }
 
-            val recoveryRequired = BackupRecoveryRequiredException(applyFailure, compensationFailures)
-            withContext(NonCancellable) {
+            val activation = withContext(NonCancellable) {
                 try {
-                    persistRecoveryRequired()
+                    enterRecoveryRequired()
                 } catch (markerFailure: Throwable) {
-                    recoveryRequired.addSuppressed(markerFailure)
+                    BackupRecoveryActivation.MarkerPersistenceFailed(markerFailure)
                 }
             }
+            val recoveryRequired = BackupRecoveryRequiredException(
+                applyFailure,
+                compensationFailures,
+                activation,
+            )
             return Result.failure(recoveryRequired)
         }
     }

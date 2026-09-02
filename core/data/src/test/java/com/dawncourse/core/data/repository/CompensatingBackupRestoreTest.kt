@@ -3,6 +3,7 @@ package com.dawncourse.core.data.repository
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.data.local.startup.BackupRecoveryActivation
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,7 +41,10 @@ class CompensatingBackupRestoreTest {
                     activeProfileId = activeProfileId,
                 )
             },
-            persistRecoveryRequired = { recoveryMarked = true }
+            enterRecoveryRequired = {
+                recoveryMarked = true
+                BackupRecoveryActivation.MarkerPersisted
+            }
         )
 
         assertTrue(result.exceptionOrNull() is BackupRestoreRolledBackException)
@@ -64,12 +68,46 @@ class CompensatingBackupRestoreTest {
                 settingsWrites += 1
                 error(if (settingsWrites == 1) "新状态失败" else "补偿失败")
             },
-            persistRecoveryRequired = { recoveryMarked = true }
+            enterRecoveryRequired = {
+                recoveryMarked = true
+                BackupRecoveryActivation.MarkerPersisted
+            }
         )
 
         assertTrue(result.exceptionOrNull() is BackupRecoveryRequiredException)
+        assertEquals(
+            BackupRecoveryActivation.MarkerPersisted,
+            (result.exceptionOrNull() as BackupRecoveryRequiredException).recoveryActivation,
+        )
         assertTrue(recoveryMarked)
         assertEquals(old.semesters to old.courses, room)
+    }
+
+    @Test
+    fun markerFailureIsTypedAndNotOnlySuppressed() = runBlocking {
+        val old = preImage(semesterId = 1L, name = "旧设置")
+        val markerFailure = IllegalStateException("marker")
+        var settingsWrites = 0
+
+        val result = CompensatingBackupRestore.execute(
+            preImage = old,
+            replacement = validated(semesterId = 2L, name = "新设置"),
+            replaceRoom = { _, _, _, _ -> },
+            replaceSettingsAndSelection = { _, _, _ ->
+                settingsWrites += 1
+                error(if (settingsWrites == 1) "新状态失败" else "补偿失败")
+            },
+            enterRecoveryRequired = {
+                BackupRecoveryActivation.MarkerPersistenceFailed(markerFailure)
+            },
+        )
+
+        val failure = result.exceptionOrNull() as BackupRecoveryRequiredException
+        assertEquals(
+            BackupRecoveryActivation.MarkerPersistenceFailed(markerFailure),
+            failure.recoveryActivation,
+        )
+        assertTrue(failure.suppressed.contains(markerFailure))
     }
 
     private fun preImage(semesterId: Long, name: String) = BackupRestorePreImage(

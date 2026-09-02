@@ -4,6 +4,7 @@ import com.dawncourse.core.domain.model.TriggerKey
 import com.dawncourse.core.domain.model.TriggerKind
 import java.time.Instant
 import java.time.LocalDate
+import java.io.IOException
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -101,6 +102,60 @@ class MuteRecoveryAsyncSchedulingTest {
     }
 
     @Test
+    fun `Worker 基础设施异常使用持久次数并在第三次升级为 EXHAUSTED`() {
+        val store = FakePersistence(
+            MuteSessionRecord(key, MuteSessionStatus.RECOVERY_PENDING, 2)
+        )
+
+        val outcome = MuteSessionCoordinator(store).recordWorkerFailure(key)
+
+        assertEquals(MuteRecoveryOutcome.Exhausted, outcome)
+        assertEquals(MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED, store.record(key)?.status)
+        assertEquals(MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS, store.record(key)?.recoveryAttempt)
+    }
+
+    @Test
+    fun `Worker 基础设施异常无法持久记录时向上传播供 WorkManager 重试`() {
+        val store = FakePersistence(
+            initial = MuteSessionRecord(key, MuteSessionStatus.RECOVERY_PENDING, 2),
+            recordFailure = IOException("commit failed")
+        )
+
+        try {
+            MuteSessionCoordinator(store).recordWorkerFailure(key)
+            fail("持久计数失败必须向上传播")
+        } catch (_: IOException) {
+            // expected
+        }
+
+        assertEquals(MuteSessionStatus.RECOVERY_PENDING, store.record(key)?.status)
+    }
+
+    @Test
+    fun `Worker 基础设施异常发现责任已并发清除时返回 NoAction`() {
+        val store = FakePersistence(
+            MuteSessionRecord(key, MuteSessionStatus.RECOVERY_PENDING, 2)
+        )
+        store.remove(key)
+
+        val outcome = MuteSessionCoordinator(store).recordWorkerFailure(key)
+
+        assertEquals(MuteRecoveryOutcome.NoAction, outcome)
+    }
+
+    @Test
+    fun `Worker 请求被 REPLACE 后仍沿用持久失败次数而不是 runAttemptCount`() {
+        val store = FakePersistence(
+            MuteSessionRecord(key, MuteSessionStatus.RECOVERY_PENDING, 1)
+        )
+        val coordinator = MuteSessionCoordinator(store)
+
+        assertEquals(MuteRecoveryOutcome.RetryRequired(2), coordinator.recordWorkerFailure(key))
+        assertEquals(MuteRecoveryOutcome.Exhausted, coordinator.recordWorkerFailure(key))
+        assertEquals(MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS, store.record(key)?.recoveryAttempt)
+    }
+
+    @Test
     fun `用户 retry 入队被取消时向上传播并保留 PENDING 供启动修补`() = runBlocking {
         val store = FakePersistence(exhausted(key))
         val scheduler = FakeScheduler(
@@ -124,7 +179,10 @@ class MuteRecoveryAsyncSchedulingTest {
         assertEquals(MuteSessionStatus.RECOVERY_PENDING, store.record(key)?.status)
     }
 
-    private class FakePersistence(initial: MuteSessionRecord) : MuteSessionPersistence {
+    private class FakePersistence(
+        initial: MuteSessionRecord,
+        private val recordFailure: Throwable? = null
+    ) : MuteSessionPersistence {
         private val values = mutableMapOf(initial.key to initial)
 
         override fun records(): Set<MuteSessionRecord> = values.values.toSet()
@@ -134,7 +192,21 @@ class MuteRecoveryAsyncSchedulingTest {
         override fun consume(key: TriggerKey): ConsumedMuteSession =
             ConsumedMuteSession(values.remove(key) != null, activeKeys().size)
         override fun recoveryAttempt(key: TriggerKey): Int = values[key]?.recoveryAttempt ?: 0
-        override fun recordRecoveryFailure(key: TriggerKey): Int = error("本测试不使用")
+        override fun recordRecoveryFailure(key: TriggerKey): Int {
+            recordFailure?.let { throw it }
+            val current = values[key] ?: throw IOException("missing")
+            val next = (current.recoveryAttempt + 1)
+                .coerceAtMost(MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS)
+            values[key] = current.copy(
+                status = if (next < MuteSessionCoordinator.MAX_RECOVERY_ATTEMPTS) {
+                    MuteSessionStatus.RECOVERY_PENDING
+                } else {
+                    MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED
+                },
+                recoveryAttempt = next
+            )
+            return next
+        }
         override fun clearRecoveryAttempt(key: TriggerKey) = Unit
         override fun prepareUserRetry(key: TriggerKey): Boolean {
             val current = values[key]

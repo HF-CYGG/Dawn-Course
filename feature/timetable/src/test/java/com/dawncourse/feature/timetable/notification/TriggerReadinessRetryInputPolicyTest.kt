@@ -6,9 +6,14 @@ import com.dawncourse.core.domain.model.TriggerKind
 import com.dawncourse.core.domain.model.TriggerPrecision
 import com.dawncourse.core.domain.model.TriggerUriCodec
 import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /** 触发就绪重试 Worker 的输入必须完整，且只接受 REMINDER / MUTE Key。 */
@@ -87,5 +92,122 @@ class TriggerReadinessRetryInputPolicyTest {
             WorkManagerTriggerReadinessRetryScheduler.workName(reminderKey) ==
                 WorkManagerTriggerReadinessRetryScheduler.workName(muteKey)
         )
+    }
+
+    @Test
+    fun `WorkManager 异步入队成功后才清理持久补投责任`() = runBlocking {
+        val journal = FakeRetryJournal()
+        val record = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.INEXACT)
+
+        val enqueued = persistAndEnqueueReadinessRetry(record, journal) { true }
+
+        assertTrue(enqueued)
+        assertTrue(journal.records().isEmpty())
+    }
+
+    @Test
+    fun `WorkManager 异步入队失败时保留持久补投责任供冷启动重放`() = runBlocking {
+        val journal = FakeRetryJournal()
+        val record = TriggerReadinessRetryRecord(muteKey, precision = null)
+
+        val enqueued = persistAndEnqueueReadinessRetry(record, journal) { false }
+
+        assertFalse(enqueued)
+        assertEquals(setOf(record), journal.records())
+    }
+
+    @Test
+    fun `journal 写入失败仍尝试 WorkManager 且入队成功即接管责任`() = runBlocking {
+        val journal = FakeRetryJournal(failPut = true)
+        val record = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.EXACT)
+        var enqueueCalled = false
+
+        val enqueued = persistAndEnqueueReadinessRetry(record, journal) {
+            enqueueCalled = true
+            true
+        }
+
+        assertTrue(enqueueCalled)
+        assertTrue(enqueued)
+        assertTrue(journal.records().isEmpty())
+    }
+
+    @Test
+    fun `journal 与 WorkManager 同时失败时报告责任未接管`() = runBlocking {
+        val journal = FakeRetryJournal(failPut = true)
+        val record = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.EXACT)
+        var enqueueCalled = false
+
+        val enqueued = persistAndEnqueueReadinessRetry(record, journal) {
+            enqueueCalled = true
+            false
+        }
+
+        assertTrue(enqueueCalled)
+        assertFalse(enqueued)
+        assertTrue(journal.records().isEmpty())
+    }
+
+    @Test
+    fun `WorkManager 成功但 journal 清理失败仍报告已接管并保留幂等重放`() = runBlocking {
+        val journal = FakeRetryJournal(failRemove = true)
+        val record = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.EXACT)
+
+        val enqueued = persistAndEnqueueReadinessRetry(record, journal) { true }
+
+        assertTrue(enqueued)
+        assertEquals(setOf(record), journal.records())
+    }
+
+    @Test
+    fun `补投入队协程被取消时保留 journal 并传播取消`() = runBlocking {
+        val journal = FakeRetryJournal()
+        val record = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.EXACT)
+
+        try {
+            persistAndEnqueueReadinessRetry(record, journal) {
+                throw CancellationException("cancelled")
+            }
+            fail("CancellationException 应向上传播")
+        } catch (_: CancellationException) {
+            // expected
+        }
+
+        assertEquals(setOf(record), journal.records())
+    }
+
+    @Test
+    fun `journal 重放任一入队未确认时向每日调度报告失败`() = runBlocking {
+        val first = TriggerReadinessRetryRecord(reminderKey, TriggerPrecision.EXACT)
+        val second = TriggerReadinessRetryRecord(muteKey, null)
+        val attempts = mutableListOf<TriggerKey>()
+
+        val success = reconcileTriggerReadinessRetryRecords(setOf(first, second)) { record ->
+            attempts += record.key
+            record.key != muteKey
+        }
+
+        assertFalse(success)
+        assertEquals(setOf(reminderKey, muteKey), attempts.toSet())
+    }
+
+    private class FakeRetryJournal(
+        private val failPut: Boolean = false,
+        private val failRemove: Boolean = false,
+    ) : TriggerReadinessRetryJournal {
+        private val values = linkedSetOf<TriggerReadinessRetryRecord>()
+
+        override fun records(): Set<TriggerReadinessRetryRecord> = values.toSet()
+
+        override fun put(record: TriggerReadinessRetryRecord) {
+            if (failPut) error("put failed")
+            values.removeAll { current -> current.key == record.key }
+            values += record
+        }
+
+        override fun remove(key: TriggerKey) {
+            if (failRemove) error("remove failed")
+            values.removeAll { record -> record.key == key }
+        }
     }
 }

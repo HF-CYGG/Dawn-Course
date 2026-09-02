@@ -3,6 +3,10 @@ package com.dawncourse.feature.timetable.notification
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * 课程状态边界刷新接收器。
@@ -16,6 +20,22 @@ class PersistentNotificationRefreshReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != PersistentNotificationRefreshScheduler.ACTION_REFRESH_COURSE_STATUS) return
         if (intent.dataString != PersistentNotificationRefreshScheduler.REFRESH_DATA_URI) return
-        ReminderScheduler.triggerImmediateWork(context.applicationContext, forceReplay = false)
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                if (!ReminderScheduler.triggerCourseSurfaceRefreshWorkAndAwait(
+                        context.applicationContext,
+                    )
+                ) {
+                    Log.w(TAG, "课程状态边界刷新责任未持久化且任务未确认入队")
+                }
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "CourseStatusRefresh"
     }
 }

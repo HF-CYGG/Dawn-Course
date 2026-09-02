@@ -26,11 +26,11 @@ interface UpdateApi {
 
 /**
  * 更新仓库
- * 负责从网络获取最新的应用版本信息，支持多域名备选策略
+ * 负责从网络获取最新的应用版本信息，并在结果进入 UI 前校验下载链接。
  *
  * 主要职责：
  * 1. 封装 Retrofit 网络请求
- * 2. 实现主域名失败后的备用域名重试机制
+ * 2. 只使用已确认的 HTTPS 元数据入口
  * 3. 统一异常处理，返回 Result 类型
  */
 @Singleton
@@ -70,67 +70,41 @@ class UpdateRepository @Inject constructor() {
     }
 
     private val endpointConfigs = buildUpdateEndpointConfigs()
-    // 懒加载主 API 实例
+    // 更新元数据只保留一个经确认的 HTTPS 入口。
     private val primaryEndpoint by lazy { endpointConfigs[0] }
     private val primaryApi by lazy { createApi(primaryEndpoint.baseUrl) }
-    // 懒加载备用 API 实例
-    private val fallbackEndpoint by lazy { endpointConfigs[1] }
-    private val fallbackApi by lazy { createApi(fallbackEndpoint.baseUrl) }
 
     /**
      * 检查更新
-     * 依次尝试主域名和备用域名，确保高可用性
-     *
-     * 策略：
-     * 1. 优先请求主域名
-     * 2. 如果主域名请求失败（网络错误、非 200 响应、空 Body），则尝试备用 IP
-     * 3. 如果两者都失败，抛出包含详细原因的异常
+     * 仅请求已确认的 HTTPS 元数据入口；请求成功也必须通过下载链接校验后才返回成功。
      *
      * @return Result<UpdateInfo> 更新信息结果封装
      */
     suspend fun checkUpdate(): Result<UpdateInfo> = withContext(Dispatchers.IO) {
-        // 1. 尝试主域名
-        val primaryAttempt = runCatching {
-            requestUpdateInfo(primaryApi, primaryEndpoint.label, "${primaryEndpoint.baseUrl}version.json")
-        }
-        if (primaryAttempt.isSuccess) return@withContext Result.success(primaryAttempt.getOrThrow())
-        val primaryFailure = primaryAttempt.exceptionOrNull() as? UpdateEndpointRequestException
-            ?: UpdateEndpointRequestException(
+        try {
+            val body = requestUpdateInfo(primaryApi, primaryEndpoint.label, "${primaryEndpoint.baseUrl}version.json")
+            return@withContext Result.success(body)
+        } catch (failure: UpdateEndpointRequestException) {
+            val exception = UpdateCheckException(
+                userMessage = "检查更新失败，请稍后重试",
+                debugDetails = listOf(failure),
+                cause = failure
+            )
+            return@withContext Result.failure(exception)
+        } catch (failure: Throwable) {
+            val endpointFailure = UpdateEndpointRequestException(
                 endpointLabel = primaryEndpoint.label,
                 endpointUrl = "${primaryEndpoint.baseUrl}version.json",
                 stage = "request",
-                detail = primaryAttempt.exceptionOrNull()?.message ?: "unknown_error",
-                cause = primaryAttempt.exceptionOrNull()
+                detail = failure.message ?: "unknown_error",
+                cause = failure
             )
-
-        // 2. 尝试兜底 IP
-        try {
-            val body = requestUpdateInfo(fallbackApi, fallbackEndpoint.label, "${fallbackEndpoint.baseUrl}version.json")
-            return@withContext Result.success(body)
-        } catch (fallbackFailure: UpdateEndpointRequestException) {
-            val ex = UpdateCheckException(
-                userMessage = "检查更新失败，请稍后重试",
-                debugDetails = listOf(primaryFailure, fallbackFailure),
-                cause = fallbackFailure
-            )
-            ex.addSuppressed(primaryFailure)
-            return@withContext Result.failure(ex)
-        } catch (e: Throwable) {
-            // 主/备均失败：返回“用户可理解”的错误信息，并保留 cause 供排查问题
-            val fallbackFailure = UpdateEndpointRequestException(
-                endpointLabel = fallbackEndpoint.label,
-                endpointUrl = "${fallbackEndpoint.baseUrl}version.json",
-                stage = "request",
-                detail = e.message ?: "unknown_error",
-                cause = e
-            )
-            val ex = UpdateCheckException(
+            val exception = UpdateCheckException(
                 userMessage = "检查更新失败，请检查网络或稍后重试",
-                debugDetails = listOf(primaryFailure, fallbackFailure),
-                cause = fallbackFailure
+                debugDetails = listOf(endpointFailure),
+                cause = endpointFailure
             )
-            ex.addSuppressed(primaryFailure)
-            return@withContext Result.failure(ex)
+            return@withContext Result.failure(exception)
         }
     }
 
@@ -141,7 +115,15 @@ class UpdateRepository @Inject constructor() {
         try {
             val response = api.getUpdateInfo().execute()
             val body = response.body()
-            if (response.isSuccessful && body != null) return body
+            if (response.isSuccessful && body != null) {
+                return validateUpdateInfo(body)
+                    ?: throw UpdateEndpointRequestException(
+                        endpointLabel = endpointLabel,
+                        endpointUrl = endpointUrl,
+                        stage = "validation",
+                        detail = "更新元数据中的下载链接未通过 HTTPS 安全校验"
+                    )
+            }
             throw UpdateEndpointRequestException(
                 endpointLabel = endpointLabel,
                 endpointUrl = endpointUrl,

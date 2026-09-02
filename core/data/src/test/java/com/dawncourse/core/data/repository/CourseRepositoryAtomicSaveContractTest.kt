@@ -18,4 +18,26 @@ class CourseRepositoryAtomicSaveContractTest {
         assertTrue(method.contains("courseDao.deleteCourseById"))
         assertTrue(method.contains("courseDao.insertCourses"))
     }
+
+    @Test
+    fun destructiveTimetableMutationsUseActiveScopeTransactionAndScopedOriginQuery() {
+        val repository = File(
+            "src/main/java/com/dawncourse/core/data/repository/CourseRepositoryImpl.kt"
+        ).readText()
+        val dao = File(
+            "src/main/java/com/dawncourse/core/data/local/dao/CourseDao.kt"
+        ).readText()
+
+        listOf(
+            "deleteCoursesIfScopeActive",
+            "restoreCoursesIfScopeActive",
+            "undoRescheduleIfScopeActive",
+        ).forEach { methodName ->
+            val method = repository.substringAfter("override suspend fun $methodName")
+                .substringBefore("override suspend fun", missingDelimiterValue = repository)
+            assertTrue("$methodName 必须持有活动作用域事务", method.contains("withActiveScopeTransaction"))
+        }
+        assertTrue(dao.contains("getCoursesByOriginId(semesterId: Long, originId: Long)"))
+        assertTrue(dao.contains("semesterId = :semesterId AND originId = :originId"))
+    }
 }

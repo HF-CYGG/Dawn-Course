@@ -117,7 +117,11 @@ class ReminderReceiver : BroadcastReceiver() {
             // 清除，届时只能靠它判定迟到宽限。
             val precision = precisionHint ?: runCatching { entryPoint.scheduledTriggerRegistry().read() }
                 .getOrNull()?.records?.firstOrNull { it.key == key }?.precision
-            entryPoint.triggerReadinessRetryScheduler().enqueue(key, precision)
+            val enqueued = entryPoint.triggerReadinessRetryScheduler().enqueue(key, precision)
+            if (!enqueued) {
+                // scheduler 已先同步写入独立 journal；不要输出 Key/课程数据。
+                Log.w(TAG, "课程提醒补投任务入队未确认，将由后续对账重放")
+            }
             return
         }
         val candidate = entryPoint.courseRepository().getCourseById(key.courseId) ?: return

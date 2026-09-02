@@ -21,6 +21,17 @@ class DailySchedulerFailureBoundaryContractTest {
         assertTrue(source.contains("系统触发器对账失败"))
         assertTrue(source.contains("课程状态 Surface 刷新失败"))
         assertTrue(source.contains("return if (shouldRetry) Result.retry() else Result.success()"))
+        assertTrue(
+            "恢复状态对账发生在快照之前，也必须纳入同一 retry 聚合",
+            source.indexOf("var shouldRetry = false") <
+                source.indexOf("muteRecoveryController.reconcilePersistedState()")
+        )
+        val recoveryBoundary = source.substring(
+            source.indexOf("静音恢复状态对账失败"),
+            source.indexOf("val snapshot")
+        )
+        assertTrue(recoveryBoundary.contains("shouldRetry = true"))
+        assertTrue(recoveryBoundary.contains("触发就绪补投 journal 对账失败"))
     }
 
     @Test
@@ -34,5 +45,17 @@ class DailySchedulerFailureBoundaryContractTest {
         val disabledBranch = source.substring(source.indexOf("} else {", surfaceIndex))
         assertTrue(disabledBranch.contains("PersistentNotificationRefreshScheduler.cancel"))
         assertTrue(disabledBranch.contains("NotificationHelper.cancelCourseStatus"))
+    }
+
+    @Test
+    fun `Surface 成功后才确认本轮持久刷新责任`() {
+        val captureIndex = source.indexOf("captureCourseSurfaceRefreshClaim")
+        val surfaceIndex = source.indexOf("if (snapshot.settings.enablePersistentNotification)")
+        val acknowledgeIndex = source.indexOf("acknowledgeCourseSurfaceRefresh")
+        assertTrue(captureIndex >= 0)
+        assertTrue(surfaceIndex > captureIndex)
+        assertTrue(acknowledgeIndex > surfaceIndex)
+        assertTrue(source.contains("surfaceRefreshed = true"))
+        assertTrue(source.substring(acknowledgeIndex).contains("shouldRetry = true"))
     }
 }

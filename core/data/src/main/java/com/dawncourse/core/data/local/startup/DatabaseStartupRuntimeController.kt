@@ -11,6 +11,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** UI 与后台入口共同观察的数据库启动状态，不包含数据库句柄或底层异常。 */
+enum class DatabaseRecoveryEntryMode {
+    /** 冷启动已完成数据库物理隔离，可以执行恢复或明确放弃。 */
+    ACTIONS_AVAILABLE,
+
+    /** 在线故障 marker 已落盘，旧 Room 仍打开，只允许受控重启。 */
+    RESTART_REQUIRED,
+
+    /** marker 尚未落盘；当前进程已逻辑隔离，只允许重试持久化 marker。 */
+    MARKER_RETRY_REQUIRED,
+}
+
 sealed interface DatabaseRuntimeState {
     /** 正在 IO 线程完成恢复、检查、密钥准备与数据库打开。 */
     data object Starting : DatabaseRuntimeState
@@ -20,7 +31,8 @@ sealed interface DatabaseRuntimeState {
 
     /** 必须由用户选择恢复或明确放弃；原因不携带敏感路径。 */
     data class RecoveryRequired(
-        val reason: DatabaseRecoveryReason
+        val reason: DatabaseRecoveryReason,
+        val entryMode: DatabaseRecoveryEntryMode = DatabaseRecoveryEntryMode.ACTIONS_AVAILABLE,
     ) : DatabaseRuntimeState
 
     /** 无法取得或完成外层安全临界区，因而没有持久化可执行恢复事务。 */
@@ -107,8 +119,30 @@ class DatabaseStartupRuntimeController<T : Any>(
         DatabaseRuntimeState.StartupBlocked -> OperationalDataReadiness.RECOVERY_REQUIRED
     }
 
+    /**
+     * 已发布 Ready 后发现数据库内容不再可信时，立即撤销新的句柄访问并切断业务 UI。
+     *
+     * 这里故意不关闭或移动已发布的 Room：已有 DAO/事务引用无法安全撤销，物理隔离必须
+     * 交给受控进程重启后的冷启动临界区完成。
+     */
+    fun enterRuntimeRecovery(
+        reason: DatabaseRecoveryReason,
+        entryMode: DatabaseRecoveryEntryMode,
+    ) = synchronized(handleLock) {
+        val current = mutableState.value
+        val allowed = when {
+            current is DatabaseRuntimeState.Ready -> true
+            current is DatabaseRuntimeState.RecoveryRequired &&
+                current.entryMode == DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED &&
+                entryMode == DatabaseRecoveryEntryMode.RESTART_REQUIRED -> true
+            else -> false
+        }
+        if (allowed) mutableState.value = DatabaseRuntimeState.RecoveryRequired(reason, entryMode)
+    }
+
     /** 只允许 DataModule 在 Runtime 已发布 Ready 后取同一个已验证句柄。 */
     fun requireReadyHandle(): T = synchronized(handleLock) {
+        check(mutableState.value == DatabaseRuntimeState.Ready) { "数据库已停止业务访问" }
         checkNotNull(readyHandle) { "数据库尚未通过启动验证" }
     }
 }
