@@ -25,6 +25,7 @@ WIDGET_TRACE_PREFIX = "DawnCourseBenchmark#widgetDataBuild"
 # and its tests instead of silently appearing in CI artifacts.
 EXPECTED_JOURNEYS = (
     "coldStart_toToday",
+    "coldStart_toToday_withBaselineProfile",
     "coldStart_toWeekTimetable",
     "switchWeek_fiveTimes",
     "flingCourseGrid_withMoreThanOneHundredCourses",
@@ -34,6 +35,7 @@ EXPECTED_JOURNEYS = (
 
 JOURNEY_REQUIREMENTS: dict[str, tuple[bool, bool, bool]] = {
     "coldStart_toToday": (True, True, False),
+    "coldStart_toToday_withBaselineProfile": (True, True, False),
     "coldStart_toWeekTimetable": (True, True, False),
     "switchWeek_fiveTimes": (False, True, False),
     "flingCourseGrid_withMoreThanOneHundredCourses": (False, True, False),
