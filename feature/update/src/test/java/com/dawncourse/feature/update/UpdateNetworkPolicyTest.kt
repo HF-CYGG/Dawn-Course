@@ -1,6 +1,6 @@
 /**
  * 文件说明：验证更新检查网络连接策略。
- * 目标是确保自建 HTTP 元数据优先，同时把明文能力限制在唯一固定入口。
+ * 目标是确保自建 HTTPS 元数据优先，且所有节点均只允许 TLS。
  */
 package com.dawncourse.feature.update
 
@@ -23,28 +23,12 @@ class UpdateNetworkPolicyTest {
     }
 
     @Test
-    fun `只有固定自建元数据入口允许明文连接`() {
+    fun `所有元数据节点均只允许 TLS 连接`() {
         val endpoints = buildUpdateEndpointConfigs()
 
-        assertEquals(listOf(ConnectionSpec.CLEARTEXT), buildUpdateMetadataConnectionSpecs(endpoints[0]))
-        assertFalse(buildUpdateMetadataConnectionSpecs(endpoints[1]).contains(ConnectionSpec.CLEARTEXT))
-        assertFalse(
-            buildUpdateMetadataConnectionSpecs(
-                UpdateEndpointConfig(
-                    label = "Untrusted HTTP",
-                    baseUrl = "http://attacker.example/"
-                )
-            ).contains(ConnectionSpec.CLEARTEXT)
-        )
-        assertFalse(
-            buildUpdateMetadataConnectionSpecs(
-                UpdateEndpointConfig(
-                    label = "Wrong self-hosted path",
-                    baseUrl = "http://yyh163.xyz:10000/",
-                    versionInfoPath = "other.json"
-                )
-            ).contains(ConnectionSpec.CLEARTEXT)
-        )
+        endpoints.forEach { endpoint ->
+            assertTrue(endpoint.versionInfoUrl.startsWith("https://"))
+        }
     }
 
     @Test
@@ -54,7 +38,7 @@ class UpdateNetworkPolicyTest {
         assertEquals(4, endpoints.size)
         assertEquals("Dawn Server", endpoints[0].label)
         assertEquals(
-            "http://yyh163.xyz:10000/version.json",
+            "https://yyh163.xyz:10000/version.json",
             endpoints[0].versionInfoUrl
         )
         assertTrue(endpoints[0].requestTimeoutSeconds <= 5L)
@@ -73,36 +57,36 @@ class UpdateNetworkPolicyTest {
             "https://cdn.jsdelivr.net/gh/HF-CYGG/DawnCourse-server@main/version.json",
             endpoints[3].versionInfoUrl
         )
-        assertTrue(endpoints.drop(1).all { endpoint -> endpoint.versionInfoUrl.startsWith("https://") })
+        assertTrue(endpoints.all { endpoint -> endpoint.versionInfoUrl.startsWith("https://") })
     }
 
     @Test
     fun `更新元数据响应只能停留在配置节点的相同来源和协议`() {
-        val expected = "http://yyh163.xyz:10000/version.json"
+        val expected = "https://yyh163.xyz:10000/version.json"
 
         assertTrue(isExpectedUpdateMetadataResponseUrl(expected, expected))
         assertTrue(
             isExpectedUpdateMetadataResponseUrl(
                 expected,
-                "http://yyh163.xyz:10000/releases/version.json"
+                "https://yyh163.xyz:10000/releases/version.json"
             )
         )
         assertFalse(
             isExpectedUpdateMetadataResponseUrl(
                 expected,
-                "https://yyh163.xyz:10000/version.json"
+                "http://yyh163.xyz:10000/version.json"
             )
         )
         assertFalse(
             isExpectedUpdateMetadataResponseUrl(
                 expected,
-                "http://attacker.example/version.json"
+                "https://attacker.example/version.json"
             )
         )
         assertFalse(
             isExpectedUpdateMetadataResponseUrl(
                 expected,
-                "http://yyh163.xyz/version.json"
+                "https://yyh163.xyz/version.json"
             )
         )
         assertFalse(
