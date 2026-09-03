@@ -31,6 +31,7 @@ class UpdateClientTlsRegressionTest {
     fun setUp() {
         val localhostCertificate = HeldCertificate.Builder()
             .addSubjectAlternativeName("localhost")
+            .addSubjectAlternativeName("127.0.0.1")
             .build()
         val serverCertificates = HandshakeCertificates.Builder()
             .heldCertificate(localhostCertificate)

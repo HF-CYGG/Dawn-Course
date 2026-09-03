@@ -74,7 +74,9 @@ class DiagnosticReportingPrivacyContractTest {
             File("src/main/java/com/dawncourse/core/data/repository/$name"),
             File("core/data/src/main/java/com/dawncourse/core/data/repository/$name")
         )
-        return candidates.firstOrNull(File::isFile)?.readText()
+        return candidates.firstOrNull(File::isFile)
+            ?.readText()
+            ?.replace("\r\n", "\n")
             ?: error("找不到源码：$name")
     }
 }
