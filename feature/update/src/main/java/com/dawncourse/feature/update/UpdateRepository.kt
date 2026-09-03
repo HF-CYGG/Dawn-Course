@@ -62,11 +62,10 @@ class UpdateRepository @Inject constructor(
         cause: Throwable? = null
     ) : Exception(userMessage, cause)
 
-    // 基础客户端集中保留连接规格；每个元数据节点在创建 Retrofit 时设置自己的总超时。
+    // 基础客户端集中保留连接规格（仅 TLS）；每个元数据节点在创建 Retrofit 时设置自己的总超时。
     private val baseClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
         .readTimeout(15, TimeUnit.SECONDS)
-        // 默认仍只允许 TLS；创建具体节点客户端时才对白名单自建入口开放 HTTP。
         .connectionSpecs(buildUpdateConnectionSpecs())
         .build()
 
@@ -77,7 +76,6 @@ class UpdateRepository @Inject constructor(
     private fun createApi(endpoint: UpdateEndpointConfig): UpdateApi {
         val endpointClient = baseClient.newBuilder()
             .callTimeout(endpoint.requestTimeoutSeconds, TimeUnit.SECONDS)
-            .connectionSpecs(buildUpdateMetadataConnectionSpecs(endpoint))
             .build()
         return Retrofit.Builder()
             .baseUrl(endpoint.baseUrl)

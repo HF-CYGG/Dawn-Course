@@ -57,6 +57,27 @@ class UpdateEndpointFailoverTest {
     }
 
     @Test
+    fun `自建端点抛出 IllegalStateException 时按策略继续 fallback 而不会逃逸`() = runBlocking {
+        // 回归 issue #115：ConnectionSpec 与实际协议不匹配时 OkHttp 会抛出
+        // IllegalStateException（而非 IOException）。resolveUpdateInfoFromEndpoints
+        // 必须把它当作普通节点失败处理，绝不能让其穿透到调用方。
+        val endpoints = buildUpdateEndpointConfigs()
+        val requestedLabels = mutableListOf<String>()
+        val expected = validUpdateInfo()
+
+        val actual = resolveUpdateInfoFromEndpoints(endpoints) { endpoint ->
+            requestedLabels += endpoint.label
+            if (endpoint.label == "Dawn Server") {
+                throw IllegalStateException("CLEARTEXT-only client")
+            }
+            expected
+        }
+
+        assertEquals(expected, actual)
+        assertEquals(listOf("Dawn Server", "GitHub Raw"), requestedLabels)
+    }
+
+    @Test
     fun `GitHub Raw 超时时继续从 GitHub API 获取更新`() = runBlocking {
         val endpoints = buildUpdateEndpointConfigs().drop(1)
         val requestedLabels = mutableListOf<String>()

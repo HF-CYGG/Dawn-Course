@@ -1,6 +1,6 @@
 /**
  * 文件说明：统一定义更新检查的安全网络策略与可信元数据入口。
- * 更新元数据优先访问写死的自建 HTTP 节点，其他节点与安装包链接仍必须使用 HTTPS。
+ * 自建节点已随服务端迁移改为 HTTPS，与其他节点、安装包链接一致仅允许 TLS。
  */
 package com.dawncourse.feature.update
 
@@ -32,12 +32,11 @@ internal class UpdateEndpointsExhaustedException(
 ) : Exception("所有更新节点均不可用", failures.lastOrNull())
 
 /**
- * 构建更新下载与普通元数据节点共用的 TLS 连接策略列表。
+ * 构建更新下载与元数据节点共用的 TLS 连接策略列表。
  *
  * 顺序说明：
  * 1. 优先使用现代 TLS；
- * 2. 兼容仍符合 HTTPS 要求的旧 TLS 服务端；
- * 3. 自建 HTTP 元数据特例由 [buildUpdateMetadataConnectionSpecs] 单独授予。
+ * 2. 兼容仍符合 HTTPS 要求的旧 TLS 服务端。
  */
 fun buildUpdateConnectionSpecs(): List<ConnectionSpec> {
     return listOf(
@@ -47,25 +46,9 @@ fun buildUpdateConnectionSpecs(): List<ConnectionSpec> {
 }
 
 /**
- * 为单个元数据节点选择连接规格。
- *
- * 明文能力只授予完整地址完全匹配的自建 version.json；新增或被篡改的 HTTP 节点
- * 不会因为应用其他业务允许明文流量而自动获得更新控制权。
- */
-internal fun buildUpdateMetadataConnectionSpecs(
-    endpoint: UpdateEndpointConfig
-): List<ConnectionSpec> {
-    return if (isAuthorizedCleartextMetadataUrl(endpoint.versionInfoUrl)) {
-        listOf(ConnectionSpec.CLEARTEXT)
-    } else {
-        buildUpdateConnectionSpecs()
-    }
-}
-
-/**
  * 构建更新检查的节点列表。
  *
- * 更新元数据优先从自建 HTTP 服务获取，并使用短超时避免节点离线时拖慢用户操作。
+ * 更新元数据优先从自建 HTTPS 服务获取，并使用短超时避免节点离线时拖慢用户操作。
  * 自建服务不可用时再依次回退 GitHub Raw、GitHub Contents API 和 jsDelivr。
  */
 fun buildUpdateEndpointConfigs(): List<UpdateEndpointConfig> {
@@ -94,8 +77,7 @@ fun buildUpdateEndpointConfigs(): List<UpdateEndpointConfig> {
 /**
  * 检查重定向后的更新元数据响应仍位于配置节点的同一来源和协议。
  *
- * 路径可以由服务端调整，但协议、主机和端口必须保持一致。只有固定自建入口可以使用
- * HTTP，其他预期地址仍必须是 HTTPS。
+ * 路径可以由服务端调整，但协议、主机和端口必须保持一致，且预期地址必须是 HTTPS。
  */
 internal fun isExpectedUpdateMetadataResponseUrl(
     expectedUrl: String,
@@ -103,9 +85,7 @@ internal fun isExpectedUpdateMetadataResponseUrl(
 ): Boolean = runCatching {
     val expected = URI(expectedUrl)
     val actual = URI(actualUrl)
-    val expectedTransportAllowed = expected.scheme.equals("https", ignoreCase = true) ||
-        isAuthorizedCleartextMetadataUrl(expectedUrl)
-    expectedTransportAllowed &&
+    expected.scheme.equals("https", ignoreCase = true) &&
         actual.scheme.equals(expected.scheme, ignoreCase = true) &&
         !expected.host.isNullOrBlank() &&
         expected.userInfo == null &&
@@ -117,10 +97,6 @@ internal fun isExpectedUpdateMetadataResponseUrl(
 private fun effectivePort(uri: URI): Int {
     if (uri.port != -1) return uri.port
     return if (uri.scheme.equals("https", ignoreCase = true)) HTTPS_DEFAULT_PORT else HTTP_DEFAULT_PORT
-}
-
-private fun isAuthorizedCleartextMetadataUrl(url: String): Boolean {
-    return url == SELF_HOSTED_UPDATE_VERSION_URL
 }
 
 /**
@@ -182,7 +158,6 @@ fun validateUpdateInfo(updateInfo: UpdateInfo): UpdateInfo? {
 
 private const val SELF_HOSTED_UPDATE_TIMEOUT_SECONDS = 4L
 private const val DEFAULT_UPDATE_METADATA_TIMEOUT_SECONDS = 15L
-private const val SELF_HOSTED_UPDATE_BASE_URL = "http://yyh163.xyz:10000/"
-private const val SELF_HOSTED_UPDATE_VERSION_URL = "${SELF_HOSTED_UPDATE_BASE_URL}version.json"
+private const val SELF_HOSTED_UPDATE_BASE_URL = "https://yyh163.xyz:10000/"
 private const val HTTP_DEFAULT_PORT = 80
 private const val HTTPS_DEFAULT_PORT = 443
