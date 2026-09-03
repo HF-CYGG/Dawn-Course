@@ -49,4 +49,7 @@ dependencies {
 
     // 单元测试（纯 JVM 测试）
     testImplementation(libs.junit)
+    // 端到端复现 issue #115：需要真实 OkHttpClient + TLS 服务端，而非仅业务层 mock
+    testImplementation(libs.mockwebserver)
+    testImplementation(libs.okhttp.tls)
 }
