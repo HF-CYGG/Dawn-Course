@@ -26,7 +26,7 @@ javax-inject = "1" # Java 注入标准注解
 coil = "2.7.0" # 图片加载框架
 security-crypto = "1.1.0" # AndroidX Security Crypto
 startup-runtime = "1.2.0" # App Startup
-benchmark = "1.5.0-rc01" # 1.4.x 不兼容 AGP 9 新 DSL；RC01 为当前官方 AGP 9 兼容线
+benchmark = "1.5.0-rc02" # 1.4.x 不兼容 AGP 9 新 DSL；RC01 为当前官方 AGP 9 兼容线
 uiautomator = "2.4.0" # Macrobenchmark UI 驱动
 core-splashscreen = "1.2.0" # Android 12+ SplashScreen 兼容层
 
