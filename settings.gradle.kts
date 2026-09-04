@@ -61,7 +61,7 @@ buildscript {
             force("org.bitbucket.b_c:jose4j:0.9.6")
             
             // 强制 Guava (>= 33.0.0-android)
-            force("com.google.guava:guava:33.6.0-android")
+            force("com.google.guava:guava:33.7.1-android")
             
             // 强制 Gson (>= 2.10.1)
             force("com.google.code.gson:gson:2.13.2")
