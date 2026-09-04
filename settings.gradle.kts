@@ -30,13 +30,13 @@ buildscript {
     configurations.classpath {
         resolutionStrategy {
             // 强制 Netty 使用安全版本 (>= 4.1.125.Final)
-            force("io.netty:netty-codec-http2:4.2.16.Final")
-            force("io.netty:netty-handler:4.2.16.Final")
-            force("io.netty:netty-codec:4.2.16.Final")
-            force("io.netty:netty-common:4.2.16.Final")
-            force("io.netty:netty-codec-http:4.2.16.Final")
-            force("io.netty:netty-transport-native-epoll:4.2.16.Final")
-            force("io.netty:netty-transport-native-unix-common:4.2.16.Final")
+            force("io.netty:netty-codec-http2:4.2.17.Final")
+            force("io.netty:netty-handler:4.2.17.Final")
+            force("io.netty:netty-codec:4.2.17.Final")
+            force("io.netty:netty-common:4.2.17.Final")
+            force("io.netty:netty-codec-http:4.2.17.Final")
+            force("io.netty:netty-transport-native-epoll:4.2.17.Final")
+            force("io.netty:netty-transport-native-unix-common:4.2.17.Final")
             
             // 强制 Bouncy Castle 使用安全版本 (jdk15on: 1.70, jdk18on: 1.83)
             // 旧插件可能仍依赖 jdk15on
