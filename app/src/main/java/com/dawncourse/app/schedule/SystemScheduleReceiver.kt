@@ -3,11 +3,13 @@ package com.dawncourse.app.schedule
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.dawncourse.feature.timetable.notification.ReminderScheduler
-import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import android.util.Log
+import com.dawncourse.feature.timetable.notification.ReminderScheduler
+import com.dawncourse.feature.timetable.notification.ReceiverTaskRunner
+import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
@@ -27,24 +29,29 @@ class SystemScheduleReceiver : BroadcastReceiver() {
 
         val appContext = context.applicationContext
         val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                if (!ReminderScheduler.triggerImmediateWorkAndAwait(
+        receiverScope.launch {
+            ReceiverTaskRunner.run(
+                task = {
+                    if (!ReminderScheduler.triggerImmediateWorkAndAwait(
                         appContext,
                         forceReplay = true,
-                    )
-                ) {
-                    Log.w(TAG, "系统事件调度恢复任务未确认入队")
-                }
-                WidgetSyncManager.restoreAfterSystemEvent(appContext)
-            } finally {
-                pendingResult.finish()
-            }
+                        )
+                    ) {
+                        Log.w(TAG, "系统事件调度恢复任务未确认入队")
+                    }
+                    WidgetSyncManager.restoreAfterSystemEvent(appContext)
+                },
+                onFailureType = { failureType ->
+                    Log.e(TAG, "系统事件调度恢复失败 type=$failureType")
+                },
+                finish = pendingResult::finish,
+            )
         }
     }
 
     private companion object {
         const val TAG = "SystemScheduleReceiver"
+        val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
 

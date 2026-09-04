@@ -30,6 +30,11 @@ android {
     buildFeatures {
         compose = true
     }
+    lint {
+        // Widget 的平台 Alarm 调用必须先经过可测试 capability policy，遗漏权限守卫即阻断构建。
+        abortOnError = true
+        error += "MissingPermission"
+    }
 }
 
 dependencies {

@@ -208,10 +208,13 @@ class AppDatabaseMigrationTest {
             }
             query("PRAGMA user_version").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(6, cursor.getInt(0))
+                assertEquals(7, cursor.getInt(0))
             }
             query("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('index_courses_semesterId', 'index_courses_dayOfWeek', 'index_courses_originId')").use { cursor ->
                 assertEquals(3, cursor.count)
+            }
+            query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'index_courses_dedupe'").use { cursor ->
+                assertEquals(1, cursor.count)
             }
             query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'courses_v5_new'").use { cursor ->
                 assertFalse(cursor.moveToFirst())
@@ -298,7 +301,7 @@ class AppDatabaseMigrationTest {
         database.openHelper.writableDatabase.apply {
             query("PRAGMA user_version").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(6, cursor.getInt(0))
+                assertEquals(7, cursor.getInt(0))
             }
             query("SELECT id, activeSemesterId FROM timetable_profiles").use { cursor ->
                 assertEquals(1, cursor.count)
@@ -324,6 +327,86 @@ class AppDatabaseMigrationTest {
                 assertEquals(12L, cursor.getLong(1))
                 assertEquals(1, cursor.getInt(2))
                 assertEquals("旧调课", cursor.getString(3))
+            }
+        }
+        database.close()
+    }
+
+    @Test
+    fun migrate6To7_dedupesCoursesAndKeepsAdjustmentRecordsAndUniqueIndex() {
+        helper.createDatabase(DEDUPE_V7_DATABASE, 6).apply {
+            execSQL(
+                """
+                INSERT INTO timetable_profiles (id, uuid, name, activeSemesterId, lastUsedAt, sortOrder, archived)
+                VALUES (1, 'uuid-1', '默认课表', 5, 0, 0, 0)
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO semesters (id, profileId, name, startDate, weekCount)
+                VALUES (5, 1, '2026 春季', 1700000000000, 20)
+                """.trimIndent(),
+            )
+            // 成对重复：业务键完全一致，仅 id 不同 —— 迁移后只应保留 MIN(id) = 10。
+            execSQL(
+                """
+                INSERT INTO courses (
+                    id, semesterId, name, teacher, location, dayOfWeek, startSection, duration,
+                    startWeek, endWeek, weekType, color, isModified, note, originId
+                ) VALUES
+                    (10, 5, '传感器与检测技术', '张磊', 'A101', 2, 7, 2, 1, 16, 0, '#111111', 0, '', 0),
+                    (11, 5, '传感器与检测技术', '张磊 教学班:X 学分:3.0', 'A101', 2, 7, 2, 1, 16, 0, '#222222', 0, '', 0)
+                """.trimIndent(),
+            )
+            // 调课拆分记录：同一时段但 originId / isModified 不同 —— 不能被误删。
+            execSQL(
+                """
+                INSERT INTO courses (
+                    id, semesterId, name, teacher, location, dayOfWeek, startSection, duration,
+                    startWeek, endWeek, weekType, color, isModified, note, originId
+                ) VALUES (12, 5, '传感器与检测技术', '张磊', 'A101', 2, 7, 2, 1, 16, 0, '#333333', 1, '调课', 10)
+                """.trimIndent(),
+            )
+            close()
+        }
+
+        val database = Room.databaseBuilder(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            appDatabaseClass(),
+            DEDUPE_V7_DATABASE,
+        )
+            .addMigrations(*AppDatabaseMigrations.ALL)
+            .allowMainThreadQueries()
+            .build()
+
+        database.openHelper.writableDatabase.apply {
+            query("PRAGMA user_version").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(7, cursor.getInt(0))
+            }
+            query("SELECT id FROM courses ORDER BY id").use { cursor ->
+                assertEquals(2, cursor.count)
+                assertTrue(cursor.moveToFirst())
+                assertEquals(10L, cursor.getLong(0))
+                assertTrue(cursor.moveToNext())
+                assertEquals(12L, cursor.getLong(0))
+            }
+            query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'index_courses_dedupe'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.getString(0).contains("UNIQUE"))
+            }
+            // 再插入同业务键的一行应被唯一索引忽略（INSERT OR IGNORE）。
+            execSQL(
+                """
+                INSERT OR IGNORE INTO courses (
+                    semesterId, name, teacher, location, dayOfWeek, startSection, duration,
+                    startWeek, endWeek, weekType, color, isModified, note, originId
+                ) VALUES (5, '传感器与检测技术', '别的老师', 'B202', 2, 7, 2, 1, 16, 0, '#444444', 0, '', 0)
+                """.trimIndent(),
+            )
+            query("SELECT COUNT(*) FROM courses").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(2, cursor.getInt(0))
             }
         }
         database.close()
@@ -379,12 +462,14 @@ class AppDatabaseMigrationTest {
         const val MISSING_SEQUENCE_DATABASE = "app-database-missing-sequence-test"
         const val EMPTY_SEQUENCE_DATABASE = "app-database-empty-sequence-test"
         const val PROFILE_V6_DATABASE = "app-database-profile-v6-test"
+        const val DEDUPE_V7_DATABASE = "app-database-dedupe-v7-test"
         val TEST_DATABASE_NAMES = listOf(
             TEST_DATABASE,
             COMPATIBILITY_DATABASE,
             MISSING_SEQUENCE_DATABASE,
             EMPTY_SEQUENCE_DATABASE,
             PROFILE_V6_DATABASE,
+            DEDUPE_V7_DATABASE,
         )
         const val APP_DATABASE_CLASS_NAME = "com.dawncourse.core.data.local.AppDatabase"
         const val HISTORICAL_SEQUENCE_HIGH_WATER = 1_000L

@@ -35,4 +35,7 @@ dependencies {
 
     debugImplementation(libs.ui.tooling)
     debugImplementation(libs.ui.test.manifest)
+
+    // 主题与颜色工具的 JVM 回归测试。
+    testImplementation(libs.junit)
 }

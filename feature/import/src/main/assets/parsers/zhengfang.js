@@ -1,4 +1,5 @@
 /**
+ * @version 2
  * 泰山科技学院/强智教务系统 解析脚本 (Regex 实现版)
  * 对应 docs/泰山科技学院教务系统脚本开发文档.md 的逻辑
  * 
@@ -15,6 +16,10 @@ function scheduleHtmlParser(html) {
     }
     
     courses = dedupeCourses(courses);
+    // 诊断用来源标记（grid/list）在对外返回前剥掉，避免污染下游 schema 校验与落库
+    for (var si = 0; si < courses.length; si++) {
+        if (courses[si] && courses[si]._src !== undefined) delete courses[si]._src;
+    }
     return JSON.stringify(courses);
 }
 
@@ -126,7 +131,8 @@ function parseNewZhengfang(html) {
                         position: location,
                         day: day,
                         weeks: weeks,
-                        sections: sections
+                        sections: sections,
+                        _src: 'grid'
                     });
                 } else if (weeks.length === 0) {
                     reportDropped("no_weeks");
@@ -139,9 +145,13 @@ function parseNewZhengfang(html) {
         }
     }
 
+    // 关键：仅当二维表循环「没有任何产出」时才用列表视图兜底。
+    // 新版正方课表页会同时渲染二维表和下方的课表列表，两个循环都无条件采集会让每门课
+    // 被收录两次 —— 这正是「课表整体重复」的根因。二维表是权威视图。
+    var gridCount = courses.length;
     var listRegex = /<tr[^>]*>[\s\S]*?<td[^>]*id=["']?jc_(\d+)-(\d+)-(\d+)["']?[^>]*>[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
     var listMatch;
-    while ((listMatch = listRegex.exec(html)) !== null) {
+    while (gridCount === 0 && (listMatch = listRegex.exec(html)) !== null) {
         var listDay = parseInt(listMatch[1]);
         var sectionStart = parseInt(listMatch[2]);
         var sectionEnd = parseInt(listMatch[3]);
@@ -193,7 +203,8 @@ function parseNewZhengfang(html) {
                     position: listLocation,
                     day: listDay,
                     weeks: listWeeks,
-                    sections: listSections
+                    sections: listSections,
+                    _src: 'list'
                 });
             } else if (listDay <= 0) {
                 reportDropped("no_day");
@@ -462,26 +473,8 @@ function extractSectionsStr(text) {
     return "";
 }
 
-function dedupeCourses(courses) {
-    var map = {};
-    var result = [];
-    for (var i = 0; i < courses.length; i++) {
-        var course = courses[i];
-        var key = [
-            course.name || "",
-            course.teacher || "",
-            course.position || "",
-            course.day || "",
-            (course.weeks || []).join("_"),
-            (course.sections || []).join("_")
-        ].join("|");
-        if (!map[key]) {
-            map[key] = true;
-            result.push(course);
-        }
-    }
-    return result;
-}
+// 注意：dedupeCourses 已移除本地副本，改用 common_parser_utils.js 中归一化去重键
+// （name|day|weeks|sections，teacher/position 归一化后合并）的唯一实现。
 
 // 注意：parseWeeks 已移除本地副本，改用 common_parser_utils.js 中经 issue #109
 // 加固过的版本（正确处理单周 "9周"、节次粘连 "9周(1-2节)"、"第9周"、写反的区间等）。

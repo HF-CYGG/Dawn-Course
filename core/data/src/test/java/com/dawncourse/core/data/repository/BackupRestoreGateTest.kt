@@ -81,6 +81,24 @@ class BackupRestoreGateTest {
     }
 
     @Test
+    fun duplicateCourseBusinessKeyFailsBeforeDestructiveRestore() = runBlocking {
+        var commitCalled = false
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 21L, semesterId = 1L, name = "重复课程"),
+                    course(id = 22L, semesterId = 1L, name = "重复课程"),
+                ),
+            ),
+        ) {
+            commitCalled = true
+        }
+
+        assertTrue(result.isFailure)
+        assertFalse(commitCalled)
+    }
+
+    @Test
     fun v2NullAndInvalidPositiveSelectionFailBeforeCommit() = runBlocking {
         var commitCount = 0
 
@@ -277,10 +295,15 @@ class BackupRestoreGateTest {
         isCurrent = isCurrent
     )
 
-    private fun course(id: Long, semesterId: Long, originId: Long = 0L) = Course(
+    private fun course(
+        id: Long,
+        semesterId: Long,
+        originId: Long = 0L,
+        name: String = "课程$id",
+    ) = Course(
         id = id,
         semesterId = semesterId,
-        name = "课程$id",
+        name = name,
         dayOfWeek = 1,
         startSection = 1,
         duration = 2,

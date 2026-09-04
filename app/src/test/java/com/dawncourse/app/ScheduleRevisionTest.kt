@@ -164,4 +164,23 @@ class ScheduleRevisionTest {
             executor.shutdownNow()
         }
     }
+
+    @Test
+    fun `根聚合上游 Exception 应收敛为安全错误状态而非冒泡`() = runBlocking {
+        val result = runCatching {
+            scheduleRevisionFlow(
+                settings = flow { throw IllegalStateException("settings storage unavailable") },
+                activeSemesterSchedule = flowOf(
+                    ActiveSemesterSchedule(
+                        profileId = semester.profileId,
+                        semester = semester,
+                        courses = listOf(course),
+                    )
+                ),
+            ).first()
+        }
+
+        assertTrue("上游异常不应从根 Flow 冒泡", result.isSuccess)
+        assertEquals("Error", result.getOrThrow()::class.simpleName)
+    }
 }

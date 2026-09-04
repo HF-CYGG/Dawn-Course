@@ -1,5 +1,6 @@
 package com.dawncourse.core.data.repository
 
+import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.dawncourse.core.data.local.AppDatabase
 import com.dawncourse.core.data.local.dao.CourseDao
@@ -66,8 +67,10 @@ class CourseRepositoryImpl @Inject constructor(
     override suspend fun saveCoursesAtomically(
         courses: List<Course>,
         editingCourseId: Long
-    ): CourseRepository.AtomicSaveResult = mutationGate.withMutation {
-        database.withTransaction { saveCoursesLocked(courses, editingCourseId) }
+    ): CourseRepository.AtomicSaveResult = saveWithConstraintRejection {
+        mutationGate.withMutation {
+            database.withTransaction { saveCoursesLocked(courses, editingCourseId) }
+        }
     }
 
     override suspend fun saveCoursesIfScopeActive(
@@ -75,12 +78,14 @@ class CourseRepositoryImpl @Inject constructor(
         semesterId: Long,
         courses: List<Course>,
         editingCourseId: Long,
-    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
-        profileId = profileId,
-        semesterId = semesterId,
-    ) {
-        saveCoursesLocked(courses, editingCourseId)
-    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+    ): CourseRepository.AtomicSaveResult = saveWithConstraintRejection {
+        profileSelectionCoordinator.get().withActiveScopeTransaction(
+            profileId = profileId,
+            semesterId = semesterId,
+        ) {
+            saveCoursesLocked(courses, editingCourseId)
+        } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+    }
 
     override suspend fun deleteCoursesIfScopeActive(
         profileId: Long,
@@ -105,72 +110,76 @@ class CourseRepositoryImpl @Inject constructor(
         profileId: Long,
         semesterId: Long,
         courses: List<Course>,
-    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
-        profileId = profileId,
-        semesterId = semesterId,
-    ) {
-        if (courses.isEmpty() || courses.any { course -> course.semesterId != semesterId || course.id <= 0L }) {
-            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
-                "待恢复课程不属于当前学期"
-            )
-        }
-        if (courses.any { course -> courseDao.getCourseById(course.id) != null }) {
-            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
-                "课程 ID 已被占用，请刷新后重试"
-            )
-        }
-        courseDao.insertCourses(courses.map { course -> course.toEntity() })
-        CourseRepository.AtomicSaveResult.Success
-    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+    ): CourseRepository.AtomicSaveResult = saveWithConstraintRejection {
+        profileSelectionCoordinator.get().withActiveScopeTransaction(
+            profileId = profileId,
+            semesterId = semesterId,
+        ) {
+            if (courses.isEmpty() || courses.any { course -> course.semesterId != semesterId || course.id <= 0L }) {
+                return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                    "待恢复课程不属于当前学期"
+                )
+            }
+            if (courses.any { course -> courseDao.getCourseById(course.id) != null }) {
+                return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                    "课程 ID 已被占用，请刷新后重试"
+                )
+            }
+            courseDao.insertCourses(courses.map { course -> course.toEntity() })
+            CourseRepository.AtomicSaveResult.Success
+        } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+    }
 
     override suspend fun undoRescheduleIfScopeActive(
         profileId: Long,
         semesterId: Long,
         originId: Long,
-    ): CourseRepository.AtomicSaveResult = profileSelectionCoordinator.get().withActiveScopeTransaction(
-        profileId = profileId,
-        semesterId = semesterId,
-    ) {
-        if (originId <= 0L) {
-            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected("课程族标识无效")
-        }
-        val siblings = courseDao.getCoursesByOriginId(semesterId, originId).map { entity -> entity.toDomain() }
-        if (siblings.isEmpty()) {
-            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
-                "调课记录已变化，请刷新后重试"
-            )
-        }
-        if (siblings.size <= 1 && siblings.none { course -> course.isModified }) {
-            return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Success
-        }
-        val template = siblings.firstOrNull { course -> !course.isModified }
-            ?: return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
-                "缺少原课程片段，无法安全撤销调课"
-            )
-        val allWeeks = siblings.flatMapTo(linkedSetOf()) { course ->
-            (course.startWeek..course.endWeek).filter { week ->
-                when (course.weekType) {
-                    Course.WEEK_TYPE_ODD -> week % 2 != 0
-                    Course.WEEK_TYPE_EVEN -> week % 2 == 0
-                    else -> true
+    ): CourseRepository.AtomicSaveResult = saveWithConstraintRejection {
+        profileSelectionCoordinator.get().withActiveScopeTransaction(
+            profileId = profileId,
+            semesterId = semesterId,
+        ) {
+            if (originId <= 0L) {
+                return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected("课程族标识无效")
+            }
+            val siblings = courseDao.getCoursesByOriginId(semesterId, originId).map { entity -> entity.toDomain() }
+            if (siblings.isEmpty()) {
+                return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                    "调课记录已变化，请刷新后重试"
+                )
+            }
+            if (siblings.size <= 1 && siblings.none { course -> course.isModified }) {
+                return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Success
+            }
+            val template = siblings.firstOrNull { course -> !course.isModified }
+                ?: return@withActiveScopeTransaction CourseRepository.AtomicSaveResult.Rejected(
+                    "缺少原课程片段，无法安全撤销调课"
+                )
+            val allWeeks = siblings.flatMapTo(linkedSetOf()) { course ->
+                (course.startWeek..course.endWeek).filter { week ->
+                    when (course.weekType) {
+                        Course.WEEK_TYPE_ODD -> week % 2 != 0
+                        Course.WEEK_TYPE_EVEN -> week % 2 == 0
+                        else -> true
+                    }
                 }
             }
-        }
-        val restored = convertWeeksToSegments(allWeeks).map { (start, end, type) ->
-            template.copy(
-                id = 0L,
-                startWeek = start,
-                endWeek = end,
-                weekType = type,
-                isModified = false,
-                note = "",
-                originId = 0L,
-            )
-        }
-        siblings.forEach { course -> courseDao.deleteCourseById(course.id) }
-        courseDao.insertCourses(restored.map { course -> course.toEntity() })
-        CourseRepository.AtomicSaveResult.Success
-    } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+            val restored = convertWeeksToSegments(allWeeks).map { (start, end, type) ->
+                template.copy(
+                    id = 0L,
+                    startWeek = start,
+                    endWeek = end,
+                    weekType = type,
+                    isModified = false,
+                    note = "",
+                    originId = 0L,
+                )
+            }
+            siblings.forEach { course -> courseDao.deleteCourseById(course.id) }
+            courseDao.insertCourses(restored.map { course -> course.toEntity() })
+            CourseRepository.AtomicSaveResult.Success
+        } ?: CourseRepository.AtomicSaveResult.Rejected("活动课表或学期已变化，请重新打开后再试")
+    }
 
     /** 调用方必须已经持有 Room transaction。 */
     private suspend fun saveCoursesLocked(
@@ -203,6 +212,15 @@ class CourseRepositoryImpl @Inject constructor(
             courseDao.insertCourses(courses.map { it.copy(id = 0L).toEntity() })
         }
         return CourseRepository.AtomicSaveResult.Success
+    }
+
+    /** 仅把完整 Room 事务抛出的唯一约束异常转换为可恢复的业务拒绝。 */
+    private suspend fun saveWithConstraintRejection(
+        action: suspend () -> CourseRepository.AtomicSaveResult,
+    ): CourseRepository.AtomicSaveResult = try {
+        action()
+    } catch (failure: SQLiteConstraintException) {
+        CourseRepository.AtomicSaveResult.Rejected("存在重复课程或课程已变化，请刷新后重试")
     }
 
     private fun convertWeeksToSegments(weeks: Set<Int>): List<Triple<Int, Int, Int>> {

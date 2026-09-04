@@ -1,4 +1,5 @@
 /**
+ * @version 2
  * 通用教务系统解析工具函数库
  * 包含：HTML清洗、实体解码、周次/节次解析、通用提取逻辑
  * 
@@ -324,24 +325,69 @@ function extractSectionsStr(text) {
 }
 
 /**
- * 课程去重 (基于 课程名|教师|地点|星期|周次|节次)
+ * 归一化 teacher / position 这类"可能带噪声"的字段。
+ *
+ * - 去首尾空白、压缩内部空白
+ * - 去掉 "教师:" / "上课地点:" / "教室:" 这类标签前缀
+ * - 去掉 "本部 " / "XX校区 " 这类校区前缀，以及 "泰山科技学院"
+ * - 从第一个"非姓名/非地点"关键词处截断（教学班: / 学分: / 考核方式 ...）
+ *
+ * 目的：二维表分支与列表分支清洗力度不同，会产生 "张磊" vs
+ * "张磊 教学班:传感器与检测技术-0031B 教学班组成:… 学分:3.0" 这种同一教师的两种写法，
+ * 归一化到同一个值后，同一门课才能被 dedupeCourses 识别为重复。
+ */
+function normalizeMergeField(raw) {
+    if (raw === undefined || raw === null) return "";
+    var text = String(raw).replace(/\s+/g, " ").trim();
+    text = text.replace(/^(教师|任课教师|上课地点|教室|地点)\s*[:：]\s*/, "");
+    text = text.replace(/泰山科技学院/g, "");
+    text = text.replace(/^(本部|校本部|[一-龥]{2,6}校区)\s+/, "");
+    var stop = /(教学班组成|教学班|选课备注|考核方式|课程学时组成|课程学时|总学时|学时|学分|课程性质|课程属性|课程类别|课程类型|课序号|课程号|课程代码|开课单位|上课对象|授课对象|授课形式|人数|班级组成|班级)\s*[:：]?/;
+    var m = stop.exec(text);
+    if (m && m.index > 0) text = text.substring(0, m.index);
+    return text.replace(/[，,;；/]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** 合并两个归一化字段值：相同取其一，不同用 "," 连接（去重、保序）。 */
+function mergeMergeField(a, b) {
+    var na = normalizeMergeField(a);
+    var nb = normalizeMergeField(b);
+    if (!na) return nb;
+    if (!nb || na === nb) return na;
+    var parts = na.split(",");
+    if (parts.indexOf(nb) === -1) parts.push(nb);
+    return parts.join(",");
+}
+
+/**
+ * 课程去重
+ *
+ * 身份键：课程名 | 星期 | 周次 | 节次 —— 同一天、同一周次、同一节次的同名课就是同一门课。
+ * teacher / position 不参与比较：它们在二维表分支与列表分支里清洗力度不同，
+ * 参与比较会让重复课漏网（"课表整体重复"的第二道失效防线）。
+ * 改为：首次出现时归一化写回；再次出现（键相同）时把 teacher / position 归一化后合并。
  */
 function dedupeCourses(courses) {
     var map = {};
     var result = [];
     for (var i = 0; i < courses.length; i++) {
-        var course = courses[i];
+        var course = courses[i] || {};
+        var day = course.day === undefined ? course.dayOfWeek : course.day;
         var key = [
             course.name || "",
-            course.teacher || "",
-            course.position || "",
-            course.day || "",
+            day === undefined || day === null ? "" : day,
             (course.weeks || []).join("_"),
             (course.sections || []).join("_")
         ].join("|");
-        if (!map[key]) {
-            map[key] = true;
+        var kept = map[key];
+        if (!kept) {
+            course.teacher = normalizeMergeField(course.teacher);
+            course.position = normalizeMergeField(course.position);
+            map[key] = course;
             result.push(course);
+        } else {
+            kept.teacher = mergeMergeField(kept.teacher, course.teacher);
+            kept.position = mergeMergeField(kept.position, course.position);
         }
     }
     return result;
@@ -357,6 +403,8 @@ if (typeof module !== 'undefined' && module.exports) {
         stripTags: stripTags,
         stripWeekNoise: stripWeekNoise,
         dedupeCourses: dedupeCourses,
+        normalizeMergeField: normalizeMergeField,
+        mergeMergeField: mergeMergeField,
         // reportDropped 由各具体解析脚本（zhengfang.js/qiangzhi.js/kingosoft.js）在运行时调用，
         // 它们与本文件是拼接加载的；此处导出同时让静态分析识别其被使用。
         reportDropped: reportDropped

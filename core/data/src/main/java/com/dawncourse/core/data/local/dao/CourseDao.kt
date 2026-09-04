@@ -89,9 +89,9 @@ interface CourseDao {
      *
      * @param course 要插入的实体
      * @return 新插入行的 RowId (即主键)
-     * OnConflictStrategy.REPLACE 表示如果主键冲突则覆盖旧数据
+     * 约束冲突必须中止写入，禁止以 REPLACE 删除既有业务键记录。
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertCourse(course: CourseEntity): Long
 
     /**
@@ -100,9 +100,21 @@ interface CourseDao {
      * @param courses 课程列表
      * @return 插入的主键列表
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertCourses(courses: List<CourseEntity>): List<Long>
-    
+
+    /**
+     * 批量插入课程，命中业务键唯一索引 (index_courses_dedupe) 的重复行直接忽略。
+     *
+     * 仅供「外部导入 / 同步」这类候选对象 id = 0L 的写入路径使用，作为解析层去重之外的
+     * 最后一道兜底。撤销删除 / 撤销调课 / 备份还原等携带显式 id 的路径使用 ABORT 版，
+     * 由事务回滚保留原数据。
+     *
+     * @return 实际插入行的 RowId；被忽略的行对应 -1。
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCoursesIgnoringDuplicates(courses: List<CourseEntity>): List<Long>
+
     /**
      * 更新课程
      *

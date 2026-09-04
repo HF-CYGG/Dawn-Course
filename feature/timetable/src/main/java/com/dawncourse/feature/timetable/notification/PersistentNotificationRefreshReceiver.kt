@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
@@ -21,21 +22,26 @@ class PersistentNotificationRefreshReceiver : BroadcastReceiver() {
         if (intent.action != PersistentNotificationRefreshScheduler.ACTION_REFRESH_COURSE_STATUS) return
         if (intent.dataString != PersistentNotificationRefreshScheduler.REFRESH_DATA_URI) return
         val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                if (!ReminderScheduler.triggerCourseSurfaceRefreshWorkAndAwait(
+        receiverScope.launch {
+            ReceiverTaskRunner.run(
+                task = {
+                    if (!ReminderScheduler.triggerCourseSurfaceRefreshWorkAndAwait(
                         context.applicationContext,
-                    )
-                ) {
-                    Log.w(TAG, "课程状态边界刷新责任未持久化且任务未确认入队")
-                }
-            } finally {
-                pendingResult.finish()
-            }
+                        )
+                    ) {
+                        Log.w(TAG, "课程状态边界刷新责任未持久化且任务未确认入队")
+                    }
+                },
+                onFailureType = { failureType ->
+                    Log.e(TAG, "课程状态边界刷新失败 type=$failureType")
+                },
+                finish = pendingResult::finish,
+            )
         }
     }
 
     private companion object {
         const val TAG = "CourseStatusRefresh"
+        val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

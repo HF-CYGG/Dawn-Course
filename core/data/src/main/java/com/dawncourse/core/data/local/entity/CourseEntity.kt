@@ -18,6 +18,16 @@ import com.dawncourse.core.domain.model.Course
         Index(value = ["semesterId"]),
         Index(value = ["dayOfWeek"]),
         Index(value = ["originId"]),
+        // 业务键唯一约束：拦住「解析器/导入把同一门课写两份」这类整体重复。
+        // 纳入 originId / isModified，避免误伤调课拆分出的记录（它们时间段可能相同但 originId 不同）。
+        Index(
+            value = [
+                "semesterId", "name", "dayOfWeek", "startSection", "duration",
+                "startWeek", "endWeek", "weekType", "originId", "isModified",
+            ],
+            unique = true,
+            name = "index_courses_dedupe",
+        ),
     ]
 )
 data class CourseEntity(

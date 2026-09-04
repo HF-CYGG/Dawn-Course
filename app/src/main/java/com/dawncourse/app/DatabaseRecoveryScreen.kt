@@ -36,8 +36,12 @@ import com.dawncourse.core.data.local.startup.DatabaseRecoveryActionResult
 import com.dawncourse.core.data.local.startup.DatabaseRecoveryReason
 import com.dawncourse.core.data.local.startup.DatabaseRecoveryEntryMode
 import com.dawncourse.core.data.local.startup.DatabaseStartupRuntime
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.core.domain.model.WebDavCredentials
 import kotlinx.coroutines.launch
+
+/** 跳板真正启动后才保持 busy 等待进程移交；失败必须立即恢复可操作状态。 */
+internal fun recoveryBusyAfterRestartAttempt(restartStarted: Boolean): Boolean = restartStarted
 
 /**
  * 不创建任何 Repository/ViewModel 的数据库恢复页。
@@ -49,7 +53,7 @@ fun DatabaseRecoveryScreen(
     reason: DatabaseRecoveryReason,
     entryMode: DatabaseRecoveryEntryMode,
     runtime: DatabaseStartupRuntime,
-    onRestartRequired: () -> Unit
+    onRestartRequired: () -> Boolean
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -60,14 +64,26 @@ fun DatabaseRecoveryScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var confirmAbandon by rememberSaveable { mutableStateOf(false) }
     val markerRetryFailedMessage = stringResource(R.string.database_recovery_marker_retry_failed)
+    val actionFailureMessage = stringResource(R.string.database_recovery_action_failed)
 
     fun submit(action: suspend () -> DatabaseRecoveryActionResult) {
         if (busy) return
         busy = true
         message = null
         scope.launch {
-            when (val result = action()) {
-                DatabaseRecoveryActionResult.RestartRequired -> onRestartRequired()
+            val result = runSuspendCatching { action() }.getOrElse {
+                message = actionFailureMessage
+                busy = false
+                return@launch
+            }
+            when (result) {
+                DatabaseRecoveryActionResult.RestartRequired -> {
+                    val restartStarted = onRestartRequired()
+                    busy = recoveryBusyAfterRestartAttempt(restartStarted)
+                    if (!restartStarted) {
+                        message = actionFailureMessage
+                    }
+                }
                 is DatabaseRecoveryActionResult.Failed -> {
                     message = recoveryFailureMessage(context, result.reason)
                     busy = false
@@ -110,7 +126,12 @@ fun DatabaseRecoveryScreen(
                         Button(
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !busy,
-                            onClick = onRestartRequired,
+                            onClick = {
+                                if (!onRestartRequired()) {
+                                    message = actionFailureMessage
+                                    busy = false
+                                }
+                            },
                         ) {
                             Text(stringResource(R.string.database_recovery_restart_action))
                         }
@@ -124,7 +145,14 @@ fun DatabaseRecoveryScreen(
                                 busy = true
                                 message = null
                                 scope.launch {
-                                    if (!runtime.retryRecoveryMarker()) {
+                                    val retried = runSuspendCatching {
+                                        runtime.retryRecoveryMarker()
+                                    }.getOrElse {
+                                        message = markerRetryFailedMessage
+                                        busy = false
+                                        return@launch
+                                    }
+                                    if (!retried) {
                                         message = markerRetryFailedMessage
                                     }
                                     busy = false

@@ -171,6 +171,12 @@ fun SettingsScreen(
         }
     }
 
+    LaunchedEffect(viewModel, resources) {
+        viewModel.uiEvents.collect {
+            Toast.makeText(context, resources.getString(R.string.settings_operation_failed), Toast.LENGTH_LONG).show()
+        }
+    }
+
     val wallpaperLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -2223,8 +2229,8 @@ private fun BindAccountDialog(
                     isError = endpointError != null,
                     // 入口错误提示
                     supportingText = {
-                        if (endpointError != null) {
-                            Text(endpointError!!, color = MaterialTheme.colorScheme.error)
+                        endpointError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error)
                         }
                     }
                 )

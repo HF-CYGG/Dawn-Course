@@ -2,7 +2,6 @@ package com.dawncourse.core.ui.util
 
 import androidx.compose.ui.graphics.Color
 import com.dawncourse.core.domain.model.Course
-import kotlin.math.abs
 
 /**
  * 课程颜色工具类
@@ -49,8 +48,8 @@ object CourseColorUtils {
      * 根据名称和教师生成颜色 (用于导入预览等没有完整 Course 对象的场景)
      */
     fun generateColor(name: String, teacher: String?): String {
-        val hash = abs((name + (teacher ?: "")).hashCode())
-        val index = hash % PRESET_COLORS.size
+        val hash = (name + (teacher ?: "")).hashCode()
+        val index = Math.floorMod(hash, PRESET_COLORS.size)
         return PRESET_COLORS[index]
     }
     

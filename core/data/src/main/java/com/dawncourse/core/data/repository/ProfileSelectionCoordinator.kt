@@ -624,7 +624,10 @@ class ProfileSelectionCoordinator @Inject constructor(
             ) return@withTransaction false
             courseDao.deleteCoursesBySemester(semesterId)
             if (courses.isNotEmpty()) {
-                courseDao.insertCourses(courses.map { it.copy(id = 0L, semesterId = semesterId).toEntity() })
+                // 网络同步写入：命中业务键唯一索引的重复行直接忽略（解析层去重之外的兜底）。
+                courseDao.insertCoursesIgnoringDuplicates(
+                    courses.map { it.copy(id = 0L, semesterId = semesterId).toEntity() },
+                )
             }
             true
         }

@@ -6,6 +6,7 @@ import retrofit2.http.GET
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -94,7 +95,9 @@ class UpdateRepository @Inject constructor(
                 cause = failure
             )
             return@withContext Result.failure(exception)
-        } catch (failure: Throwable) {
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
             val endpointFailure = UpdateEndpointRequestException(
                 endpointLabel = primaryEndpoint.label,
                 endpointUrl = "${primaryEndpoint.baseUrl}version.json",
@@ -135,7 +138,9 @@ class UpdateRepository @Inject constructor(
             )
         } catch (e: UpdateEndpointRequestException) {
             throw e
-        } catch (e: Throwable) {
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (e: Exception) {
             throw UpdateEndpointRequestException(
                 endpointLabel = endpointLabel,
                 endpointUrl = endpointUrl,

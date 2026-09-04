@@ -116,6 +116,16 @@ fun CourseRescheduleSheet(
             RescheduleStepper(currentStep = currentStep)
             Spacer(modifier = Modifier.height(24.dp))
 
+            // 提交被拒绝或异常时保持面板，并展示 ViewModel 提供的脱敏提示。
+            uiState.operationError?.let { message ->
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
+
             AnimatedContent(targetState = currentStep, label = "step_transition") { step ->
                 when (step) {
                     RescheduleStep.SELECT_WEEKS -> {
@@ -641,6 +651,7 @@ private fun ConfirmStep(
         val hasConflict = uiState.conflictInfo.hasConflict
         Button(
             onClick = onConfirm,
+            enabled = canConfirmReschedule(uiState),
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (hasConflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -648,7 +659,13 @@ private fun ConfirmStep(
         ) {
             Icon(if (hasConflict) Icons.Default.Info else Icons.Default.Check, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text(if (hasConflict) "仍要调整 (冲突)" else "确认调整")
+            Text(
+                when {
+                    !uiState.conflictDataReady -> "正在校验课程冲突"
+                    hasConflict -> "仍要调整 (冲突)"
+                    else -> "确认调整"
+                }
+            )
         }
     }
 }

@@ -49,6 +49,7 @@ import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.feature.widget.policy.WidgetContentSource
+import com.dawncourse.feature.widget.policy.WidgetContentDecision
 import com.dawncourse.feature.widget.policy.WidgetContentSourcePolicy
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.EntryPoint
@@ -216,24 +217,25 @@ class DawnWidget : GlanceAppWidget() {
             snapshot != null -> OperationalDataReadiness.STARTING
             else -> operationalDataGate.awaitReadiness(DATABASE_WAIT_MILLIS)
         }
-        val source = WidgetContentSourcePolicy.decide(snapshot != null, readiness)
-        val timeline = when (source) {
-            WidgetContentSource.STARTUP_SNAPSHOT -> {
-                // Widget-only 冷启动没有 Activity 帮忙释放快照；安排有限重试以在 Room Ready 后收敛。
-                WidgetSyncManager.scheduleStartupRetry(context)
-                StartupSnapshotWidgetTimelineMapper().map(snapshot!!, System.currentTimeMillis())
+        val decision = WidgetContentSourcePolicy.decide(snapshot, readiness)
+        if (decision.requiresStartupRetry) {
+            // 快照首帧和准备态都需要有限次重试，数据库/Recovery 分支不应额外调度。
+            WidgetSyncManager.scheduleStartupRetry(context)
+        }
+        val timeline = when (decision) {
+            is WidgetContentDecision.StartupSnapshotContent -> {
+                StartupSnapshotWidgetTimelineMapper().map(decision.snapshot, System.currentTimeMillis())
             }
-            WidgetContentSource.DATABASE -> entryPoint.widgetTimelineBuilder().build()
-            WidgetContentSource.STARTING_RETRY -> {
-                WidgetSyncManager.scheduleStartupRetry(context)
+            WidgetContentDecision.Database -> entryPoint.widgetTimelineBuilder().build()
+            WidgetContentDecision.StartingRetry -> {
                 safeTimeline("正在准备课表数据")
             }
-            WidgetContentSource.RECOVERY_SAFE_UI -> {
+            WidgetContentDecision.RecoverySafeUi -> {
                 Log.w(TAG, "operational data gate closed while resolving Widget content")
                 safeTimeline("请打开应用恢复课表数据")
             }
         }
-        if (source != WidgetContentSource.RECOVERY_SAFE_UI &&
+        if (decision.source != WidgetContentSource.RECOVERY_SAFE_UI &&
             operationalDataGate.readiness() == OperationalDataReadiness.RECOVERY_REQUIRED
         ) {
             Log.w(TAG, "operational data gate closed after Widget content resolution")
@@ -242,7 +244,7 @@ class DawnWidget : GlanceAppWidget() {
                 WidgetContentSource.RECOVERY_SAFE_UI,
             )
         }
-        return WidgetTimelineResolution(timeline, source)
+        return WidgetTimelineResolution(timeline, decision.source)
     }
 
     private suspend fun StartupSnapshotRuntime.awaitSettledSnapshot(): StartupSnapshotRuntimeState {

@@ -169,6 +169,9 @@ class WidgetTimelineBuilder @Inject constructor(
                 currentWeek in course.startWeek..course.endWeek &&
                 course.matchesWeekType(currentWeek)
         }
+        // 小组件侧按「起始节-课程名」折叠同一时段重复课，取信息最全的一条。
+        // 注意：这只是独立兜底，不再是主要防线——「课表整体重复」的根因修复在解析层
+        // (parsers/qiangzhi.js 双采集收敛 + common_parser_utils.js 去重键) 与数据库业务键唯一索引。
         .groupBy { "${it.startSection}-${it.name}" }
         .map { (_, coursesAtTime) ->
             coursesAtTime.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }

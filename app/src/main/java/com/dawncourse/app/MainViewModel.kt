@@ -12,6 +12,7 @@ import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.domain.model.createStartupSnapshot
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.feature.timetable.notification.MuteRecoveryUserActionController
 import com.dawncourse.feature.timetable.notification.MuteSessionRecord
 import com.dawncourse.core.domain.model.TriggerKey
@@ -21,8 +22,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -38,6 +42,8 @@ import javax.inject.Inject
  */
 sealed interface MainUiState {
     data object Loading : MainUiState
+    /** 根数据流的可恢复异常，禁止把底层异常文本暴露到界面。 */
+    data object Error : MainUiState
     data class Success(
         val settings: AppSettings,
         val scheduleRevision: ScheduleRevision,
@@ -45,6 +51,29 @@ sealed interface MainUiState {
         val activeTimetableContext: ActiveTimetableContext? = null,
         val activeCourses: List<Course> = emptyList(),
     ) : MainUiState
+}
+
+/** MainActivity 消费的全局、脱敏的一次性操作失败事件。 */
+sealed interface MainUiEvent {
+    /** 启动或用户触发的静音恢复操作未完成。 */
+    data object MuteRecoveryOperationFailed : MainUiEvent
+}
+
+/** 一次性主界面事件使用单消费者缓冲队列，订阅晚于发送时仍不会遗失。 */
+internal fun mainUiEventFlow(channel: Channel<MainUiEvent>): Flow<MainUiEvent> = channel.receiveAsFlow()
+
+/** 静音恢复提示流失败不应终止 ViewModel 根作用域；失败同时产生固定语义事件。 */
+internal fun recoverMuteRecoveryFlow(
+    upstream: Flow<List<MuteSessionRecord>>,
+    onFailure: suspend () -> Unit,
+): Flow<List<MuteSessionRecord>> = upstream.catch { failure ->
+    if (failure is CancellationException) throw failure
+    if (failure is Exception) {
+        onFailure()
+        emit(emptyList())
+    } else {
+        throw failure
+    }
 }
 
 /**
@@ -200,7 +229,8 @@ internal fun scheduleRevisionFlow(
     activeSemesterSchedule: Flow<ActiveSemesterSchedule>,
     computationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ): Flow<MainUiState> = combine(settings, activeSemesterSchedule) { currentSettings, activeSchedule ->
-    MainUiState.Success(
+    // 显式上转 sealed 类型，允许后续 catch 发射同一状态流的 Error 分支。
+    val state: MainUiState = MainUiState.Success(
         settings = currentSettings,
         scheduleRevision = ScheduleRevision.create(
             settings = currentSettings,
@@ -211,7 +241,14 @@ internal fun scheduleRevisionFlow(
         activeTimetableContext = activeSchedule.activeTimetableContext,
         activeCourses = activeSchedule.courses,
     )
+    state
 }.flowOn(computationDispatcher)
+    .catch { failure ->
+        // Flow 的取消属于结构化并发控制信号，不能被映射成“加载失败”。
+        if (failure is CancellationException) throw failure
+        // 只把可恢复的 Exception 收敛到显式 UI 状态；Error 仍按致命错误处理。
+        if (failure is Exception) emit(MainUiState.Error) else throw failure
+    }
 
 /**
  * 主 Activity 的 ViewModel
@@ -228,10 +265,21 @@ class MainViewModel @Inject constructor(
     private val muteRecoveryController: MuteRecoveryUserActionController,
     private val startupSnapshotRuntime: StartupSnapshotRuntime,
 ) : ViewModel() {
+    /* Channel keeps a startup failure until the Activity starts collecting it. */
+    private val eventChannel = Channel<MainUiEvent>(Channel.BUFFERED)
+
+    /** 不影响根数据状态的用户操作异常以脱敏事件通知 Activity。 */
+    val eventFlow: Flow<MainUiEvent> = mainUiEventFlow(eventChannel)
+
     init {
         // 进程重建时从持久状态补齐专用恢复 Work；不依赖通知权限或触发器注册表。
         viewModelScope.launch {
-            muteRecoveryController.reconcilePersistedState()
+            val result = runSuspendCatching {
+                muteRecoveryController.reconcilePersistedState()
+            }
+            if (result.isFailure) {
+                eventChannel.send(MainUiEvent.MuteRecoveryOperationFailed)
+            }
         }
     }
 
@@ -258,7 +306,9 @@ class MainViewModel @Inject constructor(
 
     /** 即使通知权限被拒绝，应用前台仍持续观察需要用户处理的静音责任。 */
     val exhaustedMuteRecoveries: StateFlow<List<MuteSessionRecord>> =
-        muteRecoveryController.observeExhaustedRecords().stateIn(
+        recoverMuteRecoveryFlow(muteRecoveryController.observeExhaustedRecords()) {
+            eventChannel.send(MainUiEvent.MuteRecoveryOperationFailed)
+        }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
@@ -267,14 +317,20 @@ class MainViewModel @Inject constructor(
     /** DND 权限已由 UI 检查后，重置有限次数并提交一次立即恢复。 */
     fun retryMuteRecovery(key: TriggerKey) {
         viewModelScope.launch {
-            muteRecoveryController.retry(key)
+            val result = runSuspendCatching { muteRecoveryController.retry(key) }
+            if (result.getOrNull() != true) {
+                eventChannel.send(MainUiEvent.MuteRecoveryOperationFailed)
+            }
         }
     }
 
     /** 用户确认已手动恢复或放弃应用责任。 */
     fun releaseMuteRecovery(key: TriggerKey) {
         viewModelScope.launch {
-            muteRecoveryController.release(key)
+            val result = runSuspendCatching { muteRecoveryController.release(key) }
+            if (result.getOrNull() != true) {
+                eventChannel.send(MainUiEvent.MuteRecoveryOperationFailed)
+            }
         }
     }
 
@@ -284,7 +340,7 @@ class MainViewModel @Inject constructor(
      */
     suspend fun refreshStartupSnapshot(successState: MainUiState.Success) {
         val context = successState.activeTimetableContext ?: return
-        val snapshot = try {
+        val snapshot = runSuspendCatching {
             withContext(Dispatchers.Default) {
                 createStartupSnapshot(
                     activeContext = context,
@@ -294,12 +350,8 @@ class MainViewModel @Inject constructor(
                     zoneId = java.time.ZoneId.systemDefault().id,
                 )
             }
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Throwable) {
-            return
-        }
+        }.getOrNull() ?: return
         // Widget 仅由 MainActivity 的 scheduleRevision effect 对账，快照成功或失败均不广播。
-        startupSnapshotRuntime.replaceLatest(snapshot)
+        runSuspendCatching { startupSnapshotRuntime.replaceLatest(snapshot) }
     }
 }

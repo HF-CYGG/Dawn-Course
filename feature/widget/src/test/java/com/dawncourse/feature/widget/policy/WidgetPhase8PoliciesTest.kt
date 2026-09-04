@@ -1,7 +1,11 @@
 package com.dawncourse.feature.widget.policy
 
+import com.dawncourse.core.domain.model.ActiveTimetableContext
+import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.model.TimetableProfile
+import com.dawncourse.core.domain.model.createStartupSnapshot
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import java.time.LocalDate
 import java.time.LocalTime
@@ -432,11 +436,51 @@ class WidgetNextUpdateCoordinatorTest {
 class WidgetContentSourcePolicyTest {
 
     @Test
-    fun `可用 snapshot 在数据库仍启动时仍优先作为内容源`() {
-        assertEquals(
-            WidgetContentSource.STARTUP_SNAPSHOT,
+    fun `快照与准备态决策需要短延迟重试而数据库和恢复态不需要`() {
+        assertTrue(
             WidgetContentSourcePolicy.decide(
-                hasStartupSnapshot = true,
+                startupSnapshot = startupSnapshot(),
+                databaseReadiness = OperationalDataReadiness.STARTING,
+            ).requiresStartupRetry,
+        )
+        assertTrue(
+            WidgetContentSourcePolicy.decide(
+                startupSnapshot = null,
+                databaseReadiness = OperationalDataReadiness.STARTING,
+            ).requiresStartupRetry,
+        )
+        assertFalse(
+            WidgetContentSourcePolicy.decide(
+                startupSnapshot = startupSnapshot(),
+                databaseReadiness = OperationalDataReadiness.READY,
+            ).requiresStartupRetry,
+        )
+        assertFalse(
+            WidgetContentSourcePolicy.decide(
+                startupSnapshot = startupSnapshot(),
+                databaseReadiness = OperationalDataReadiness.RECOVERY_REQUIRED,
+            ).requiresStartupRetry,
+        )
+    }
+
+    @Test
+    fun `内容决策携带实际快照而不是缺少载荷的枚举`() {
+        val snapshot = startupSnapshot()
+        val decision = WidgetContentSourcePolicy.decide(
+            startupSnapshot = snapshot,
+            databaseReadiness = OperationalDataReadiness.STARTING,
+        )
+
+        assertEquals(WidgetContentDecision.StartupSnapshotContent(snapshot), decision)
+    }
+
+    @Test
+    fun `可用 snapshot 在数据库仍启动时仍优先作为内容源`() {
+        val snapshot = startupSnapshot()
+        assertEquals(
+            WidgetContentDecision.StartupSnapshotContent(snapshot),
+            WidgetContentSourcePolicy.decide(
+                startupSnapshot = snapshot,
                 databaseReadiness = OperationalDataReadiness.STARTING,
             ),
         )
@@ -445,9 +489,9 @@ class WidgetContentSourcePolicyTest {
     @Test
     fun `缺失 snapshot 且数据库就绪时读取数据库`() {
         assertEquals(
-            WidgetContentSource.DATABASE,
+            WidgetContentDecision.Database,
             WidgetContentSourcePolicy.decide(
-                hasStartupSnapshot = false,
+                startupSnapshot = null,
                 databaseReadiness = OperationalDataReadiness.READY,
             ),
         )
@@ -456,9 +500,9 @@ class WidgetContentSourcePolicyTest {
     @Test
     fun `数据库就绪后即使 snapshot 仍在内存也切换到实时数据`() {
         assertEquals(
-            WidgetContentSource.DATABASE,
+            WidgetContentDecision.Database,
             WidgetContentSourcePolicy.decide(
-                hasStartupSnapshot = true,
+                startupSnapshot = startupSnapshot(),
                 databaseReadiness = OperationalDataReadiness.READY,
             ),
         )
@@ -467,9 +511,9 @@ class WidgetContentSourcePolicyTest {
     @Test
     fun `缺失 snapshot 且数据库仍启动时展示准备态并安排短重试`() {
         assertEquals(
-            WidgetContentSource.STARTING_RETRY,
+            WidgetContentDecision.StartingRetry,
             WidgetContentSourcePolicy.decide(
-                hasStartupSnapshot = false,
+                startupSnapshot = null,
                 databaseReadiness = OperationalDataReadiness.STARTING,
             ),
         )
@@ -478,13 +522,24 @@ class WidgetContentSourcePolicyTest {
     @Test
     fun `恢复门禁关闭时始终使用安全 UI 而不显示 snapshot`() {
         assertEquals(
-            WidgetContentSource.RECOVERY_SAFE_UI,
+            WidgetContentDecision.RecoverySafeUi,
             WidgetContentSourcePolicy.decide(
-                hasStartupSnapshot = true,
+                startupSnapshot = startupSnapshot(),
                 databaseReadiness = OperationalDataReadiness.RECOVERY_REQUIRED,
             ),
         )
     }
+
+    private fun startupSnapshot() = createStartupSnapshot(
+        activeContext = ActiveTimetableContext(
+            profile = TimetableProfile(id = 1L, uuid = "profile", name = "课表", activeSemesterId = null),
+            semester = null,
+        ),
+        courses = emptyList(),
+        settings = AppSettings(),
+        createdAtEpochMillis = 0L,
+        zoneId = "UTC",
+    )
 }
 
 class LatestWidgetContentRuntimeTest {

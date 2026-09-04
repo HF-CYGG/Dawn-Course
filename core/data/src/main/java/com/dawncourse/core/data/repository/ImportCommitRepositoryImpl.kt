@@ -281,7 +281,8 @@ class ImportCommitRepositoryImpl @Inject constructor(
     /** 忽略候选对象携带的旧 ID 与 semesterId，防止跨 Profile 写入。 */
     private suspend fun insertCourses(courses: List<com.dawncourse.core.domain.model.Course>, semesterId: Long) {
         if (courses.isEmpty()) return
-        courseDao.insertCourses(
+        // 外部导入路径：命中业务键唯一索引的重复行直接忽略，作为解析层去重之外的兜底。
+        courseDao.insertCoursesIgnoringDuplicates(
             courses.map { course ->
                 course.copy(
                     id = 0L,

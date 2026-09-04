@@ -11,10 +11,10 @@ class StartupSnapshotRootContractTest {
         val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
 
         assertTrue(source.contains("DatabaseStartupUiPolicy.decide"))
-        assertTrue(source.contains("decision.showSnapshot"))
+        assertTrue(source.contains("is DatabaseStartupUiDecision.Snapshot"))
         assertTrue(source.contains("preparationDecision.createDatabaseViewModels"))
-        assertTrue(source.contains("decision.showLiveRoot"))
-        assertTrue(source.contains("decision.showRecovery"))
+        assertTrue(source.contains("DatabaseStartupUiDecision.LiveRoot ->"))
+        assertTrue(source.contains("is DatabaseStartupUiDecision.Recovery"))
         assertTrue(source.contains("StartupTimetableContent"))
         assertFalse(source.contains("databaseState is DatabaseRuntimeState.Starting"))
     }
@@ -30,8 +30,8 @@ class StartupSnapshotRootContractTest {
     @Test
     fun `snapshot branch cannot create a live graph entry point`() {
         val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
-        val snapshotStart = source.indexOf("decision.showSnapshot ->")
-        val liveStart = source.indexOf("decision.showLiveRoot ->")
+        val snapshotStart = source.indexOf("is DatabaseStartupUiDecision.Snapshot ->")
+        val liveStart = source.indexOf("DatabaseStartupUiDecision.LiveRoot ->")
 
         assertTrue("snapshot branch must exist", snapshotStart >= 0)
         assertTrue("live branch must follow snapshot branch", liveStart > snapshotStart)
@@ -61,8 +61,22 @@ class StartupSnapshotRootContractTest {
         val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
 
         assertTrue(source.contains("liveRootReady"))
-        assertTrue(source.contains("decision.showLiveRoot"))
+        assertTrue(source.contains("DatabaseStartupUiDecision.LiveRoot ->"))
         assertTrue(source.contains("startupSnapshotRuntime.releaseVisibleSnapshot()"))
+    }
+
+    @Test
+    fun `根 Flow 错误使用安全重启面且不会构造 NavHost`() {
+        val source = File("src/main/java/com/dawncourse/app/MainActivity.kt").readText()
+        val errorStart = source.indexOf("DatabaseStartupUiDecision.RootError ->")
+        val snapshotStart = source.indexOf("is DatabaseStartupUiDecision.Snapshot ->", errorStart)
+
+        assertTrue("根错误分支必须存在", errorStart >= 0)
+        assertTrue("错误分支必须在快照分支之前", snapshotStart > errorStart)
+        val errorBranch = source.substring(errorStart, snapshotStart)
+        assertTrue(errorBranch.contains("MainRootErrorScreen"))
+        assertTrue(errorBranch.contains("ControlledProcessRestarter.restart"))
+        assertFalse("错误状态下不能创建导航图", errorBranch.contains("NavHost"))
     }
 
     @Test

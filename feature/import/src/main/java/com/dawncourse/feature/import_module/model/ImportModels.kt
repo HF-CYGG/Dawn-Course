@@ -222,6 +222,31 @@ fun parseXiaoaiProviderResult(raw: String): XiaoaiProviderResult {
 fun parseParsedCoursesFromRaw(raw: String): List<ParsedCourse> =
     parseParsedCoursesFromRaw(raw, depth = 0)
 
+/**
+ * 按业务键对解析结果二次去重：`课程名 | 星期 | 起始节 | 持续节数 | 起始周 | 结束周 | 周次类型`。
+ *
+ * 仅在执行契约判出 `duplicate_ratio_high` 时作为客户端补救调用——解析器/工具库里的去重
+ * 是主要防线，这里只兜底一层，保证「解析器退化成 2× 重复」时用户当次导入不至于落一堆重复课。
+ * teacher / location 不参与键：不同采集分支清洗力度不同，纳入会让重复漏网；保留首次出现的那条。
+ */
+fun dedupeParsedCourses(courses: List<ParsedCourse>): List<ParsedCourse> {
+    val seen = HashSet<String>()
+    val result = ArrayList<ParsedCourse>(courses.size)
+    for (course in courses) {
+        val key = listOf(
+            course.name,
+            course.dayOfWeek,
+            course.startSection,
+            course.duration,
+            course.startWeek,
+            course.endWeek,
+            course.weekType,
+        ).joinToString("|")
+        if (seen.add(key)) result.add(course)
+    }
+    return result
+}
+
 private fun parseParsedCoursesFromRaw(
     raw: String,
     depth: Int

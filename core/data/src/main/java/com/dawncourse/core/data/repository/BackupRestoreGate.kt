@@ -138,6 +138,23 @@ internal object BackupPayloadValidator {
             course.id
         }
         require(courseIds.distinct().size == courseIds.size) { "备份包含重复课程 ID" }
+        val courseBusinessKeys = courses.map { course ->
+            CourseBusinessKey(
+                semesterId = course.semesterId,
+                name = course.name,
+                dayOfWeek = course.dayOfWeek,
+                startSection = course.startSection,
+                duration = course.duration,
+                startWeek = course.startWeek,
+                endWeek = course.endWeek,
+                weekType = course.weekType,
+                originId = course.originId,
+                isModified = course.isModified,
+            )
+        }
+        require(courseBusinessKeys.distinct().size == courseBusinessKeys.size) {
+            "备份包含重复课程业务键"
+        }
         val courseById = courses.associateBy { it.id }
         courses.asSequence()
             .filter { course -> course.originId > 0L }
@@ -231,6 +248,20 @@ internal object BackupPayloadValidator {
     ).toString()
 
     private const val LEGACY_PROFILE_ID = 1L
+
+    /** 必须与 CourseEntity.index_courses_dedupe 的列顺序保持同一业务语义。 */
+    private data class CourseBusinessKey(
+        val semesterId: Long,
+        val name: String,
+        val dayOfWeek: Int,
+        val startSection: Int,
+        val duration: Int,
+        val startWeek: Int,
+        val endWeek: Int,
+        val weekType: Int,
+        val originId: Long,
+        val isModified: Boolean,
+    )
 }
 
 /** 先完整验证并解析，再允许调用方进入 Room 替换事务。 */

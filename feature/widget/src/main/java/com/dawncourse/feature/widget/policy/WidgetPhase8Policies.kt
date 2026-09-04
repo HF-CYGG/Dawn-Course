@@ -2,6 +2,7 @@ package com.dawncourse.feature.widget.policy
 
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SectionTime
+import com.dawncourse.core.domain.model.StartupSnapshot
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import java.time.LocalDate
 import java.time.LocalTime
@@ -232,18 +233,46 @@ internal enum class WidgetContentSource {
     RECOVERY_SAFE_UI,
 }
 
+/** Widget 内容决策与实际快照绑定，避免来源枚举和可空快照脱节。 */
+internal sealed interface WidgetContentDecision {
+    val source: WidgetContentSource
+    val requiresStartupRetry: Boolean
+
+    data class StartupSnapshotContent(
+        val snapshot: StartupSnapshot,
+    ) : WidgetContentDecision {
+        override val source: WidgetContentSource = WidgetContentSource.STARTUP_SNAPSHOT
+        override val requiresStartupRetry: Boolean = true
+    }
+
+    data object Database : WidgetContentDecision {
+        override val source: WidgetContentSource = WidgetContentSource.DATABASE
+        override val requiresStartupRetry: Boolean = false
+    }
+
+    data object StartingRetry : WidgetContentDecision {
+        override val source: WidgetContentSource = WidgetContentSource.STARTING_RETRY
+        override val requiresStartupRetry: Boolean = true
+    }
+
+    data object RecoverySafeUi : WidgetContentDecision {
+        override val source: WidgetContentSource = WidgetContentSource.RECOVERY_SAFE_UI
+        override val requiresStartupRetry: Boolean = false
+    }
+}
+
 /** 快照与数据库门禁的 fail-closed 内容源决策。 */
 internal object WidgetContentSourcePolicy {
     fun decide(
-        hasStartupSnapshot: Boolean,
+        startupSnapshot: StartupSnapshot?,
         databaseReadiness: OperationalDataReadiness,
-    ): WidgetContentSource = when {
+    ): WidgetContentDecision = when {
         databaseReadiness == OperationalDataReadiness.RECOVERY_REQUIRED -> {
-            WidgetContentSource.RECOVERY_SAFE_UI
+            WidgetContentDecision.RecoverySafeUi
         }
-        databaseReadiness == OperationalDataReadiness.READY -> WidgetContentSource.DATABASE
-        hasStartupSnapshot -> WidgetContentSource.STARTUP_SNAPSHOT
-        else -> WidgetContentSource.STARTING_RETRY
+        databaseReadiness == OperationalDataReadiness.READY -> WidgetContentDecision.Database
+        startupSnapshot != null -> WidgetContentDecision.StartupSnapshotContent(startupSnapshot)
+        else -> WidgetContentDecision.StartingRetry
     }
 }
 

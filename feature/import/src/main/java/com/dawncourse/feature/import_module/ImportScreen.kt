@@ -79,6 +79,7 @@ import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.compose.ui.res.stringResource
 import com.dawncourse.core.domain.model.ImportDestination
+import com.dawncourse.core.domain.util.runSuspendCatching
 import androidx.compose.runtime.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -100,6 +101,9 @@ import com.dawncourse.core.ui.components.BatchGenerateTimeDialog
 import com.dawncourse.core.ui.components.DawnDatePickerDialog
 import com.dawncourse.core.ui.util.CourseColorUtils
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -492,14 +496,28 @@ private fun SelectionStep(
     onOpenQiangZhiDialog: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     // 注册文件选择器 ActivityResultLauncher
     val icsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            // 读取文件流并传递给 ViewModel 处理
-            context.contentResolver.openInputStream(it)?.use { stream ->
-                val content = BufferedReader(InputStreamReader(stream)).readText()
+            // 文件内容在 IO 线程读取；失败仅反馈安全文案，不让 ActivityResult 回调崩溃。
+            scope.launch {
+                val content = runSuspendCatching {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(it)?.use { stream ->
+                            BufferedReader(InputStreamReader(stream)).readText()
+                        }.orEmpty()
+                    }
+                }.getOrElse {
+                    viewModel.updateResultText("读取日历文件失败，请稍后重试")
+                    return@launch
+                }
+                if (content.isBlank()) {
+                    viewModel.updateResultText("读取日历文件失败，请稍后重试")
+                    return@launch
+                }
                 viewModel.runIcsImport(content)
             }
         }
@@ -704,16 +722,23 @@ private fun WebViewStep(
             pendingHtmlForExport = ""
             return@rememberLauncherForActivityResult
         }
-        runCatching {
-            context.contentResolver.openOutputStream(uri)?.use { stream ->
-                stream.write(pendingHtmlForExport.toByteArray())
-            }
-        }.onSuccess {
-            Toast.makeText(context, "已保存脱敏诊断副本", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            Toast.makeText(context, "保存失败，请重试", Toast.LENGTH_SHORT).show()
-        }
+        // ActivityResult 回调返回后先冻结本次内容，避免异步 IO 读到已清空的 Compose state。
+        val contentToExport = pendingHtmlForExport
         pendingHtmlForExport = ""
+        coroutineScope.launch {
+            val exported = runSuspendCatching {
+                withContext(Dispatchers.IO) {
+                    val stream = context.contentResolver.openOutputStream(uri) ?: return@withContext false
+                    stream.use { output -> output.write(contentToExport.toByteArray()) }
+                    true
+                }
+            }.getOrDefault(false)
+            Toast.makeText(
+                context,
+                if (exported) "已保存脱敏诊断副本" else "保存失败，请重试",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
     }
 
     fun normalizeUrl(raw: String): String? {
@@ -800,8 +825,8 @@ private fun WebViewStep(
                 TextButton(
                     onClick = {
                         coroutineScope.launch {
-                            val html = parseJavascriptResult(
-                                evaluateJs(
+                            val html = runSuspendCatching {
+                                parseJavascriptResult(evaluateJs(
                                     """
                                     (function() {
                                         function collectFrames(doc) {
@@ -843,18 +868,28 @@ private fun WebViewStep(
                                         return JSON.stringify(info, null, 2);
                                     })();
                                     """.trimIndent()
-                                )
-                            )
+                                ))
+                            }.getOrElse {
+                                Toast.makeText(context, "页面读取失败，请稍后重试", Toast.LENGTH_SHORT).show()
+                                return@launch
+                            }
                             if (html.isBlank()) {
                                 Toast.makeText(context, "未获取到页面源码", Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
-                            val sanitized = runCatching { buildSanitizedDiagnosticExport(html) }.getOrElse {
+                            val sanitized = try {
+                                buildSanitizedDiagnosticExport(html)
+                            } catch (_: Exception) {
                                 Toast.makeText(context, "页面内容超过安全处理上限，未导出", Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
                             pendingHtmlForExport = sanitized
-                            exportLauncher.launch("dawn_diagnostic_sanitized.txt")
+                            try {
+                                exportLauncher.launch("dawn_diagnostic_sanitized.txt")
+                            } catch (_: Exception) {
+                                pendingHtmlForExport = ""
+                                Toast.makeText(context, "无法打开文件保存界面，请稍后重试", Toast.LENGTH_SHORT).show()
+                            }
                         }
                         showNoDataDialog = false
                     }
@@ -1168,19 +1203,27 @@ private fun WebViewStep(
                                 viewModel.updateResultText("正在提取...")
                                 pollJob?.cancel()
                                 pollJob = coroutineScope.launch {
-                                    repeat(40) {
-                                        val raw = evaluateJs("window.__dawnReady ? window.__dawnResult : null")
-                                        val rawHtml = parseJavascriptResult(raw)
-                                        if (rawHtml.isNotEmpty()) {
-                                            viewModel.parseResultFromWebView(rawHtml)
-                                            return@launch
+                                    try {
+                                        repeat(40) {
+                                            val raw = evaluateJs("window.__dawnReady ? window.__dawnResult : null")
+                                            val rawHtml = parseJavascriptResult(raw)
+                                            if (rawHtml.isNotEmpty()) {
+                                                viewModel.parseResultFromWebView(rawHtml)
+                                                return@launch
+                                            }
+                                            delay(300)
                                         }
-                                        delay(300)
+                                        viewModel.updateResultText("未能提取到有效 HTML 内容")
+                                    } catch (cancellation: CancellationException) {
+                                        throw cancellation
+                                    } catch (_: Exception) {
+                                        viewModel.updateResultText("提取失败，请稍后重试")
                                     }
-                                    viewModel.updateResultText("未能提取到有效 HTML 内容")
                                 }
-                            } catch (e: Exception) {
-                                viewModel.updateResultText("脚本加载失败: ${e.message}")
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (_: Exception) {
+                                viewModel.updateResultText("脚本加载失败，请稍后重试")
                             }
                         }
                     },

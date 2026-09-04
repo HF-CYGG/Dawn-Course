@@ -7,6 +7,7 @@
     <string name="database_recovery_marker_retry_required">The recovery state could not be saved. To prevent the database from being trusted on the next launch, only retrying the recovery marker is available.</string>
     <string name="database_recovery_marker_retry_action">Retry saving recovery state</string>
     <string name="database_recovery_marker_retry_failed">The recovery state still could not be saved. Check device storage and try again.</string>
+    <string name="database_recovery_action_failed">The recovery action could not be completed. Please try again later.</string>
     <string name="update_download_url_unsafe">The update download address is unsafe and was blocked.</string>
     <string name="update_browser_unavailable">No browser is available to download the update.</string>
     <string name="database_recovery_reason_key">This device cannot use the original database key. After changing devices or if the Keystore key becomes invalid, restore from a backup created by the app.</string>
@@ -32,11 +33,15 @@
     <string name="database_recovery_failure_internal">Recovery could not be completed safely. The original data is still preserved; try again or select another backup.</string>
     <string name="database_startup_blocked_title">The database cannot start safely yet</string>
     <string name="database_startup_blocked_message">The app could not acquire the database startup lock and did not create a recovery transaction. Fully exit the app and try again; the original database was not overwritten.</string>
+    <string name="main_root_error_title">Timetable data is temporarily unavailable</string>
+    <string name="main_root_error_message">The app safely stopped loading timetable data. Restart safely and try again; underlying error details are not displayed.</string>
+    <string name="main_root_error_restart">Restart safely</string>
     <string name="app_name">Dawn Course</string>
     <string name="mute_recovery_dialog_title">Automatic mute recovery failed</string>
     <string name="mute_recovery_dialog_content">Dawn Course could not restore the ringer automatically. Check Do Not Disturb access and retry, or release this recovery responsibility if you restored it manually.</string>
     <string name="mute_recovery_retry">Retry recovery</string>
     <string name="mute_recovery_release">Restored manually / release responsibility</string>
+    <string name="mute_recovery_operation_failed">Mute recovery could not be completed. Check Do Not Disturb access and try again.</string>
     <string name="profile_import_title">Import to timetable</string>
     <string name="profile_import_back">Back</string>
     <string name="profile_import_unavailable_title">Targeted import is being completed</string>

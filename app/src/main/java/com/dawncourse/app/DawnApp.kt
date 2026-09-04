@@ -14,6 +14,7 @@ import com.dawncourse.feature.widget.startup.WidgetSyncInitializer
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collect
@@ -42,7 +43,14 @@ class DawnApp : Application(), Configuration.Provider {
     @Inject
     lateinit var startupSnapshotRuntime: StartupSnapshotRuntime
 
-    private val startupRuntimeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** 应用级根协程只记录异常类型，避免 collector 载荷或数据细节进入日志。 */
+    private val startupRuntimeExceptionHandler = CoroutineExceptionHandler { _, failure ->
+        Log.e(TAG, "startup runtime collector failed type=${failure.javaClass.simpleName}")
+    }
+
+    private val startupRuntimeScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default + startupRuntimeExceptionHandler,
+    )
 
     /** WorkManager 延迟初始化时读取的应用级配置。 */
     override val workManagerConfiguration: Configuration

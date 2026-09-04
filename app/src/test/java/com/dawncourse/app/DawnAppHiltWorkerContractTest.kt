@@ -48,6 +48,17 @@ class DawnAppHiltWorkerContractTest {
     }
 
     @Test
+    fun `应用级 root scope 使用脱敏异常处理器封口未来 collector 异常`() {
+        val source = projectFile("src/main/java/com/dawncourse/app/DawnApp.kt").readText()
+
+        assertTrue(source.contains("CoroutineExceptionHandler"))
+        assertTrue(source.contains("startupRuntimeExceptionHandler"))
+        assertTrue(source.contains("failure.javaClass.simpleName"))
+        assertTrue(source.contains("Dispatchers.Default + startupRuntimeExceptionHandler"))
+        assertFalse(source.contains("failure.message"))
+    }
+
+    @Test
     fun `benchmark Provider 在触发 WorkManager 前等待 DawnApp 的 Hilt WorkerFactory 就绪`() {
         val appSource = projectFile("src/main/java/com/dawncourse/app/DawnApp.kt").readText()
         val providerSource = projectFile(

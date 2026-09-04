@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.repository.CourseRepository
+import com.dawncourse.core.domain.util.runSuspendCatching
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +19,9 @@ import com.dawncourse.core.domain.usecase.CalculateWeekUseCase
 import com.dawncourse.core.domain.usecase.RunTimetableSyncUseCase
 import com.dawncourse.core.domain.model.TimetableSyncResult
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -43,6 +47,10 @@ sealed interface TimetableUiState {
     @Immutable
     data object Loading : TimetableUiState
 
+    /** 根数据源异常的明确安全错误态，不能伪装成空课表成功。 */
+    @Immutable
+    data object Error : TimetableUiState
+
     /**
      * 加载成功状态
      *
@@ -59,6 +67,15 @@ sealed interface TimetableUiState {
         val semesterStartDate: LocalDate? = null
     ) : TimetableUiState
 }
+
+/** 根数据源异常时保持可渲染的显式错误态。 */
+internal fun timetableFlowFailureState(): TimetableUiState = TimetableUiState.Error
+
+internal fun recoverTimetableUiFlow(upstream: kotlinx.coroutines.flow.Flow<TimetableUiState>): kotlinx.coroutines.flow.Flow<TimetableUiState> =
+    upstream.catch { failure ->
+        if (failure is CancellationException) throw failure
+        if (failure is Exception) emit(timetableFlowFailureState()) else throw failure
+    }
 
 /**
  * 课表功能 ViewModel
@@ -80,6 +97,14 @@ class TimetableViewModel @Inject constructor(
 ) : ViewModel() {
 
     private var lastActiveScope: Pair<Long?, Long?>? = null
+
+    private val _userMessage = MutableStateFlow<String?>(null)
+    val userMessage: StateFlow<String?> = _userMessage
+
+    /** 用户操作异常的固定文案，不携带数据库或凭据详情。 */
+    private fun reportOperationFailure() {
+        _userMessage.value = "操作未完成，请稍后重试"
+    }
 
     /**
      * 标记是否已自动滚动到当前周
@@ -118,7 +143,7 @@ class TimetableViewModel @Inject constructor(
      * 结合 timeTicker，确保自然时间流逝也能触发周次更新。
      * 使用 stateIn 转换为热流，SharingStarted.WhileSubscribed(5000) 确保在配置变更时保持活跃。
      */
-    private val currentSemesterFlow: StateFlow<com.dawncourse.core.domain.model.Semester?> =
+    private val currentSemesterFlow: Flow<com.dawncourse.core.domain.model.Semester?> =
         combine(
             timetableProfileRepository.observeActiveContext(),
             timeTicker
@@ -147,11 +172,6 @@ class TimetableViewModel @Inject constructor(
                 }
             }
             .map { context -> context?.semester }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5000),
-                initialValue = null
-            )
 
     /**
      * UI 状态流
@@ -160,7 +180,7 @@ class TimetableViewModel @Inject constructor(
      * 当任一数据源发生变化时，自动计算并生成最新的 UI 状态。
      * 这种响应式设计确保 UI 始终展示最新数据，无需手动刷新。
      */
-    val uiState: StateFlow<TimetableUiState> = currentSemesterFlow
+    val uiState: StateFlow<TimetableUiState> = recoverTimetableUiFlow(currentSemesterFlow
         .flatMapLatest { semester ->
             // 如果学期存在，转换开始日期并获取该学期的课程流
             val startDate = semester?.startDate?.let {
@@ -171,14 +191,17 @@ class TimetableViewModel @Inject constructor(
 
             // 组合课程数据和当前选择的周次
             combine(coursesFlow, _currentWeek) { courses, currentWeek ->
-                TimetableUiState.Success(
+                val state: TimetableUiState = TimetableUiState.Success(
                     courses = courses,
                     currentWeek = currentWeek,
                     totalWeeks = totalWeeks,
                     semesterStartDate = startDate
                 )
+                state
             }
         }
+        )
+        .onEach { if (it is TimetableUiState.Error) reportOperationFailure() }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -188,6 +211,13 @@ class TimetableViewModel @Inject constructor(
     val boundProvider: StateFlow<SyncProviderType?> = timetableProfileRepository.observeActiveContext()
         .flatMapLatest { context ->
             context?.profile?.id?.let(credentialsRepository::observeBoundProvider) ?: flowOf(null)
+        }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) {
+                reportOperationFailure()
+                emit(null)
+            } else throw failure
         }
         .stateIn(
             scope = viewModelScope,
@@ -213,16 +243,18 @@ class TimetableViewModel @Inject constructor(
      */
     fun saveCourse(course: Course) {
         viewModelScope.launch {
-            if (course.id == 0L) {
-                repository.insertCourse(course)
-            } else {
-                repository.updateCourse(course)
+            val result = runSuspendCatching {
+                if (course.id == 0L) {
+                    repository.insertCourse(course)
+                } else {
+                    repository.updateCourse(course)
+                }
+            }
+            if (result.isFailure) {
+                reportOperationFailure()
             }
         }
     }
-
-    private val _userMessage = MutableStateFlow<String?>(null)
-    val userMessage: StateFlow<String?> = _userMessage
 
     private data class DeletedCoursesUndo(
         val profileId: Long,
@@ -267,11 +299,15 @@ class TimetableViewModel @Inject constructor(
         viewModelScope.launch {
             val (profileId, semesterId) = captureActiveScope(courses)
                 ?: return@launch showUserMessage("活动课表已变化，请刷新后重试")
-            when (val result = repository.deleteCoursesIfScopeActive(
+            val result = runSuspendCatching { repository.deleteCoursesIfScopeActive(
                 profileId = profileId,
                 semesterId = semesterId,
                 courseIds = courses.mapTo(linkedSetOf()) { course -> course.id },
-            )) {
+            ) }.getOrElse {
+                reportOperationFailure()
+                return@launch
+            }
+            when (result) {
                 CourseRepository.AtomicSaveResult.Success -> {
                     deletedCoursesStack.addFirst(
                         DeletedCoursesUndo(profileId, semesterId, courses.toList())
@@ -296,11 +332,15 @@ class TimetableViewModel @Inject constructor(
     fun undoDelete() {
         val undo = deletedCoursesStack.firstOrNull() ?: return
         viewModelScope.launch {
-            when (val result = repository.restoreCoursesIfScopeActive(
+            val result = runSuspendCatching { repository.restoreCoursesIfScopeActive(
                 profileId = undo.profileId,
                 semesterId = undo.semesterId,
                 courses = undo.courses,
-            )) {
+            ) }.getOrElse {
+                reportOperationFailure()
+                return@launch
+            }
+            when (result) {
                 CourseRepository.AtomicSaveResult.Success -> {
                     if (deletedCoursesStack.firstOrNull() == undo) deletedCoursesStack.removeFirst()
                     _userMessage.value = "已撤销删除"
@@ -326,12 +366,16 @@ class TimetableViewModel @Inject constructor(
      */
     fun syncNow() {
         viewModelScope.launch {
-            when (val result = runTimetableSyncUseCase()) {
+            val result = runSuspendCatching { runTimetableSyncUseCase() }.getOrElse {
+                reportOperationFailure()
+                return@launch
+            }
+            when (result) {
                 is TimetableSyncResult.Success -> {
-                    _userMessage.value = "更新成功：${result.message}"
+                    _userMessage.value = "课表更新完成"
                 }
                 is TimetableSyncResult.Failure -> {
-                    _userMessage.value = "更新失败：${result.message}"
+                    _userMessage.value = "更新失败，请稍后重试"
                 }
             }
         }
@@ -344,7 +388,7 @@ class TimetableViewModel @Inject constructor(
      * @return 课程对象，若不存在返回 null
      */
     suspend fun getCourse(id: Long): Course? {
-        return repository.getCourseById(id)
+        return runSuspendCatching { repository.getCourseById(id) }.getOrNull()
     }
 
     /**
@@ -368,11 +412,15 @@ class TimetableViewModel @Inject constructor(
         viewModelScope.launch {
             val (profileId, semesterId) = captureActiveScope(listOf(course))
                 ?: return@launch showUserMessage("活动课表已变化，请刷新后重试")
-            when (val result = repository.undoRescheduleIfScopeActive(
+            val result = runSuspendCatching { repository.undoRescheduleIfScopeActive(
                 profileId = profileId,
                 semesterId = semesterId,
                 originId = targetOriginId,
-            )) {
+            ) }.getOrElse {
+                reportOperationFailure()
+                return@launch
+            }
+            when (result) {
                 CourseRepository.AtomicSaveResult.Success -> Unit
                 is CourseRepository.AtomicSaveResult.Rejected -> _userMessage.value = result.message
             }

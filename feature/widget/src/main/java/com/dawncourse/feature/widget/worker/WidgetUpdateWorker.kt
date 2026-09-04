@@ -1,5 +1,6 @@
 package com.dawncourse.feature.widget.worker
 
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
@@ -377,6 +378,8 @@ object WidgetSyncManager {
                             .getOrDefault(false)
                     }
 
+                    /** capability policy 已确认权限；suppression 只覆盖精确 Alarm 平台调用。 */
+                    @SuppressLint("MissingPermission")
                     override suspend fun scheduleExactAlarm(triggerAtMillis: Long) {
                         try {
                             alarmManager.setExactAndAllowWhileIdle(

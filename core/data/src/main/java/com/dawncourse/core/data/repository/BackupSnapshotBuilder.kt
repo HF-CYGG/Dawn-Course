@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import androidx.room.withTransaction
 import com.dawncourse.core.data.local.AppDatabase
+import com.dawncourse.core.data.local.entity.projectForBackupExport
 import com.dawncourse.core.data.local.entity.toDomain
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
@@ -38,8 +39,21 @@ internal class BackupSnapshotBuilder @Inject constructor(
             }
             val courses = database.courseDao().getAllCoursesOnce().map { it.toDomain() }
             val profiles = database.timetableProfileDao().getAllProfilesOnce().map { it.toDomain() }
-            val bindings = database.syncSourceBindingDao().getAllOnce().map { it.toDomain() }
-            RoomBackupSnapshot(profiles, semesters, courses, bindings)
+            val bindingProjection = database.syncSourceBindingDao().getAllOnce().projectForBackupExport()
+            RoomBackupSnapshot(
+                profiles = profiles,
+                semesters = semesters,
+                courses = courses,
+                sourceBindings = bindingProjection.bindings,
+                invalidBindingCount = bindingProjection.invalidBindingCount,
+            )
+        }
+        if (snapshot.invalidBindingCount > 0) {
+            // 不记录 binding 标识或凭据，避免备份日志扩大敏感数据暴露面。
+            android.util.Log.w(
+                INVALID_BINDING_LOG_TAG,
+                "已跳过 ${snapshot.invalidBindingCount} 个无效同步来源绑定，课程、学期与课表仍会正常导出",
+            )
         }
         require(snapshot.profiles.any { it.id == activeContext.profile.id }) { "活动课表未进入导出快照" }
         BackupSnapshot(
@@ -58,5 +72,10 @@ internal class BackupSnapshotBuilder @Inject constructor(
         val semesters: List<Semester>,
         val courses: List<Course>,
         val sourceBindings: List<SyncSourceBinding>,
+        val invalidBindingCount: Int,
     )
+
+    private companion object {
+        const val INVALID_BINDING_LOG_TAG = "BackupSnapshot"
+    }
 }

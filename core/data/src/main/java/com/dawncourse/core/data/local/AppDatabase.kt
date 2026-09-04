@@ -28,7 +28,7 @@ import com.dawncourse.core.data.local.entity.TimetableProfileEntity
         TimetableProfileEntity::class,
         SyncSourceBindingEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

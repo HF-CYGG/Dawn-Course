@@ -1,4 +1,5 @@
 /**
+ * @version 2
  * Dawn Course 脚本执行契约（共享 Harness）
  *
  * 设计目标：
@@ -190,14 +191,23 @@
     for (var i = 0; i < courses.length; i++) {
       var course = courses[i] || {};
       var day = course.dayOfWeek === undefined ? course.day : course.dayOfWeek;
+      var weeks = Array.isArray(course.weeks) ? course.weeks.join(',') : '';
+      var sections = Array.isArray(course.sections) ? course.sections.join(',') : '';
+      // 解析器输出（小爱形态）用离散 weeks / sections 数组；dawn 原生形态用
+      // startSection / startWeek / endWeek。按实际存在的字段构造时间键，两种形态都能识别重复
+      // ——原实现固定取 startSection/startWeek/endWeek，对解析器输出（这几个字段不存在）等于恒空。
+      var timeKey = (weeks || sections)
+        ? weeks + '#' + sections
+        : [
+            course.startSection === undefined ? '' : course.startSection,
+            course.duration === undefined ? '' : course.duration,
+            course.startWeek === undefined ? '' : course.startWeek,
+            course.endWeek === undefined ? '' : course.endWeek
+          ].join('#');
       var key = [
         course.name === undefined ? '' : course.name,
         day === undefined ? '' : day,
-        course.startSection === undefined ? '' : course.startSection,
-        course.startWeek === undefined ? '' : course.startWeek,
-        course.endWeek === undefined ? '' : course.endWeek,
-        Array.isArray(course.weeks) ? course.weeks.join(',') : '',
-        Array.isArray(course.sections) ? course.sections.join(',') : ''
+        timeKey
       ].join('|');
       if (!Object.prototype.hasOwnProperty.call(seen, key)) {
         seen[key] = true;

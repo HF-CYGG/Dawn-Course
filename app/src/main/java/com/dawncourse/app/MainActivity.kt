@@ -7,8 +7,12 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -20,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.enableEdgeToEdge
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +57,9 @@ import com.dawncourse.feature.timetable.CourseEditorViewModel
 import com.dawncourse.feature.timetable.notification.ReminderScheduler
 import com.dawncourse.app.sync.WebDavAutoSyncScheduler
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 
@@ -68,6 +76,7 @@ import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
 import com.dawncourse.feature.timetable.StartupTimetableContent
 import com.dawncourse.feature.timetable.toAppSettings
+import com.dawncourse.core.domain.util.runSuspendCatching
 
 /**
  * 应用程序主 Activity
@@ -137,6 +146,7 @@ class MainActivity : ComponentActivity() {
                 databaseStartupRuntime.state.value,
                 startupSnapshotRuntime.state.value,
                 liveRootReady = mainViewModel?.uiState?.value is MainUiState.Success,
+                liveRootFailed = mainViewModel?.uiState?.value is MainUiState.Error,
             ).keepSplash
         }
 
@@ -145,11 +155,13 @@ class MainActivity : ComponentActivity() {
         // 必须在 onCreate 中取一次并复用：getPackageInfo 是一次同步 Binder IPC，
         // 若写在 setContent 的 composable 作用域内，会随每次重组在主线程重复发起 IPC，
         // 在冷启动阶段 system_server 繁忙时可能显著拖慢首帧。
-        val currentVersionCode = runCatching {
+        val currentVersionCode = try {
             val packageInfo = applicationContext.packageManager
                 .getPackageInfo(applicationContext.packageName, 0)
             androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(packageInfo)
-        }.getOrDefault(0L)
+        } catch (_: Exception) {
+            0L
+        }
 
         // 设置 Compose 内容视图
         setContent {
@@ -179,11 +191,12 @@ class MainActivity : ComponentActivity() {
                 databaseState = databaseState,
                 snapshotState = snapshotState,
                 liveRootReady = liveUiState is MainUiState.Success,
+                liveRootFailed = liveUiState is MainUiState.Error,
             )
             var automaticRecoveryRestartAttempted by rememberSaveable { mutableStateOf(false) }
-            when {
-                decision.showRecovery -> {
-                    val startupState = databaseState as DatabaseRuntimeState.RecoveryRequired
+            when (decision) {
+                is DatabaseStartupUiDecision.Recovery -> {
+                    val startupState = decision.state
                     // 只有 marker 已确认落盘时才首次自动交给独立进程重启。启动跳板失败时
                     // 不改变该页状态，用户仍可使用同一页的手动“安全重启”入口重试。
                     if (!automaticRecoveryRestartAttempted &&
@@ -201,9 +214,12 @@ class MainActivity : ComponentActivity() {
                         onRestartRequired = { ControlledProcessRestarter.restart(this@MainActivity) }
                     )
                 }
-                decision.showBlocked -> DatabaseStartupBlockedScreen()
-                decision.showSnapshot -> {
-                    val snapshot = (snapshotState as StartupSnapshotRuntimeState.Available).snapshot
+                DatabaseStartupUiDecision.Blocked -> DatabaseStartupBlockedScreen()
+                DatabaseStartupUiDecision.RootError -> MainRootErrorScreen(
+                    onRestart = { ControlledProcessRestarter.restart(this@MainActivity) },
+                )
+                is DatabaseStartupUiDecision.Snapshot -> {
+                    val snapshot = decision.snapshot
                     val snapshotSettings = remember(snapshot.revision) { snapshot.visualSettings.toAppSettings() }
                     val snapshotDarkTheme = when (snapshotSettings.themeMode) {
                         AppThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -214,7 +230,7 @@ class MainActivity : ComponentActivity() {
                         StartupTimetableContent(snapshot = snapshot)
                     }
                 }
-                decision.showLiveRoot -> {
+                DatabaseStartupUiDecision.LiveRoot -> {
             val viewModel = requireNotNull(databaseViewModel)
             val uiState = liveUiState
             val exhaustedMuteRecoveries by viewModel.exhaustedMuteRecoveries.collectAsState()
@@ -229,7 +245,20 @@ class MainActivity : ComponentActivity() {
             var crashReport by remember { mutableStateOf<String?>(null) }
             LaunchedEffect(Unit) {
                 crashReport = withContext(Dispatchers.IO) {
-                    runCatching { CrashReporter.readAndClear(applicationContext) }.getOrNull()
+                    runSuspendCatching { CrashReporter.readAndClear(applicationContext) }.getOrNull()
+                }
+            }
+
+            // 静音恢复的启动/重试/释放失败均只展示固定文案，不泄漏系统实现细节。
+            LaunchedEffect(Unit) {
+                viewModel.eventFlow.collect { event ->
+                    when (event) {
+                        MainUiEvent.MuteRecoveryOperationFailed -> Toast.makeText(
+                            this@MainActivity,
+                            R.string.mute_recovery_operation_failed,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 }
             }
 
@@ -254,9 +283,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发
-            if (uiState is MainUiState.Success) {
-                val successState = uiState as MainUiState.Success
+            // 仅在设置加载成功后渲染界面，避免使用默认设置导致逻辑误触发。
+            when (val successState = uiState) {
+                is MainUiState.Success -> {
                 val settings = successState.settings
                 val scheduleRevision = successState.scheduleRevision
 
@@ -284,18 +313,17 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(scheduleRevision, widgetForegroundGeneration) {
                         // `updateWidgetNow` 只启动 Widget 自己受 Supervisor/IO 保护的协程；必须在
                         // 任何后台挂起点前同步调用，Compose key 的取消与重启负责相邻版本线性化。
-                        runCatching {
+                        runSuspendCatching {
                             WidgetSyncManager.updateWidgetNow(applicationContext)
                         }.onFailure { error ->
                             android.util.Log.w(
                                 "MainActivity",
                                 "widget refresh failed",
-                                error,
                             )
                         }
                         // LaunchedEffect 中的未捕获异常会冒泡到 Recomposer。此处仅下发后台
                         // 对账任务，WorkManager 或 OEM JobScheduler 的临时失败不应阻断主界面。
-                        runCatching {
+                        runSuspendCatching {
                             runStartupBackgroundWork {
                                 ReminderScheduler.triggerImmediateWork(
                                     applicationContext,
@@ -311,7 +339,6 @@ class MainActivity : ComponentActivity() {
                             android.util.Log.w(
                                 "MainActivity",
                                 "schedule daily reminder work failed",
-                                it
                             )
                         }
                     }
@@ -324,7 +351,7 @@ class MainActivity : ComponentActivity() {
                         settings.webDavAutoSyncIntervalValue,
                         settings.webDavAutoSyncIntervalUnit
                     ) {
-                        runCatching {
+                        runSuspendCatching {
                             runStartupBackgroundWork {
                                 WebDavAutoSyncScheduler.schedule(applicationContext, settings)
                             }
@@ -332,7 +359,6 @@ class MainActivity : ComponentActivity() {
                             android.util.Log.w(
                                 "MainActivity",
                                 "schedule WebDAV auto sync failed",
-                                it
                             )
                         }
                     }
@@ -459,6 +485,13 @@ class MainActivity : ComponentActivity() {
                                 val currentSemesterId by courseEditorViewModel.currentSemesterId.collectAsState()
                                 val currentSemesterWeekCount by courseEditorViewModel.currentSemesterWeekCount.collectAsState()
                                 val hasValidTargetSemester by courseEditorViewModel.hasValidTargetSemester.collectAsState()
+                                val editorOperationError by courseEditorViewModel.operationError.collectAsState()
+                                LaunchedEffect(editorOperationError) {
+                                    editorOperationError?.let {
+                                        Toast.makeText(this@MainActivity, it, Toast.LENGTH_LONG).show()
+                                        courseEditorViewModel.onOperationErrorShown()
+                                    }
+                                }
                                 
                                 // 如果是编辑模式且课程数据尚未加载完成，显示 Loading
                                 val isEditing = courseId != null && courseId != "0"
@@ -555,8 +588,10 @@ class MainActivity : ComponentActivity() {
                                             if (hasAccess) {
                                                 viewModel.retryMuteRecovery(recovery.key)
                                             } else {
-                                                runCatching {
+                                                try {
                                                     startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                                                } catch (_: Exception) {
+                                                    // 系统设置页不可用时保留当前恢复面板，供用户稍后重试。
                                                 }
                                             }
                                         }
@@ -584,12 +619,46 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-            } else {
+                }
+                else -> {
                 // 加载中，显示空白（被 Splash Screen 遮挡）
                 Box(modifier = Modifier.fillMaxSize())
+                }
             }
                 }
-                else -> Box(modifier = Modifier.fillMaxSize())
+                is DatabaseStartupUiDecision.Splash -> Box(modifier = Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
+/** 根数据流失败时的最小安全界面；此处不创建任何导航或功能 ViewModel。 */
+@androidx.compose.runtime.Composable
+private fun MainRootErrorScreen(onRestart: () -> Unit) {
+    MaterialTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = stringResource(R.string.main_root_error_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    text = stringResource(R.string.main_root_error_message),
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Button(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 24.dp),
+                    onClick = onRestart,
+                ) {
+                    Text(stringResource(R.string.main_root_error_restart))
+                }
             }
         }
     }
