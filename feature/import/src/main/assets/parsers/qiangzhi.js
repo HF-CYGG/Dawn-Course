@@ -1,5 +1,5 @@
 /**
- * @version 2
+ * @version 3
  * 强智教务系统 (QiangZhi) 解析脚本
  * 基于新版正方教务系统解析逻辑提取，并针对强智系统特性进行优化。
  * 包含针对新版页面结构变更（内容在 span 标签内）的兼容性支持。
@@ -156,14 +156,11 @@ function parseQiangZhi(html) {
 
     // 处理列表模式 (tr > td > jc_1-2-3)
     //
-    // 关键：仅当二维表循环「没有任何产出」时才用列表视图兜底。
-    // 新版正方/强智课表页会同时渲染二维表和下方的课表列表，两个循环都无条件采集，
-    // 会让每门课被收录两次 —— 这正是「课表整体重复」的根因。二维表是权威视图，
-    // 只有旧版/纯列表页面（二维表为空）才需要走这里。
-    var gridCount = courses.length;
+    // 网格可能只解析出部分课程，列表视图仍需参与补全；两侧重复项统一交给
+    // scheduleHtmlParser 返回前的 dedupeCourses 按业务键收敛。
     var listRegex = /<tr[^>]*>[\s\S]*?<td[^>]*id=["']?jc_(\d+)-(\d+)-(\d+)["']?[^>]*>[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
     var listMatch;
-    while (gridCount === 0 && (listMatch = listRegex.exec(html)) !== null) {
+    while ((listMatch = listRegex.exec(html)) !== null) {
         var listDay = parseInt(listMatch[1]);
         var sectionStart = parseInt(listMatch[2]);
         var sectionEnd = parseInt(listMatch[3]);

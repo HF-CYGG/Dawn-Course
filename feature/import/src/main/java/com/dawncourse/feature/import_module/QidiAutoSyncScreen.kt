@@ -2280,7 +2280,7 @@ private fun CaptchaImage(
                 settings.useWideViewPort = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 // 仅展示远程验证码图片，禁止访问 content:// 避免恶意页面链接读取本地内容。
-                settings.allowContentAccess = false
+                settings.setAllowContentAccess(false)
                 if (!userAgent.isNullOrBlank()) {
                     settings.userAgentString = userAgent
                 }
@@ -2496,7 +2496,7 @@ private fun WebViewBox(
             settings.displayZoomControls = false
             // 教务登录依赖页面 JavaScript，但不需要本地文件、content URI 或脚本弹窗能力。
             settings.allowFileAccess = false
-            settings.allowContentAccess = false
+            settings.setAllowContentAccess(false)
             settings.setAllowFileAccessFromFileURLs(false)
             settings.setAllowUniversalAccessFromFileURLs(false)
             settings.javaScriptCanOpenWindowsAutomatically = false

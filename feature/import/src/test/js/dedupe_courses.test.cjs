@@ -5,7 +5,8 @@
  *  1. 新版正方课表页（二维表 + 列表同时存在）经 qiangzhi.js / zhengfang.js 解析后，
  *     课程数等于页面实际课程段数，而不是两倍；
  *  2. 只有列表、没有二维表的页面仍能通过列表兜底分支解析出课程；
- *  3. common_parser_utils.js 的 dedupeCourses：teacher / position 清洗力度不同的两条记录
+ *  3. 网格只解析出部分课程时，列表视图仍能补齐遗漏且不会重新制造重复；
+ *  4. common_parser_utils.js 的 dedupeCourses：teacher / position 清洗力度不同的两条记录
  *     被判为同一门课并合并。
  *
  * 运行：node feature/import/src/test/js/dedupe_courses.test.cjs
@@ -79,7 +80,28 @@ if (fs.existsSync(zhengfangPageMd)) {
     console.error('WARN 找不到 fixture：' + zhengfangPageMd + '（跳过页面级断言）');
 }
 
-// ---------------- 3：dedupeCourses 归一化合并 ----------------
+// ---------------- 3：部分网格结果仍由列表补全 ----------------
+
+const partialGridHtml = `
+<table>
+  <tr><td id="1-1">
+    <div class="timetable_con"><div class="title">网格课</div><span title="节/周">(1-2节) 1-16周</span></div>
+    <div class="timetable_con"><div class="title">列表补全课</div></div>
+  </td></tr>
+  <tr><td id="jc_1-1-2"></td><td><div class="title">网格课</div><span title="节/周">(1-2节) 1-16周</span></td></tr>
+  <tr><td id="jc_2-3-4"></td><td><div class="title">列表补全课</div><span title="节/周">(3-4节) 2-8周</span></td></tr>
+</table>`;
+
+for (const name of ['qiangzhi.js', 'zhengfang.js']) {
+    const arr = parseCount(loadParser(name), partialGridHtml);
+    eq(
+        arr.map(identityKey).sort(),
+        ['列表补全课|2|2,3,4,5,6,7,8|3,4', '网格课|1|1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16|1,2'],
+        name + ' 部分网格结果由列表补齐且重复项收敛',
+    );
+}
+
+// ---------------- 4：dedupeCourses 归一化合并 ----------------
 
 const common = (() => {
     const ctx = { console, module: { exports: {} } };

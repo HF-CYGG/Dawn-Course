@@ -1,5 +1,5 @@
 /**
- * @version 2
+ * @version 3
  * 泰山科技学院/强智教务系统 解析脚本 (Regex 实现版)
  * 对应 docs/泰山科技学院教务系统脚本开发文档.md 的逻辑
  * 
@@ -145,13 +145,11 @@ function parseNewZhengfang(html) {
         }
     }
 
-    // 关键：仅当二维表循环「没有任何产出」时才用列表视图兜底。
-    // 新版正方课表页会同时渲染二维表和下方的课表列表，两个循环都无条件采集会让每门课
-    // 被收录两次 —— 这正是「课表整体重复」的根因。二维表是权威视图。
-    var gridCount = courses.length;
+    // 网格可能只解析出部分课程，列表视图仍需参与补全；两侧重复项统一交给
+    // scheduleHtmlParser 返回前的 dedupeCourses 按业务键收敛。
     var listRegex = /<tr[^>]*>[\s\S]*?<td[^>]*id=["']?jc_(\d+)-(\d+)-(\d+)["']?[^>]*>[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
     var listMatch;
-    while (gridCount === 0 && (listMatch = listRegex.exec(html)) !== null) {
+    while ((listMatch = listRegex.exec(html)) !== null) {
         var listDay = parseInt(listMatch[1]);
         var sectionStart = parseInt(listMatch[2]);
         var sectionEnd = parseInt(listMatch[3]);
