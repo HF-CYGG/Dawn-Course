@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只共享已验证更新包目录，禁止暴露整个缓存目录。 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path
+        name="verified_update_packages"
+        path="update_packages/" />
+</paths>

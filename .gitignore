@@ -16,6 +16,7 @@ gen/
 out/
 build/
 .gradle/
+.gradle-codex/
 .gradle_home/
 .gradle-trae/
 /.gradle-codex/

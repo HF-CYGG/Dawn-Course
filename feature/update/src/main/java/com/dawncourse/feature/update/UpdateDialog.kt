@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.res.stringResource
 
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.PaddingValues
@@ -63,6 +65,8 @@ import com.dawncourse.core.ui.components.AnimatedDropdownMenu
  * @param onDismiss 点击“稍后”或关闭时的回调
  * @param onIgnore 点击“忽略此版本”时的回调
  * @param isUpdate 是否为更新弹窗（true）还是版本详情弹窗（false）
+ * @param isDownloading 是否正在应用内下载
+ * @param progressPercent 下载百分比；无法取得总大小时为 null
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,7 +75,9 @@ fun UpdateDialog(
     onUpdate: () -> Unit,
     onDismiss: () -> Unit,
     onIgnore: () -> Unit, // 新增：跳过此版本
-    isUpdate: Boolean = true // 新增：是否为更新弹窗（false 为版本详情）
+    isUpdate: Boolean = true, // 新增：是否为更新弹窗（false 为版本详情）
+    isDownloading: Boolean = false,
+    progressPercent: Int? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -186,7 +192,7 @@ fun UpdateDialog(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     if (isUpdate) {
-                        if (!info.isForce) {
+                        if (!info.isForce && !isDownloading) {
                             // Split Button: 左侧稍后(Dismiss)，右侧下拉忽略(Ignore)
                             // 允许用户推迟更新或永久忽略该版本
                             Row(
@@ -228,18 +234,40 @@ fun UpdateDialog(
                                     }
                                 }
                             }
+                        } else if (!info.isForce) {
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.weight(1f),
+                                shape = CircleShape
+                            ) {
+                                Text(stringResource(R.string.update_cancel_download))
+                            }
                         }
                         
                         // 立即更新按钮
                         Button(
                             onClick = onUpdate,
+                            enabled = !isDownloading,
                             modifier = Modifier.weight(1f),
                             shape = CircleShape,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
                             )
                         ) {
-                            Text("立即更新")
+                            if (isDownloading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    progressPercent?.let { percent ->
+                                        stringResource(R.string.update_downloading_percent, percent)
+                                    } ?: stringResource(R.string.update_downloading)
+                                )
+                            } else {
+                                Text(stringResource(R.string.update_download_and_install))
+                            }
                         }
                     } else {
                         // 仅显示版本详情时的“我知道了”按钮

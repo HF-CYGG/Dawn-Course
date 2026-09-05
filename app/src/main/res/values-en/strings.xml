@@ -8,8 +8,10 @@
     <string name="database_recovery_marker_retry_action">Retry saving recovery state</string>
     <string name="database_recovery_marker_retry_failed">The recovery state still could not be saved. Check device storage and try again.</string>
     <string name="database_recovery_action_failed">The recovery action could not be completed. Please try again later.</string>
-    <string name="update_download_url_unsafe">The update download address is unsafe and was blocked.</string>
-    <string name="update_browser_unavailable">No browser is available to download the update.</string>
+    <string name="update_install_permission_required">Allow Dawn Course to install unknown apps, then tap “Download and install” again.</string>
+    <string name="update_install_permission_unavailable">The installation permission page could not be opened. Allow Dawn Course to install apps in system settings.</string>
+    <string name="update_installer_unavailable">The system installer could not be opened. Try again later.</string>
+    <string name="update_package_unavailable">The downloaded package is missing or outside the secure directory. Download it again.</string>
     <string name="database_recovery_reason_key">This device cannot use the original database key. After changing devices or if the Keystore key becomes invalid, restore from a backup created by the app.</string>
     <string name="database_recovery_reason_data">The database could not be opened securely or failed integrity verification. Access has stopped and the original files have been preserved.</string>
     <string name="database_recovery_local_backup">Restore from app backup</string>
