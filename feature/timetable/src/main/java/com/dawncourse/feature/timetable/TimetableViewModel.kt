@@ -406,7 +406,7 @@ class TimetableViewModel @Inject constructor(
     fun undoReschedule(course: Course) {
         // 如果是新创建且未分裂的课程，originId 可能为 0。
         // 分裂后的课程 originId 必定不为 0（指向原始 ID）。
-        // 迁移后的旧课程 originId = id。
+        // v7 会把孤立旧课程归一化为 0；真实调课家族仍保留非零 token。
         val targetOriginId = if (course.originId == 0L) course.id else course.originId
         
         viewModelScope.launch {

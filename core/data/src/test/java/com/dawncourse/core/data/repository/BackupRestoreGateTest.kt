@@ -113,8 +113,8 @@ class BackupRestoreGateTest {
                 version = 4,
                 semesters = listOf(semester(id = 11L, profileId = 7L)),
                 courses = listOf(
-                    course(id = 42L, semesterId = 11L, name = "重复课程"),
-                    course(id = 40L, semesterId = 11L, name = "重复课程"),
+                    course(id = 42L, semesterId = 11L, originId = 42L, name = "重复课程"),
+                    course(id = 40L, semesterId = 11L, originId = 40L, name = "重复课程"),
                 ),
                 selectedSemesterId = null,
                 profiles = listOf(profile),
@@ -127,6 +127,31 @@ class BackupRestoreGateTest {
 
         assertTrue(result.isSuccess)
         assertEquals(listOf(40L), committedCourses?.map(Course::id))
+        assertEquals(listOf(0L), committedCourses?.map(Course::originId))
+    }
+
+    @Test
+    fun referencedSelfOriginAnchorKeepsAdjustmentFamily() = runBlocking {
+        var committedCourses: List<Course>? = null
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 40L, semesterId = 1L, originId = 40L, name = "调课家族"),
+                    course(
+                        id = 41L,
+                        semesterId = 1L,
+                        originId = 40L,
+                        isModified = true,
+                        name = "调课家族",
+                    ),
+                ),
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(40L, 40L), committedCourses?.map(Course::originId))
     }
 
     @Test
@@ -346,6 +371,7 @@ class BackupRestoreGateTest {
         id: Long,
         semesterId: Long,
         originId: Long = 0L,
+        isModified: Boolean = false,
         name: String = "课程$id",
     ) = Course(
         id = id,
@@ -356,6 +382,7 @@ class BackupRestoreGateTest {
         duration = 2,
         startWeek = 1,
         endWeek = 16,
+        isModified = isModified,
         originId = originId,
     )
 }

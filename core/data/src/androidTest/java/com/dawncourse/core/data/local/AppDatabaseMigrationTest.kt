@@ -114,7 +114,7 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrate4To6_compatibilityFixtureOpensWithRoomAndPreservesSequence() {
+    fun migrate4To7_compatibilityFixtureDedupesAndPreservesSequence() {
         val fixtureHelper = FrameworkSQLiteOpenHelperFactory().create(
             SupportSQLiteOpenHelper.Configuration.builder(
                 InstrumentationRegistry.getInstrumentation().targetContext,
@@ -156,6 +156,14 @@ class AppDatabaseMigrationTest {
                 INSERT INTO courses (
                     id, semesterId, name, teacher, location, dayOfWeek,
                     startSection, duration, startWeek, endWeek, weekType, color
+                ) VALUES (100, 7, '离散数学', '另一位老师', 'C303', 2, 3, 2, 1, 16, 1, '#654321')
+                """.trimIndent(),
+            )
+            execSQL(
+                """
+                INSERT INTO courses (
+                    id, semesterId, name, teacher, location, dayOfWeek,
+                    startSection, duration, startWeek, endWeek, weekType, color
                 ) VALUES ($HISTORICAL_SEQUENCE_HIGH_WATER, 7, '旧高水位', '李老师', 'B202', 2, 3, 2, 1, 16, 1, '#000000')
                 """.trimIndent(),
             )
@@ -188,7 +196,7 @@ class AppDatabaseMigrationTest {
                 assertEquals(16, cursor.getInt(cursor.getColumnIndexOrThrow("endWeek")))
                 assertEquals(1, cursor.getInt(cursor.getColumnIndexOrThrow("weekType")))
                 assertEquals("#123456", cursor.getString(cursor.getColumnIndexOrThrow("color")))
-                assertEquals(99L, cursor.getLong(cursor.getColumnIndexOrThrow("originId")))
+                assertEquals(0L, cursor.getLong(cursor.getColumnIndexOrThrow("originId")))
                 assertEquals(0, cursor.getInt(cursor.getColumnIndexOrThrow("isModified")))
                 assertEquals("", cursor.getString(cursor.getColumnIndexOrThrow("note")))
             }
@@ -209,6 +217,10 @@ class AppDatabaseMigrationTest {
             query("PRAGMA user_version").use { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals(7, cursor.getInt(0))
+            }
+            query("SELECT COUNT(*) FROM courses WHERE name = '离散数学'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
             }
             query("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('index_courses_semesterId', 'index_courses_dayOfWeek', 'index_courses_originId')").use { cursor ->
                 assertEquals(3, cursor.count)
@@ -347,24 +359,26 @@ class AppDatabaseMigrationTest {
                 VALUES (5, 1, '2026 春季', 1700000000000, 20)
                 """.trimIndent(),
             )
-            // 成对重复：业务键完全一致，仅 id 不同 —— 迁移后只应保留 MIN(id) = 10。
+            // v3/v4→v5 的历史形态：普通行 originId=id；迁移后应归零并只保留 MIN(id)=10。
             execSQL(
                 """
                 INSERT INTO courses (
                     id, semesterId, name, teacher, location, dayOfWeek, startSection, duration,
                     startWeek, endWeek, weekType, color, isModified, note, originId
                 ) VALUES
-                    (10, 5, '传感器与检测技术', '张磊', 'A101', 2, 7, 2, 1, 16, 0, '#111111', 0, '', 0),
-                    (11, 5, '传感器与检测技术', '张磊 教学班:X 学分:3.0', 'A101', 2, 7, 2, 1, 16, 0, '#222222', 0, '', 0)
+                    (10, 5, '传感器与检测技术', '张磊', 'A101', 2, 7, 2, 1, 16, 0, '#111111', 0, '', 10),
+                    (11, 5, '传感器与检测技术', '张磊 教学班:X 学分:3.0', 'A101', 2, 7, 2, 1, 16, 0, '#222222', 0, '', 11)
                 """.trimIndent(),
             )
-            // 调课拆分记录：同一时段但 originId / isModified 不同 —— 不能被误删。
+            // 被 sibling 引用的 self-origin 锚点属于真实调课家族，不能归零或删除。
             execSQL(
                 """
                 INSERT INTO courses (
                     id, semesterId, name, teacher, location, dayOfWeek, startSection, duration,
                     startWeek, endWeek, weekType, color, isModified, note, originId
-                ) VALUES (12, 5, '传感器与检测技术', '张磊', 'A101', 2, 7, 2, 1, 16, 0, '#333333', 1, '调课', 10)
+                ) VALUES
+                    (20, 5, '调课家族', '张磊', 'A101', 3, 3, 2, 1, 8, 0, '#333333', 0, '', 20),
+                    (21, 5, '调课家族', '张磊', 'B202', 4, 3, 2, 1, 8, 0, '#444444', 1, '调课', 20)
                 """.trimIndent(),
             )
             close()
@@ -385,11 +399,24 @@ class AppDatabaseMigrationTest {
                 assertEquals(7, cursor.getInt(0))
             }
             query("SELECT id FROM courses ORDER BY id").use { cursor ->
-                assertEquals(2, cursor.count)
+                assertEquals(3, cursor.count)
                 assertTrue(cursor.moveToFirst())
                 assertEquals(10L, cursor.getLong(0))
                 assertTrue(cursor.moveToNext())
-                assertEquals(12L, cursor.getLong(0))
+                assertEquals(20L, cursor.getLong(0))
+                assertTrue(cursor.moveToNext())
+                assertEquals(21L, cursor.getLong(0))
+            }
+            query("SELECT id, originId FROM courses ORDER BY id").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(10L, cursor.getLong(0))
+                assertEquals(0L, cursor.getLong(1))
+                assertTrue(cursor.moveToNext())
+                assertEquals(20L, cursor.getLong(0))
+                assertEquals(20L, cursor.getLong(1))
+                assertTrue(cursor.moveToNext())
+                assertEquals(21L, cursor.getLong(0))
+                assertEquals(20L, cursor.getLong(1))
             }
             query("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'index_courses_dedupe'").use { cursor ->
                 assertTrue(cursor.moveToFirst())
@@ -406,7 +433,7 @@ class AppDatabaseMigrationTest {
             )
             query("SELECT COUNT(*) FROM courses").use { cursor ->
                 assertTrue(cursor.moveToFirst())
-                assertEquals(2, cursor.getInt(0))
+                assertEquals(3, cursor.getInt(0))
             }
         }
         database.close()
