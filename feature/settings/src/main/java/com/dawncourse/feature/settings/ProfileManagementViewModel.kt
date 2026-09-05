@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -62,9 +63,19 @@ class ProfileManagementViewModel private constructor(
 
     private val scope = externalScope ?: viewModelScope
     private val interactionState = MutableStateFlow(ProfileInteractionState())
+    private val loadFailed = MutableStateFlow(false)
+    private val eventChannel = Channel<ProfileManagementEvent>(Channel.BUFFERED)
     private val summaryState: StateFlow<ProfileSummaryLoadState> = profileRepository
         .observeProfileSummaries()
         .map<List<TimetableProfileSummary>, ProfileSummaryLoadState>(ProfileSummaryLoadState::Loaded)
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) {
+                loadFailed.value = true
+                eventChannel.trySend(ProfileManagementEvent.LoadFailed)
+                emit(profileSummaryFailureState())
+            } else throw failure
+        }
         .stateIn(
             scope = scope,
             started = SharingStarted.Eagerly,
@@ -72,6 +83,14 @@ class ProfileManagementViewModel private constructor(
         )
     private val activeContext: StateFlow<ActiveTimetableContext?> = profileRepository
         .observeActiveContext()
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) {
+                loadFailed.value = true
+                eventChannel.trySend(ProfileManagementEvent.LoadFailed)
+                emit(null)
+            } else throw failure
+        }
         .stateIn(
             scope = scope,
             started = SharingStarted.Eagerly,
@@ -80,6 +99,14 @@ class ProfileManagementViewModel private constructor(
     private val semestersByProfile = summaryState
         .map { state -> (state as? ProfileSummaryLoadState.Loaded)?.summaries.orEmpty() }
         .flatMapLatest(::observeAllProfileSemesters)
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) {
+                loadFailed.value = true
+                eventChannel.trySend(ProfileManagementEvent.LoadFailed)
+                emit(emptyMap())
+            } else throw failure
+        }
         .stateIn(
             scope = scope,
             started = SharingStarted.Eagerly,
@@ -92,10 +119,12 @@ class ProfileManagementViewModel private constructor(
         activeContext,
         semestersByProfile,
         interactionState,
-    ) { summaries, context, semesters, interaction ->
+        loadFailed,
+    ) { summaries, context, semesters, interaction, dependencyFailed ->
         val loadedSummaries = (summaries as? ProfileSummaryLoadState.Loaded)?.summaries.orEmpty()
         ProfileManagementUiState(
             isLoading = summaries is ProfileSummaryLoadState.Loading,
+            hasLoadError = dependencyFailed || summaries is ProfileSummaryLoadState.Failed,
             isMutating = interaction.isMutating,
             profiles = loadedSummaries.map(TimetableProfileSummary::toUiModel),
             activeProfileId = context?.profile?.id,
@@ -108,8 +137,6 @@ class ProfileManagementViewModel private constructor(
         started = SharingStarted.Eagerly,
         initialValue = ProfileManagementUiState(),
     )
-
-    private val eventChannel = Channel<ProfileManagementEvent>(Channel.BUFFERED)
 
     /** 一次性语义事件，Compose 负责映射中英文文案。 */
     val events: Flow<ProfileManagementEvent> = eventChannel.receiveAsFlow()
@@ -215,6 +242,10 @@ class ProfileManagementViewModel private constructor(
 
     /** 先读取真实影响面；最后一套课表不会进入预览。 */
     fun requestDeletion(profileId: Long) {
+        if (!uiState.value.canMutate) {
+            emit(ProfileManagementEvent.MutationRejected(ProfileMutationOperation.PREVIEW_DELETION))
+            return
+        }
         if (uiState.value.profiles.size <= 1) {
             emit(ProfileManagementEvent.MutationRejected(ProfileMutationOperation.DELETE_PROFILE))
             return
@@ -301,7 +332,10 @@ class ProfileManagementViewModel private constructor(
         label: String?,
         mutation: suspend () -> ProfileMutationResult,
     ) {
-        if (interactionState.value.isMutating) return
+        if (!uiState.value.canMutate || interactionState.value.isMutating) {
+            emit(ProfileManagementEvent.MutationRejected(operation))
+            return
+        }
         interactionState.update { it.copy(isMutating = true) }
         scope.launch {
             val result = try {
@@ -344,10 +378,14 @@ class ProfileManagementViewModel private constructor(
 }
 
 /** 摘要首次发射前保持显式加载态。 */
-private sealed interface ProfileSummaryLoadState {
+internal sealed interface ProfileSummaryLoadState {
     data object Loading : ProfileSummaryLoadState
     data class Loaded(val summaries: List<TimetableProfileSummary>) : ProfileSummaryLoadState
+    data object Failed : ProfileSummaryLoadState
 }
+
+/** 摘要根 Flow 异常时的显式安全状态。 */
+internal fun profileSummaryFailureState(): ProfileSummaryLoadState = ProfileSummaryLoadState.Failed
 
 /** 对话框与 mutation 忙碌态。 */
 private data class ProfileInteractionState(

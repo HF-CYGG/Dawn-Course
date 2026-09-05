@@ -34,7 +34,7 @@ class DawnCourseBaselineProfile {
         packageName = TARGET_PACKAGE,
         includeInStartupProfile = true,
         strictStability = true,
-        filterPredicate = ::isDawnCourseProductionRule
+        filterPredicate = ProfileRuleFilter::shouldKeep
     ) {
         startActivityAndWait()
         waitForTimetable()
@@ -45,7 +45,7 @@ class DawnCourseBaselineProfile {
         packageName = TARGET_PACKAGE,
         includeInStartupProfile = false,
         strictStability = true,
-        filterPredicate = ::isDawnCourseProductionRule
+        filterPredicate = ProfileRuleFilter::shouldKeep
     ) {
         startActivityAndWait()
         waitForTimetable()
@@ -67,7 +67,7 @@ class DawnCourseBaselineProfile {
         packageName = TARGET_PACKAGE,
         includeInStartupProfile = false,
         strictStability = true,
-        filterPredicate = ::isDawnCourseProductionRule
+        filterPredicate = ProfileRuleFilter::shouldKeep
     ) {
         startActivityAndWait()
         waitForTimetable()
@@ -78,7 +78,7 @@ class DawnCourseBaselineProfile {
         packageName = TARGET_PACKAGE,
         includeInStartupProfile = false,
         strictStability = true,
-        filterPredicate = ::isDawnCourseProductionRule
+        filterPredicate = ProfileRuleFilter::shouldKeep
     ) {
         check(BaselineProfileSeedClient.buildWidgetTimeline() >= MINIMUM_COURSE_COUNT) {
             "Widget timeline did not read the seeded course dataset"
@@ -111,15 +111,6 @@ class DawnCourseBaselineProfile {
         checkNotNull(clickable) { "$label has no clickable semantics ancestor" }.click()
     }
 
-    /**
-     * 只保留 Dawn Course 的生产规则。Widget journey 通过 benchmark-only Provider 触发，
-     * 但 Provider 自身不得进入最终 Profile。
-     */
-    private fun isDawnCourseProductionRule(rule: String): Boolean {
-        return rule.contains(DAWN_COURSE_RULE_PREFIX) &&
-            !rule.contains(BENCHMARK_RULE_PREFIX)
-    }
-
     private companion object {
         const val TARGET_PACKAGE = "com.dawncourse.app"
         const val TIMETABLE_READY_TEST_TAG = "timetable_content_ready"
@@ -127,8 +118,6 @@ class DawnCourseBaselineProfile {
         const val UI_TIMEOUT_MS = 10_000L
         const val SWIPE_STEPS = 12
         const val MINIMUM_COURSE_COUNT = 120
-        const val DAWN_COURSE_RULE_PREFIX = "Lcom/dawncourse/"
-        const val BENCHMARK_RULE_PREFIX = "Lcom/dawncourse/app/benchmark/"
         val WEEK_SEQUENCE = listOf(1, 2, 3, 4, 5)
 
         fun weekLabel(week: Int): String = "第 $week 周"

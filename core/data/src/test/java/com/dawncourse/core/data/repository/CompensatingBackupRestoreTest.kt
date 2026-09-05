@@ -3,6 +3,9 @@ package com.dawncourse.core.data.repository
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.Semester
+import com.dawncourse.core.data.local.entity.toEntity
+import com.dawncourse.core.data.local.entity.toDomainOrNull
+import com.dawncourse.core.data.local.entity.SyncSourceBindingEntity
 import com.dawncourse.core.data.local.startup.BackupRecoveryActivation
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -29,9 +32,10 @@ class CompensatingBackupRestoreTest {
                     profiles = profiles,
                     semesters = semesters,
                     courses = courses,
-                    sourceBindings = bindings,
+                    sourceBindings = bindings.map { it.toEntity() },
                 )
             },
+            restorePreImageRoom = { preImage -> state = preImage },
             replaceSettingsAndSelection = { settings, selection, activeProfileId ->
                 settingsWrites += 1
                 if (settingsWrites == 1) error("注入新 DataStore 写失败")
@@ -64,6 +68,7 @@ class CompensatingBackupRestoreTest {
             preImage = old,
             replacement = replacement,
             replaceRoom = { _, semesters, courses, _ -> room = semesters to courses },
+            restorePreImageRoom = { preImage -> room = preImage.semesters to preImage.courses },
             replaceSettingsAndSelection = { _, _, _ ->
                 settingsWrites += 1
                 error(if (settingsWrites == 1) "新状态失败" else "补偿失败")
@@ -93,6 +98,7 @@ class CompensatingBackupRestoreTest {
             preImage = old,
             replacement = validated(semesterId = 2L, name = "新设置"),
             replaceRoom = { _, _, _, _ -> },
+            restorePreImageRoom = { _ -> },
             replaceSettingsAndSelection = { _, _, _ ->
                 settingsWrites += 1
                 error(if (settingsWrites == 1) "新状态失败" else "补偿失败")
@@ -108,6 +114,39 @@ class CompensatingBackupRestoreTest {
             failure.recoveryActivation,
         )
         assertTrue(failure.suppressed.contains(markerFailure))
+    }
+
+    @Test
+    fun compensationRestoresUnknownProviderAsRawEntityWithoutEnumMapping() = runBlocking {
+        val unknownBinding = SyncSourceBindingEntity(
+            sourceBindingId = "legacy-binding",
+            profileId = 1L,
+            semesterId = 1L,
+            provider = "FUTURE_PROVIDER",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val old = preImage(semesterId = 1L, name = "旧设置").copy(
+            sourceBindings = listOf(unknownBinding),
+        )
+        var restoredBindings: List<SyncSourceBindingEntity>? = null
+        var settingsWrites = 0
+
+        val result = CompensatingBackupRestore.execute(
+            preImage = old,
+            replacement = validated(semesterId = 2L, name = "新设置"),
+            replaceRoom = { _, _, _, _ -> },
+            restorePreImageRoom = { preImage -> restoredBindings = preImage.sourceBindings },
+            replaceSettingsAndSelection = { _, _, _ ->
+                settingsWrites += 1
+                if (settingsWrites == 1) error("注入新 DataStore 写失败")
+            },
+            enterRecoveryRequired = { BackupRecoveryActivation.MarkerPersisted },
+        )
+
+        assertTrue(result.exceptionOrNull() is BackupRestoreRolledBackException)
+        assertEquals(listOf(unknownBinding), restoredBindings)
+        assertEquals(null, restoredBindings?.single()?.toDomainOrNull())
     }
 
     private fun preImage(semesterId: Long, name: String) = BackupRestorePreImage(

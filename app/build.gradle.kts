@@ -51,6 +51,7 @@ android {
 
     buildTypes {
         release {
+            buildConfigField("boolean", "BENCHMARK_MODE", "false")
             // 本地 minified 冒烟显式使用 debug 签名；普通 release 永不自动降级签名。
             signingConfig = signingConfigs.getByName(
                 if (releaseSmokeEnabled.get()) "debug" else "release"
@@ -60,21 +61,25 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
+            buildConfigField("boolean", "BENCHMARK_MODE", "false")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         // Macrobenchmark 使用接近 release 的配置，但只使用本地 debug 签名，绝不用于发布。
         create("benchmark") {
             initWith(getByName("release"))
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         // 以下变体由 Baseline Profile 插件用于生成/验证；仅覆盖签名，关键性能开关由插件控制。
         create("benchmarkRelease") {
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
         create("nonMinifiedRelease") {
+            buildConfigField("boolean", "BENCHMARK_MODE", "true")
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
@@ -87,6 +92,7 @@ android {
     // 上面的 compileOptions.targetCompatibility，无需重复声明
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -126,6 +132,10 @@ android {
         getByName("nonMinifiedRelease") {
             kotlin.srcDir("src/benchmark/java")
         }
+        getByName("test") {
+            // 复用生成器的纯 Kotlin 规则策略，在 JVM 上验证实际过滤行为，无需安装测试 APK。
+            kotlin.srcDir("../baselineprofile/src/shared/kotlin")
+        }
     }
 }
 
@@ -150,10 +160,36 @@ baselineProfile {
     saveInSrc = true
 }
 
+tasks.register("verifyBaselineProfileRulePolicyFixtures") {
+    group = "verification"
+    description = "使用代表性规则集合验证 release Profile 门禁的实际输入行为。"
+    doLast {
+        val dawnRule = "HLcom/dawncourse/app/MainActivity;->onCreate()V"
+        val frameworkRule = "HLandroidx/compose/runtime/Recomposer;->runRecomposeAndApplyChanges()V"
+        val benchmarkRule = "HLcom/dawncourse/app/benchmark/BenchmarkSeedProvider;->call()V"
+        val dawnAndFrameworkRules = listOf(dawnRule, frameworkRule)
+
+        check(!isValidReleaseProfile(emptyList())) {
+            "release Profile 门禁错误接受空规则集合。"
+        }
+        check(!isValidReleaseProfile(listOf(benchmarkRule))) {
+            "release Profile 门禁错误接受仅含 benchmark-only 规则的集合。"
+        }
+        check(isValidReleaseProfile(dawnAndFrameworkRules)) {
+            "release Profile 门禁错误拒绝 Dawn Course 与框架规则组成的 Profile。"
+        }
+        check(!isValidReleaseProfile(dawnAndFrameworkRules + benchmarkRule)) {
+            "release Profile 门禁错误接受含 benchmark-only 规则的 Profile。"
+        }
+    }
+}
+
 tasks.register("verifyGeneratedBaselineProfileSource") {
     group = "verification"
     description = "确认生成规则进入 release Profile 合并输入，并验证测试组件隔离。"
     dependsOn(
+        // 门禁自身的规则策略必须先被夹具钉住，否则下面的 isValidReleaseProfile 可以静默漂移。
+        "verifyBaselineProfileRulePolicyFixtures",
         "mergeReleaseArtProfile",
         "mergeReleaseStartupProfile",
         "processBenchmarkReleaseManifestForPackage",
@@ -198,11 +234,9 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             }
             val rules = profile.readLines().filter(String::isNotBlank)
             check(rules.isNotEmpty()) { "生成 Profile 没有规则：${profile.name}" }
-            check(rules.all { it.contains("Lcom/dawncourse/") }) {
-                "生成 Profile 含非 Dawn Course 规则：${profile.name}"
-            }
-            check(rules.none { it.contains("Lcom/dawncourse/app/benchmark/") }) {
-                "生成 Profile 泄漏 benchmark-only 规则：${profile.name}"
+            check(isValidReleaseProfile(rules)) {
+                "生成 Profile 必须包含 Dawn Course 的生产规则，且不得泄漏 benchmark-only 规则：" +
+                    profile.name
             }
             check(mergedProfile.isFile && mergedProfile.length() > 0L) {
                 "release 合并输出缺少非空 Profile：${mergedProfile.absolutePath}"
@@ -233,6 +267,15 @@ tasks.register("verifyGeneratedBaselineProfileSource") {
             "生产 release Manifest 不得包含 BenchmarkSeedProvider。"
         }
     }
+}
+
+/** release Profile 的最小门禁：必须含生产 Dawn 规则，且不能含 benchmark-only 规则。 */
+fun isValidReleaseProfile(rules: Iterable<String>): Boolean {
+    val dawnCourseRulePrefix = "Lcom/dawncourse/"
+    val benchmarkRulePrefix = "Lcom/dawncourse/app/benchmark/"
+    return rules.any { rule ->
+        rule.contains(dawnCourseRulePrefix) && !rule.contains(benchmarkRulePrefix)
+    } && rules.none { rule -> rule.contains(benchmarkRulePrefix) }
 }
 
 tasks.register("verifyPackagedReleaseBaselineProfile") {

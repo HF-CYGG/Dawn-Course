@@ -9,14 +9,15 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Headers
 import retrofit2.http.Url
+import dagger.Lazy
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import retrofit2.Call
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
@@ -36,18 +37,25 @@ interface UpdateApi {
     fun getUpdateInfo(@Url endpointUrl: String): Call<UpdateInfo>
 }
 
+/** 更新检查专用客户端工厂；仅在首次真正检查更新时创建底层客户端。 */
+@Singleton
+open class UpdateHttpClientFactory @Inject constructor() {
+    /** 创建更新检查专用客户端，允许旧 TLS 服务端在 HTTPS 前提下保持兼容。 */
+    open fun create(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .connectionSpecs(buildUpdateConnectionSpecs())
+        .build()
+}
+
 /**
  * 更新仓库
- * 负责从网络获取最新的应用版本信息，并在结果进入 UI 前校验下载链接。
- *
- * 主要职责：
- * 1. 封装 Retrofit 网络请求
- * 2. 优先请求固定的自建元数据节点，并在失败时顺序降级
- * 3. 统一异常处理，返回 Result 类型
+ * 负责从可信节点获取版本信息，并在应用私有目录下载、验证更新包。
  */
 @Singleton
 class UpdateRepository @Inject constructor(
-    private val packageDownloader: UpdatePackageDownloader
+    private val clientFactory: UpdateHttpClientFactory,
+    private val packageDownloader: Lazy<UpdatePackageDownloader>,
 ) {
     /**
      * 检查更新失败异常（可恢复）
@@ -62,12 +70,8 @@ class UpdateRepository @Inject constructor(
         cause: Throwable? = null
     ) : Exception(userMessage, cause)
 
-    // 基础客户端集中保留连接规格（仅 TLS）；每个元数据节点在创建 Retrofit 时设置自己的总超时。
-    private val baseClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS) // 增加超时时间，适应弱网环境
-        .readTimeout(15, TimeUnit.SECONDS)
-        .connectionSpecs(buildUpdateConnectionSpecs())
-        .build()
+    /** 首次更新检查时才创建基础客户端，避免 Hilt 图构造阻塞冷启动。 */
+    private val baseClient: OkHttpClient by lazy(clientFactory::create)
 
     /**
      * 创建 Retrofit API 实例
@@ -112,7 +116,7 @@ class UpdateRepository @Inject constructor(
                 cause = failure.failures.lastOrNull() ?: failure
             )
             return@withContext Result.failure(exception)
-        } catch (failure: Throwable) {
+        } catch (failure: Exception) {
             val endpoint = endpointConfigs.first()
             val endpointFailure = UpdateEndpointRequestException(
                 endpointLabel = endpoint.label,
@@ -140,10 +144,10 @@ class UpdateRepository @Inject constructor(
         onProgress: (Int?) -> Unit
     ): Result<DownloadedUpdatePackage> {
         return try {
-            Result.success(packageDownloader.download(updateInfo, onProgress))
+            Result.success(packageDownloader.get().download(updateInfo, onProgress))
         } catch (failure: CancellationException) {
             throw failure
-        } catch (failure: Throwable) {
+        } catch (failure: Exception) {
             Result.failure(failure)
         }
     }

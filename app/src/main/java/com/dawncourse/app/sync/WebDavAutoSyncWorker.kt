@@ -11,13 +11,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.dawncourse.core.domain.model.AppSettings
-import com.dawncourse.core.domain.model.SyncErrorCode
 import com.dawncourse.core.domain.model.WebDavAutoSyncIntervalUnit
 import com.dawncourse.core.domain.model.WebDavAutoSyncMode
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.WebDavSyncRepository
 import com.dawncourse.core.domain.repository.OperationalDataGate
-import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -40,23 +38,18 @@ class WebDavAutoSyncWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        when (operationalDataGate.readiness()) {
-            OperationalDataReadiness.STARTING -> return Result.retry()
-            OperationalDataReadiness.RECOVERY_REQUIRED -> return Result.success()
-            OperationalDataReadiness.READY -> Unit
-        }
-        // 读取当前设置，若未开启则直接结束
-        val settings = settingsRepository.get().settings.first()
-        if (!settings.enableWebDavAutoSync) return Result.success()
-
-        // 触发上传备份，认证失败时不重试，其他异常交由系统重试
-        val result = webDavSyncRepository.get().uploadBackup(forceUpload = false)
-        return if (result.success) {
-            Result.success()
-        } else if (result.code == SyncErrorCode.NO_CREDENTIALS || result.code == SyncErrorCode.AUTH_FAILED) {
-            Result.success()
-        } else {
-            Result.retry()
+        val outcome = WebDavAutoSyncExecution.execute(
+            readiness = operationalDataGate::readiness,
+            isEnabled = {
+                settingsRepository.get().settings.first().enableWebDavAutoSync
+            },
+            upload = {
+                webDavSyncRepository.get().uploadBackup(forceUpload = false)
+            },
+        )
+        return when (outcome) {
+            WebDavAutoSyncOutcome.SUCCESS -> Result.success()
+            WebDavAutoSyncOutcome.RETRY -> Result.retry()
         }
     }
 }

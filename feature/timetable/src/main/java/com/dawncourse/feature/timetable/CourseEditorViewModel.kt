@@ -9,6 +9,7 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SemesterRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
 import com.dawncourse.core.domain.repository.WidgetUpdateRepository
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.core.domain.usecase.DetectConflictUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,10 +17,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 /**
@@ -45,6 +48,10 @@ class CourseEditorViewModel @Inject constructor(
 
     private val _course = MutableStateFlow<Course?>(null)
     val course: StateFlow<Course?> = _course.asStateFlow()
+    private val _operationError = MutableStateFlow<String?>(null)
+    /** 加载或作用域读取失败的固定可见提示；不暴露异常详情。 */
+    val operationError: StateFlow<String?> = _operationError.asStateFlow()
+    fun onOperationErrorShown() { _operationError.value = null }
 
     /** 编辑既有课程时捕获的课表身份，切换课表后不得继续写入旧学期。 */
     private val editingProfileId = MutableStateFlow<Long?>(null)
@@ -52,6 +59,10 @@ class CourseEditorViewModel @Inject constructor(
     /** 当前 Room 学期；null 表示用户尚未选择或选择已失效。 */
     val currentSemester: StateFlow<Semester?> = timetableProfileRepository.observeActiveContext()
         .map { context -> context?.semester }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { _operationError.value = EDITOR_OPERATION_FAILURE_MESSAGE; emit(null) } else throw failure
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -80,7 +91,10 @@ class CourseEditorViewModel @Inject constructor(
     val hasValidTargetSemester: StateFlow<Boolean> = combine(
         _course,
         currentSemester,
-        semesterRepository.getAllSemesters()
+        semesterRepository.getAllSemesters().catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { _operationError.value = EDITOR_OPERATION_FAILURE_MESSAGE; emit(emptyList()) } else throw failure
+        }
     ) { editingCourse, selectedSemester, semesters ->
         val targetId = if (courseId > 0L) editingCourse?.semesterId else selectedSemester?.id
         targetId != null && targetId > 0L && semesters.any { it.id == targetId }
@@ -96,8 +110,12 @@ class CourseEditorViewModel @Inject constructor(
     init {
         if (courseId != 0L) {
             viewModelScope.launch {
-                val activeContext = timetableProfileRepository.observeActiveContext().first()
-                val loadedCourse = repository.getCourseById(courseId)
+                val activeContext = runSuspendCatching {
+                    timetableProfileRepository.getActiveContext()
+                }.getOrElse { _operationError.value = EDITOR_OPERATION_FAILURE_MESSAGE; return@launch }
+                val loadedCourse = runSuspendCatching {
+                    repository.getCourseById(courseId)
+                }.getOrElse { _operationError.value = EDITOR_OPERATION_FAILURE_MESSAGE; return@launch }
                 if (loadedCourse != null && activeContext?.semester?.id == loadedCourse.semesterId) {
                     editingProfileId.value = activeContext.profile.id
                     _course.value = loadedCourse
@@ -150,7 +168,9 @@ class CourseEditorViewModel @Inject constructor(
         viewModelScope.launch {
             val semesterId = courses.first().semesterId
             val capturedProfileId = editingProfileId.value
-                ?: timetableProfileRepository.observeActiveContext().first()?.profile?.id
+                ?: runSuspendCatching {
+                    timetableProfileRepository.getActiveContext()?.profile?.id
+                }.getOrNull()
                 ?: run {
                     onConflict(PROFILE_SCOPE_CHANGED_MESSAGE)
                     return@launch
@@ -160,12 +180,17 @@ class CourseEditorViewModel @Inject constructor(
                 return@launch
             }
             val semester = semesterId.takeIf { it > 0L }
-                ?.let { semesterRepository.getSemesterById(it) }
+                ?.let { id -> runSuspendCatching { semesterRepository.getSemesterById(id) }.getOrNull() }
             CourseSaveSemesterValidator.validate(courses, semester)?.let { message ->
                 onConflict(message)
                 return@launch
             }
-            val existingCourses = repository.getCoursesBySemester(semesterId).first()
+            val existingCourses = runSuspendCatching {
+                repository.getCoursesBySemester(semesterId).first()
+            }.getOrElse {
+                onConflict(EDITOR_OPERATION_FAILURE_MESSAGE)
+                return@launch
+            }
             val editingIds = courses.map { it.id }.filter { it != 0L }.toSet()
             val filteredExisting = if (editingIds.isEmpty()) {
                 existingCourses
@@ -189,7 +214,7 @@ class CourseEditorViewModel @Inject constructor(
 
             val editingId = courses.firstOrNull { it.id != 0L }?.id ?: 0L
             val originalCourse = if (editingId != 0L) {
-                repository.getCourseById(editingId)
+                runSuspendCatching { repository.getCourseById(editingId) }.getOrNull()
             } else {
                 null
             }
@@ -211,15 +236,21 @@ class CourseEditorViewModel @Inject constructor(
                 return@launch
             }
 
-            when (val result = repository.saveCoursesIfScopeActive(
+            val result = runSuspendCatching { repository.saveCoursesIfScopeActive(
                 profileId = capturedProfileId,
                 semesterId = semesterId,
                 courses = toInsert,
                 editingCourseId = editingId,
-            )) {
+            ) }.getOrElse {
+                onConflict(EDITOR_OPERATION_FAILURE_MESSAGE)
+                return@launch
+            }
+            when (result) {
                 CourseRepository.AtomicSaveResult.Success -> {
-                    sendWidgetUpdateBroadcast()
-                    onSaved()
+                    completeSuccessfulCourseSave(
+                        triggerWidgetUpdate = ::sendWidgetUpdateBroadcast,
+                        onSaved = onSaved,
+                    )
                 }
                 is CourseRepository.AtomicSaveResult.Rejected -> onConflict(result.message)
             }
@@ -306,7 +337,9 @@ class CourseEditorViewModel @Inject constructor(
     /** 只允许把编辑结果写入开始编辑时仍处于活动状态的学期。 */
     private suspend fun isTargetStillActive(semesterId: Long, profileId: Long?): Boolean {
         if (profileId == null || semesterId <= 0L) return false
-        val current = timetableProfileRepository.observeActiveContext().first() ?: return false
+        val current = runSuspendCatching {
+            timetableProfileRepository.getActiveContext()
+        }.getOrElse { _operationError.value = EDITOR_OPERATION_FAILURE_MESSAGE; return false } ?: return false
         return current.profile.id == profileId && current.semester?.id == semesterId
     }
 
@@ -315,5 +348,20 @@ class CourseEditorViewModel @Inject constructor(
         private const val DEFAULT_SEMESTER_WEEK_COUNT = 20
         /** Profile 切换后拒绝旧编辑会话的明确反馈。 */
         private const val PROFILE_SCOPE_CHANGED_MESSAGE = "课表已切换，请重新打开课程编辑"
+        /** 读取或保存课程失败时的安全反馈。 */
+        private const val EDITOR_OPERATION_FAILURE_MESSAGE = "操作未完成，请稍后重试"
     }
+}
+
+/** 编辑页导航回调仅能由原子提交成功触发。 */
+internal fun shouldCompleteCourseSave(result: CourseRepository.AtomicSaveResult): Boolean =
+    result is CourseRepository.AtomicSaveResult.Success
+
+/** 数据已提交后，小组件广播属于非关键副作用；普通框架异常不能阻断成功回调。 */
+internal suspend fun completeSuccessfulCourseSave(
+    triggerWidgetUpdate: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    runSuspendCatching { triggerWidgetUpdate() }
+    onSaved()
 }

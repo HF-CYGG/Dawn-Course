@@ -57,13 +57,13 @@ class AndroidPlaintextToSqlCipherMigrationBackend : PlaintextToSqlCipherMigratio
     override fun exportPlaintextToEncrypted(
         plaintextDatabase: File,
         encryptedDatabase: File,
-        passphrase: SqlCipherPassphrase,
+        keyMaterial: DatabaseKeyMaterial,
         sourceSnapshot: DatabaseMigrationSnapshot
     ): DatabaseMigrationVerification {
         require(plaintextDatabase.isFile) { "明文 pre-image 不存在" }
         require(!encryptedDatabase.exists()) { "加密 temp 已存在" }
         require(plaintextDatabase.parentFile == encryptedDatabase.parentFile) { "加密 temp 必须与明文库同目录" }
-        withPassphraseCopy(passphrase) { workingPassphrase ->
+        withSqlCipherKeyCopy(keyMaterial) { workingPassphrase ->
             CipherSQLiteDatabase.openOrCreateDatabase(
                 encryptedDatabase,
                 workingPassphrase,
@@ -96,14 +96,14 @@ class AndroidPlaintextToSqlCipherMigrationBackend : PlaintextToSqlCipherMigratio
             }
         }
         requireNoHotSidecars(encryptedDatabase)
-        return inspectEncrypted(encryptedDatabase, passphrase)
+        return inspectEncrypted(encryptedDatabase, keyMaterial)
     }
 
     /** 使用同一口令重开加密文件，验证 cipher_status、两类完整性和逻辑快照。 */
     override fun inspectEncrypted(
         database: File,
-        passphrase: SqlCipherPassphrase
-    ): DatabaseMigrationVerification = withPassphraseCopy(passphrase) { workingPassphrase ->
+        keyMaterial: DatabaseKeyMaterial
+    ): DatabaseMigrationVerification = withSqlCipherKeyCopy(keyMaterial) { workingPassphrase ->
         CipherSQLiteDatabase.openDatabase(
             database.path,
             workingPassphrase,
@@ -187,10 +187,10 @@ class AndroidPlaintextToSqlCipherMigrationBackend : PlaintextToSqlCipherMigratio
         "\"${identifier.replace("\"", "\"\"")}\""
 
     /** 口令副本只覆盖一次 SQLCipher 打开作用域，并在连接关闭后立即清零。 */
-    private fun <T> withPassphraseCopy(
-        passphrase: SqlCipherPassphrase,
+    private fun <T> withSqlCipherKeyCopy(
+        keyMaterial: DatabaseKeyMaterial,
         block: (ByteArray) -> T
-    ): T = passphrase.useBytes { managed ->
+    ): T = keyMaterial.useSqlCipherBytes { managed ->
         val working = managed.copyOf()
         try {
             block(working)

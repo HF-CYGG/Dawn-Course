@@ -128,14 +128,14 @@ interface PlaintextToSqlCipherMigrationBackend {
     fun exportPlaintextToEncrypted(
         plaintextDatabase: File,
         encryptedDatabase: File,
-        passphrase: SqlCipherPassphrase,
+        keyMaterial: DatabaseKeyMaterial,
         sourceSnapshot: DatabaseMigrationSnapshot
     ): DatabaseMigrationVerification
 
     /** 使用同一口令重开换入后的主数据库并重新验证。 */
     fun inspectEncrypted(
         database: File,
-        passphrase: SqlCipherPassphrase
+        keyMaterial: DatabaseKeyMaterial
     ): DatabaseMigrationVerification
 }
 
@@ -151,19 +151,19 @@ class PlaintextToSqlCipherMigrator(
     /**
      * 执行恢复、导出、校验、换入和换入后重开验证。
      *
-     * 本方法不取得 [passphrase] 所有权；调用方必须在结果返回后关闭它，后续 Room 接线若要
+     * 本方法不取得 [keyMaterial] 所有权；调用方必须在结果返回后关闭它，后续 Room 接线若要
      * 继续打开数据库，则应在同一受控作用域完成打开后再清零。
      */
-    fun migrate(passphrase: SqlCipherPassphrase): PlaintextToSqlCipherMigrationResult =
+    fun migrate(keyMaterial: DatabaseKeyMaterial): PlaintextToSqlCipherMigrationResult =
         try {
-            files.withExclusiveLock { migrateWhileLocked(passphrase) }
+            files.withExclusiveLock { migrateWhileLocked(keyMaterial) }
         } catch (_: Throwable) {
             PlaintextToSqlCipherMigrationResult.RecoveryRequired(DatabaseMigrationFailure.CrashRecoveryFailed)
         }
 
     /** 调用方持有跨进程锁时执行完整状态转换。 */
     private fun migrateWhileLocked(
-        passphrase: SqlCipherPassphrase
+        keyMaterial: DatabaseKeyMaterial
     ): PlaintextToSqlCipherMigrationResult {
         if (files.recoverIncompleteMigration() == DatabaseMigrationRecovery.Failed) {
             return PlaintextToSqlCipherMigrationResult.RecoveryRequired(
@@ -200,7 +200,7 @@ class PlaintextToSqlCipherMigrator(
             backend.exportPlaintextToEncrypted(
                 plaintextDatabase = attempt.plaintextPreimage,
                 encryptedDatabase = attempt.encryptedTemp,
-                passphrase = passphrase,
+                keyMaterial = keyMaterial,
                 sourceSnapshot = source.snapshot
             )
         } catch (_: Throwable) {
@@ -218,7 +218,7 @@ class PlaintextToSqlCipherMigrator(
             return failAndRollback(attempt, DatabaseMigrationFailure.SwapFailed)
         }
         val reopened = try {
-            backend.inspectEncrypted(attempt.mainDatabase, passphrase)
+            backend.inspectEncrypted(attempt.mainDatabase, keyMaterial)
         } catch (_: Throwable) {
             return failAndRollback(attempt, DatabaseMigrationFailure.ReopenValidationFailed)
         }

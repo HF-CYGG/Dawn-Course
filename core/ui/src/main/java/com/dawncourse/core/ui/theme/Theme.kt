@@ -2,6 +2,7 @@ package com.dawncourse.core.ui.theme
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -31,6 +32,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.graphics.ColorUtils
 import com.dawncourse.core.domain.model.AppSettings
 import androidx.palette.graphics.Palette
+import java.util.Collections
+import java.util.IdentityHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -86,7 +90,9 @@ fun DawnTheme(
             wallpaperContrastColor = null
             return@LaunchedEffect
         }
-        val result = generateColorSchemeFromWallpaper(context, appSettings.wallpaperUri, darkTheme)
+        val result = visualEnhancementOrNull {
+            generateColorSchemeFromWallpaper(context, appSettings.wallpaperUri, darkTheme)
+        }
         wallpaperColorScheme = result?.first
         wallpaperContrastColor = result?.second
     }
@@ -112,7 +118,7 @@ fun DawnTheme(
 
     // 颜色策略：优先壁纸取色，其次系统动态取色，最后回退到默认主题
     val colorScheme = when {
-        appSettings.dynamicColor && wallpaperColorScheme != null -> wallpaperColorScheme!!
+        appSettings.dynamicColor && wallpaperColorScheme != null -> wallpaperColorScheme ?: fallbackScheme
         appSettings.dynamicColor && systemDynamicScheme != null -> systemDynamicScheme
         else -> fallbackScheme
     }
@@ -123,11 +129,13 @@ fun DawnTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
-            // 在 Edge-to-Edge 模式下，状态栏背景应为透明
-            window.statusBarColor = androidx.compose.ui.graphics.Color.Transparent.toArgb()
-            // 状态栏图标颜色控制：非深色模式下图标为深色
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            view.context.findActivityOrNull()?.let { activity ->
+                val window = activity.window
+                // 在 Edge-to-Edge 模式下，状态栏背景应为透明
+                window.statusBarColor = androidx.compose.ui.graphics.Color.Transparent.toArgb()
+                // 状态栏图标颜色控制：非深色模式下图标为深色
+                WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            }
         }
     }
 
@@ -221,7 +229,7 @@ private suspend fun loadPaletteBitmap(context: Context, wallpaperUri: String): B
     return withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val uri = Uri.parse(wallpaperUri)
-        runCatching {
+        val decoded = visualEnhancementOrNull {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val source = ImageDecoder.createSource(resolver, uri)
                 ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
@@ -239,7 +247,8 @@ private suspend fun loadPaletteBitmap(context: Context, wallpaperUri: String): B
                     BitmapFactory.decodeStream(input, null, options)
                 }
             }
-        }.getOrNull()?.let { bitmap ->
+        }
+        decoded?.let { bitmap ->
             if (bitmap.config == Bitmap.Config.HARDWARE) {
                 bitmap.copy(Bitmap.Config.ARGB_8888, false)
             } else {
@@ -248,3 +257,34 @@ private suspend fun loadPaletteBitmap(context: Context, wallpaperUri: String): B
         }
     }
 }
+
+/** 视觉增强失败只回退默认值；协程取消必须继续向上游传播。 */
+internal suspend fun <T> visualEnhancementOrNull(block: suspend () -> T): T? = try {
+    block()
+} catch (cancellation: CancellationException) {
+    throw cancellation
+} catch (_: Exception) {
+    null
+}
+
+/** 通过引用身份检测循环的通用包装链遍历，避免异常 ContextWrapper 链无限循环。 */
+internal fun <T : Any> findInWrapperChainOrNull(
+    start: T,
+    next: (T) -> T?,
+    matches: (T) -> Boolean,
+): T? {
+    val visited = Collections.newSetFromMap(IdentityHashMap<T, Boolean>())
+    var current: T? = start
+    while (current != null && visited.add(current)) {
+        if (matches(current)) return current
+        current = next(current)
+    }
+    return null
+}
+
+/** 安全遍历 ContextWrapper 链；Preview、RemoteViews 等非 Activity 上下文不触发状态栏副作用。 */
+internal fun Context.findActivityOrNull(): Activity? = findInWrapperChainOrNull(
+    start = this,
+    next = { context -> (context as? ContextWrapper)?.baseContext },
+    matches = { context -> context is Activity },
+) as? Activity

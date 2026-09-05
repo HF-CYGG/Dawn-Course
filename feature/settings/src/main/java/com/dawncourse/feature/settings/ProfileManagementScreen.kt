@@ -76,6 +76,7 @@ fun ProfileManagementScreen(
     LaunchedEffect(viewModel, snackbarHostState) {
         viewModel.events.collect { event ->
             val message = when (event) {
+                ProfileManagementEvent.LoadFailed -> resources.getString(R.string.profile_management_load_failed)
                 is ProfileManagementEvent.FormRejected -> resources.getString(event.error.stringResourceId())
                 is ProfileManagementEvent.MutationInconsistent ->
                     resources.getString(R.string.profile_management_inconsistent_state)
@@ -152,14 +153,16 @@ fun ProfileManagementContent(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCreateProfile,
-                modifier = Modifier.testTag(ProfileManagementTestTags.CREATE_BUTTON),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(R.string.profile_management_create),
-                )
+            if (uiState.canMutate) {
+                FloatingActionButton(
+                    onClick = onCreateProfile,
+                    modifier = Modifier.testTag(ProfileManagementTestTags.CREATE_BUTTON),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = stringResource(R.string.profile_management_create),
+                    )
+                }
             }
         },
     ) { paddingValues ->
@@ -173,6 +176,13 @@ fun ProfileManagementContent(
                     Spacer(Modifier.height(12.dp))
                     Text(stringResource(R.string.profile_management_loading))
                 }
+            }
+
+            uiState.hasLoadError -> Box(
+                modifier = Modifier.fillMaxSize().padding(paddingValues),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(stringResource(R.string.profile_management_load_failed))
             }
 
             uiState.profiles.isEmpty() -> Box(

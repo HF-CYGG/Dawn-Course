@@ -37,6 +37,9 @@ class SilenceHelper @Inject constructor(
         private val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        private val appOwnedDndController = AppOwnedDndController(
+            AndroidAppDndPlatform(notificationManager),
+        )
 
         override val hasPolicyAccess: Boolean
             get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -51,6 +54,13 @@ class SilenceHelper @Inject constructor(
                 AudioManager.RINGER_MODE_VIBRATE -> RingerState.VIBRATE
                 else -> RingerState.SILENT
             }
+
+        override val supportsAppOwnedDnd: Boolean
+            get() = appOwnedDndController.isSupported
+
+        override fun activateAppOwnedDnd(): Boolean = appOwnedDndController.activate()
+
+        override fun deactivateAppOwnedDnd(): Boolean = appOwnedDndController.deactivate()
 
         override fun setVibrate() {
             audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE

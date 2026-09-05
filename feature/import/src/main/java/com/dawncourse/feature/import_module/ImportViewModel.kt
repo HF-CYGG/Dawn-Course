@@ -27,6 +27,7 @@ import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import com.dawncourse.core.domain.usecase.FetchLlmParseStatusUseCase
 import com.dawncourse.core.domain.usecase.ReportParseResultUseCase
 import com.dawncourse.core.domain.usecase.SubmitLlmParseTaskUseCase
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.feature.import_module.engine.QiangZhiApiEngine
 import com.dawncourse.feature.import_module.engine.ParserPlanEntry
 import com.dawncourse.feature.import_module.engine.ParserSelectionPolicy
@@ -35,12 +36,14 @@ import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.SectionRange
 import com.dawncourse.feature.import_module.model.XiaoaiCourse
 import com.dawncourse.feature.import_module.model.convertXiaoaiCoursesToParsedCourses
+import com.dawncourse.feature.import_module.model.dedupeParsedCourses
 import com.dawncourse.feature.import_module.model.parseIcsToParsedCourses
 import com.dawncourse.feature.import_module.model.parseParsedCoursesFromRaw
 import com.dawncourse.feature.import_module.model.parseXiaoaiProviderResult
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -185,6 +188,9 @@ sealed interface ImportEvent {
     data object Success : ImportEvent
 }
 
+/** 导入外部 I/O 失败时的固定用户提示，禁止拼接异常、URL 或凭据。 */
+internal fun importOperationFailureText(): String = "导入失败，请稍后重试"
+
 /**
  * 导入功能 ViewModel
  *
@@ -233,13 +239,15 @@ class ImportViewModel @Inject constructor(
         val timestamp = monday.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
         _uiState.update { it.copy(semesterStartDate = timestamp) }
         viewModelScope.launch {
-            val lastImportUrl = settingsRepository.settings.first().lastImportUrl
+            val lastImportUrl = runSuspendCatching {
+                settingsRepository.settings.first().lastImportUrl
+            }.getOrNull()
             if (!lastImportUrl.isNullOrBlank()) {
                 _uiState.update { it.copy(webUrl = lastImportUrl) }
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            diagnosticSampleRepository.cleanupExpired()
+            runSuspendCatching { diagnosticSampleRepository.cleanupExpired() }
         }
     }
 
@@ -253,7 +261,7 @@ class ImportViewModel @Inject constructor(
         currentParseSessionId = ""
         if (leavingSessionId != null) {
             viewModelScope.launch(Dispatchers.IO) {
-                diagnosticSampleRepository.clearRawForSession(leavingSessionId)
+                runSuspendCatching { diagnosticSampleRepository.clearRawForSession(leavingSessionId) }
             }
         }
         _uiState.update { 
@@ -342,6 +350,8 @@ class ImportViewModel @Inject constructor(
                 supportedParserApiVersion = ScriptEngine.SUPPORTED_PARSER_API_VERSION,
                 supportedContractVersion = ScriptEngine.SUPPORTED_CONTRACT_VERSION
             )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
             ParserSelectionPolicy.fallbackPlan()
         }
@@ -362,6 +372,8 @@ class ImportViewModel @Inject constructor(
                     category = dependency.category,
                     pullTaskId = currentScriptPullTaskId
                 ).takeIf { it.isNotBlank() }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
             } catch (_: Exception) {
                 null
             }
@@ -391,6 +403,8 @@ class ImportViewModel @Inject constructor(
                 category = ScriptEngine.SCRIPT_HOST_CATEGORY,
                 pullTaskId = currentScriptPullTaskId
             )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
         } catch (_: Exception) {
             ""
         }
@@ -578,19 +592,37 @@ class ImportViewModel @Inject constructor(
                                     )
                                     allDiagnostics.addAll(execution.diagnostics)
                                     val jsonResult = execution.raw
-                                    val parsedDirect = parseParsedCoursesFromRaw(jsonResult)
+                                    // 契约判出「重复率过高」时不静默采纳：先在客户端按业务键二次去重补救本次导入，
+                                    // 同时仍以 success = false + duplicate_ratio_high 上报——这条反馈是服务端
+                                    // 自愈流水线的输入，此前因为提前 return 成功而被吞掉。
+                                    val duplicateRatioHigh =
+                                        execution.errorCode == ScriptEngine.ERROR_DUPLICATE_RATIO_HIGH
+                                    fun acceptParsed(list: List<ParsedCourse>): List<ParsedCourse> =
+                                        if (duplicateRatioHigh) dedupeParsedCourses(list) else list
+                                    val parsedDirect = acceptParsed(parseParsedCoursesFromRaw(jsonResult))
                                     if (parsedDirect.isNotEmpty()) {
                                         scriptSyncRepository.activatePreparedScript(fetchResult)
                                         successfulScriptName = parserName
-                                        reportParserParseFeedback(parserName, true, null, currentUrl)
+                                        reportParserParseFeedback(
+                                            parserName,
+                                            !duplicateRatioHigh,
+                                            if (duplicateRatioHigh) ScriptEngine.ERROR_DUPLICATE_RATIO_HIGH else null,
+                                            currentUrl
+                                        )
                                         return@runParserRound parsedDirect
                                     }
                                     val xiaoai = parseXiaoaiProviderResult(jsonResult)
-                                    val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoai.courses)
+                                    val parsedFromXiaoai =
+                                        acceptParsed(convertXiaoaiCoursesToParsedCourses(xiaoai.courses))
                                     if (parsedFromXiaoai.isNotEmpty()) {
                                         scriptSyncRepository.activatePreparedScript(fetchResult)
                                         successfulScriptName = parserName
-                                        reportParserParseFeedback(parserName, true, null, currentUrl)
+                                        reportParserParseFeedback(
+                                            parserName,
+                                            !duplicateRatioHigh,
+                                            if (duplicateRatioHigh) ScriptEngine.ERROR_DUPLICATE_RATIO_HIGH else null,
+                                            currentUrl
+                                        )
                                         return@runParserRound parsedFromXiaoai
                                     }
                                     // 使用契约给出的结构化错误码上报，便于服务端按 empty_result /
@@ -616,7 +648,9 @@ class ImportViewModel @Inject constructor(
                                         currentUrl
                                     )
                                     hasParserCrash = true
-                                } catch (e: Throwable) {
+                                } catch (cancellation: CancellationException) {
+                                    throw cancellation
+                                } catch (e: Exception) {
                                     preparedResult?.let { result ->
                                         handlePreparedScriptFailure(
                                             result,
@@ -771,7 +805,9 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                 }
-            } catch (_: Throwable) {
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
                 // 兜底：避免把异常细节直接展示给用户
                 _uiState.update {
                     it.copy(
@@ -893,7 +929,7 @@ class ImportViewModel @Inject constructor(
         sourceUrl: String
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
+            runSuspendCatching {
                 scriptSyncRepository.reportScriptParseFeedback(
                     scriptName = parserName,
                     category = "parsers",
@@ -919,7 +955,7 @@ class ImportViewModel @Inject constructor(
         val parseSessionId = currentParseSessionId.takeIf { it.isNotBlank() } ?: return
         if (scriptName.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
+            runSuspendCatching {
                 scriptSyncRepository.reportScriptParseFeedback(
                     scriptName = scriptName,
                     category = "parsers",
@@ -1014,7 +1050,7 @@ class ImportViewModel @Inject constructor(
         val targetType = failureStage?.let(::targetTypeForStage)
         val parserNames = (if (attemptedParsers.isNotEmpty()) attemptedParsers else listOf(scriptName)).distinct()
         val attempts = parserNames.map { parserName ->
-            val parserVersion = runCatching {
+            val parserVersion = runSuspendCatching {
                 scriptSyncRepository.getScriptVersion(parserName, "parsers")
             }.getOrNull() ?: 0
             ParserAttemptReport(
@@ -1276,23 +1312,37 @@ class ImportViewModel @Inject constructor(
                     resultText = "已获得授权，正在进行云端解析..."
                 )
             }
-            val fallbackResult = withContext(Dispatchers.IO) {
-                reportSanitizedParseSample(
-                    content = content,
-                    schoolId = schoolId,
-                    schoolName = schoolName,
-                    schoolSystemType = schoolSystemType,
-                    sourceUrl = sourceUrl,
-                    repairContext = repairContext
-                )
-                tryLlmFallback(content, schoolId, schoolName, schoolSystemType, sourceUrl, repairContext)
+            val fallbackResult = runSuspendCatching {
+                withContext(Dispatchers.IO) {
+                    reportSanitizedParseSample(
+                        content = content,
+                        schoolId = schoolId,
+                        schoolName = schoolName,
+                        schoolSystemType = schoolSystemType,
+                        sourceUrl = sourceUrl,
+                        repairContext = repairContext
+                    )
+                    tryLlmFallback(content, schoolId, schoolName, schoolSystemType, sourceUrl, repairContext)
+                }
+            }.getOrElse {
+                pendingLlmContent = ""
+                pendingLlmRepairContext = LlmRepairContext()
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        parsePipelineStage = ParsePipelineStage.CLOUD_FAILED,
+                        resultText = importOperationFailureText(),
+                    )
+                }
+                return@launch
             }
             pendingLlmContent = ""
             pendingLlmRepairContext = LlmRepairContext()
             if (fallbackResult.courses.isNotEmpty()) {
                 val lastUrl = _uiState.value.webUrl
                 if (lastUrl.isNotBlank()) {
-                    settingsRepository.setLastImportUrl(lastUrl)
+                    // 记忆入口失败不应推翻已经完成的课程解析。
+                    runSuspendCatching { settingsRepository.setLastImportUrl(lastUrl) }
                 }
                 val maxSection = fallbackResult.courses.maxOfOrNull { it.endSection } ?: 12
                 val safeMaxSection = maxSection.coerceAtLeast(4)
@@ -1334,7 +1384,7 @@ class ImportViewModel @Inject constructor(
         pendingLlmRepairContext = LlmRepairContext()
         if (leavingSessionId != null) {
             viewModelScope.launch(Dispatchers.IO) {
-                diagnosticSampleRepository.clearRawForSession(leavingSessionId)
+                runSuspendCatching { diagnosticSampleRepository.clearRawForSession(leavingSessionId) }
             }
         }
         _uiState.update {
@@ -1436,34 +1486,41 @@ class ImportViewModel @Inject constructor(
     fun beginImport(targetProfileId: Long? = null) {
         if (_uiState.value.destination != null) return
         viewModelScope.launch {
-            val active = timetableProfileRepository.observeActiveContext().first()
-                ?: run {
-                    _uiState.update { it.copy(resultText = "无法确定导入目标课表") }
-                    return@launch
+            val result = runSuspendCatching {
+                val active = timetableProfileRepository.getActiveContext()
+                    ?: run {
+                        _uiState.update { it.copy(resultText = "无法确定导入目标课表") }
+                        return@runSuspendCatching
+                    }
+                val profiles = timetableProfileRepository.observeProfiles().first()
+                val capturedProfile = targetProfileId?.let { requestedId ->
+                    profiles.firstOrNull { it.id == requestedId }
+                } ?: active.profile
+                if (targetProfileId != null && capturedProfile.id != targetProfileId) {
+                    _uiState.update { it.copy(resultText = "指定课表不存在，无法导入") }
+                    return@runSuspendCatching
                 }
-            val profiles = timetableProfileRepository.observeProfiles().first()
-            val capturedProfile = targetProfileId?.let { requestedId ->
-                profiles.firstOrNull { it.id == requestedId }
-            } ?: active.profile
-            if (targetProfileId != null && capturedProfile.id != targetProfileId) {
-                _uiState.update { it.copy(resultText = "指定课表不存在，无法导入") }
-                return@launch
+                val targets = profiles.map { profile ->
+                    ImportProfileTarget(
+                        profileId = profile.id,
+                        profileName = profile.name,
+                        semesters = timetableProfileRepository.observeSemesters(profile.id).first().map { semester ->
+                            ImportSemesterTarget(semester.id, semester.name)
+                        },
+                    )
+                }
+                _uiState.update {
+                    it.copy(
+                        capturedProfileId = capturedProfile.id,
+                        destination = ImportDestination.NewSemester(capturedProfile.id),
+                        profileTargets = targets,
+                    )
+                }
             }
-            val targets = profiles.map { profile ->
-                ImportProfileTarget(
-                    profileId = profile.id,
-                    profileName = profile.name,
-                    semesters = timetableProfileRepository.observeSemesters(profile.id).first().map { semester ->
-                        ImportSemesterTarget(semester.id, semester.name)
-                    },
-                )
-            }
-            _uiState.update {
-                it.copy(
-                    capturedProfileId = capturedProfile.id,
-                    destination = ImportDestination.NewSemester(capturedProfile.id),
-                    profileTargets = targets,
-                )
+            if (result.isFailure) {
+                _uiState.update {
+                    it.copy(isLoading = false, resultText = importOperationFailureText())
+                }
             }
         }
     }
@@ -1508,8 +1565,12 @@ class ImportViewModel @Inject constructor(
                 confirmImport()
                 return@launch
             }
-            val impact = importCommitRepository.preview(request).getOrElse { error ->
-                _uiState.update { it.copy(resultText = "无法读取覆盖影响：${error.message.orEmpty()}") }
+            val previewResult = runSuspendCatching { importCommitRepository.preview(request) }.getOrElse {
+                _uiState.update { it.copy(resultText = "无法读取覆盖影响，请稍后重试") }
+                return@launch
+            }
+            val impact = previewResult.getOrElse {
+                _uiState.update { it.copy(resultText = "无法读取覆盖影响，请稍后重试") }
                 return@launch
             }
             _uiState.update { it.copy(pendingOverwriteImpact = impact) }
@@ -1624,22 +1685,27 @@ class ImportViewModel @Inject constructor(
                 val scriptHostSource = getScriptHostSource()
                 val parsed = withContext(Dispatchers.IO) {
                     // 1. 运行 JS 脚本提取数据
-                    val jsonResult = scriptEngine.parseHtml(
+                    val execution = scriptEngine.parseHtml(
                         script = script,
                         html = html,
                         harnessSource = scriptHostSource
-                    ).raw
+                    )
+                    val jsonResult = execution.raw
+                    val duplicateRatioHigh =
+                        execution.errorCode == ScriptEngine.ERROR_DUPLICATE_RATIO_HIGH
 
                     // 2. 解析 JSON 结果
                     val xiaoaiResult = parseXiaoaiProviderResult(jsonResult)
-                    
+
                     // 3. 转换为领域模型
                     val parsedFromXiaoai = convertXiaoaiCoursesToParsedCourses(xiaoaiResult.courses)
-                    if (parsedFromXiaoai.isNotEmpty()) {
+                    val result = if (parsedFromXiaoai.isNotEmpty()) {
                         parsedFromXiaoai
                     } else {
                         parseParsedCoursesFromRaw(jsonResult)
                     }
+                    // 契约判出「重复率过高」时按业务键二次去重，避免手动测试入口也把 2× 重复当结果展示
+                    if (duplicateRatioHigh) dedupeParsedCourses(result) else result
                 }
                 
                 if (parsed.isEmpty()) {
@@ -1671,7 +1737,9 @@ class ImportViewModel @Inject constructor(
                         resultText = "解析失败：解析器运行异常。\n请重试；若仍失败，建议更换导入方式。"
                     )
                 }
-            } catch (_: Throwable) {
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -1767,12 +1835,12 @@ class ImportViewModel @Inject constructor(
                     applyGlobalImportSettings(state)
                 } catch (cancellation: kotlinx.coroutines.CancellationException) {
                     throw cancellation
-                } catch (settingsFailure: Throwable) {
+                } catch (settingsFailure: Exception) {
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             pendingOverwriteImpact = null,
-                            resultText = "课程已导入，但全局作息设置未完全保存：${settingsFailure.message.orEmpty()}",
+                            resultText = "课程已导入，但全局作息设置未完全保存，请稍后检查设置",
                         )
                     }
                     return@launch
@@ -1784,10 +1852,10 @@ class ImportViewModel @Inject constructor(
                 
                 _uiState.update { it.copy(isLoading = false, pendingOverwriteImpact = null, resultText = "导入成功！") }
                 _events.emit(ImportEvent.Success)
-            } catch (cancellation: kotlinx.coroutines.CancellationException) {
+            } catch (cancellation: CancellationException) {
                 throw cancellation
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, resultText = "导入失败: ${e.message}") }
+            } catch (_: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = importOperationFailureText()) }
             }
         }
     }
@@ -1859,8 +1927,10 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(resultText = "ICS 解析失败: ${e.message}", isLoading = false) }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                _uiState.update { it.copy(resultText = importOperationFailureText(), isLoading = false) }
             }
         }
     }
@@ -1955,8 +2025,10 @@ class ImportViewModel @Inject constructor(
                         )
                     }
                 }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isLoading = false, resultText = "强智 API 导入失败: ${e.message}") }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                _uiState.update { it.copy(isLoading = false, resultText = importOperationFailureText()) }
             }
         }
     }
@@ -2075,8 +2147,10 @@ class ImportViewModel @Inject constructor(
                     }
                 }
                 
-            } catch (e: Exception) {
-                 _uiState.update { it.copy(isLoading = false, resultText = "WakeUp 导入失败: ${e.message}") }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                 _uiState.update { it.copy(isLoading = false, resultText = importOperationFailureText()) }
             }
         }
     }

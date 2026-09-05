@@ -11,6 +11,7 @@ import com.dawncourse.core.domain.model.LocalBackupData
 import com.dawncourse.core.domain.model.WebDavBackup
 import com.dawncourse.core.domain.model.WebDavCredentials
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -58,9 +59,14 @@ enum class DatabaseRecoveryActionFailure {
 /** 不依赖 AppDatabase 的恢复输入读取器。 */
 internal class DatabaseRecoveryBackupReader(
     private val context: Context,
-    private val client: OkHttpClient = OkHttpClient()
+    private val clientFactory: () -> OkHttpClient = ::OkHttpClient,
+    private val gsonFactory: () -> Gson = { GsonBuilder().create() },
 ) {
-    private val gson = GsonBuilder().create()
+    /** 恢复页仅在用户实际选择 WebDAV 恢复时创建网络客户端。 */
+    private val client: OkHttpClient by lazy(clientFactory)
+
+    /** 本地或 WebDAV 恢复真正开始解析备份时才创建 JSON 解析器。 */
+    private val gson: Gson by lazy(gsonFactory)
 
     /** SAF 只读取当前用户选择的 URI，并限制最大字节数。 */
     fun readLocal(uri: Uri): Result<ValidatedBackupRestore> = runCatching {
@@ -141,6 +147,8 @@ internal enum class DatabaseRecoveryInstallStage {
     STAGING_VERIFIED,
     MAIN_SWAPPED,
     SETTINGS_APPLIED,
+    /** 新恢复 pair 已提交，旧 SQLCipher rekey journal/pre-image 已永久退休。 */
+    LEGACY_REKEY_RETIRED,
     COMMITTED,
     ROLLED_BACK
 }
@@ -176,7 +184,8 @@ internal object DatabaseRecoveryInstallRecoveryPolicy {
             DatabaseRecoveryInstallResumeAction.ROLLBACK_NEW_REPLACEMENT
         }
         DatabaseRecoveryInstallStage.MAIN_SWAPPED,
-        DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> {
+        DatabaseRecoveryInstallStage.SETTINGS_APPLIED,
+        DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED -> {
             DatabaseRecoveryInstallResumeAction.FINISH_SETTINGS_AND_COMMIT
         }
         DatabaseRecoveryInstallStage.COMMITTED -> DatabaseRecoveryInstallResumeAction.KEEP_COMMITTED
@@ -236,10 +245,14 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     }
 
     fun current(): DatabaseRecoveryInstallAttempt? {
-        if (!journal.baseFile.exists()) return null
         return runCatching {
-            if (journal.baseFile.length() !in 1..MAX_JOURNAL_BYTES) error("journal 大小无效")
-            val lines = journal.readFully().toString(Charsets.UTF_8).lines()
+            val bytes = AtomicFileArtifactProtocol.readOrNull(journal) ?: return null
+            if (bytes.size !in 1..MAX_JOURNAL_BYTES) error("journal 大小无效")
+            val lines = try {
+                bytes.toString(Charsets.UTF_8).lines()
+            } finally {
+                bytes.fill(0)
+            }
             require(lines.size == 3 && lines[0] == MAGIC) { "journal 格式无效" }
             val id = lines[1].removePrefix(ID_PREFIX)
             val stage = lines[2].removePrefix(STAGE_PREFIX)
@@ -249,7 +262,7 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     }
 
     /** 区分“没有 journal”与“journal 存在但损坏”。 */
-    fun exists(): Boolean = journal.baseFile.exists()
+    fun exists(): Boolean = AtomicFileArtifactProtocol.hasAnyArtifact(journal)
 
     fun record(attempt: DatabaseRecoveryInstallAttempt, next: DatabaseRecoveryInstallStage) {
         val current = requireNotNull(current()) { "恢复安装 journal 缺失或损坏" }
@@ -267,13 +280,13 @@ internal class AndroidDatabaseRecoveryInstallJournal(
     fun clearCommittedArtifacts(attempt: DatabaseRecoveryInstallAttempt): Boolean = runCatching {
         require(attempt.stage == DatabaseRecoveryInstallStage.COMMITTED)
         deleteExact(settingsFile(attempt.id))
-        journal.delete()
+        AtomicFileArtifactProtocol.deleteAndConfirm(journal)
         true
     }.getOrDefault(false)
 
     private fun cleanupTerminalAttempt(attempt: DatabaseRecoveryInstallAttempt) {
         deleteExact(settingsFile(attempt.id))
-        journal.delete()
+        AtomicFileArtifactProtocol.deleteAndConfirm(journal)
     }
 
     private fun writeSettings(id: String, payload: RecoverySettingsPayload) {
@@ -326,7 +339,8 @@ internal class AndroidDatabaseRecoveryInstallJournal(
             DatabaseRecoveryInstallStage.NEW_ENVELOPE_READY -> next == DatabaseRecoveryInstallStage.STAGING_VERIFIED
             DatabaseRecoveryInstallStage.STAGING_VERIFIED -> next == DatabaseRecoveryInstallStage.MAIN_SWAPPED
             DatabaseRecoveryInstallStage.MAIN_SWAPPED -> next == DatabaseRecoveryInstallStage.SETTINGS_APPLIED
-            DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> next == DatabaseRecoveryInstallStage.COMMITTED
+            DatabaseRecoveryInstallStage.SETTINGS_APPLIED -> next == DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED
+            DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED -> next == DatabaseRecoveryInstallStage.COMMITTED
             DatabaseRecoveryInstallStage.COMMITTED,
             DatabaseRecoveryInstallStage.ROLLED_BACK -> false
         }
@@ -370,8 +384,10 @@ internal class DatabaseRecoveryBootstrapInstaller(
         val passphrase = provisionRecoveryPassphrase()
         try {
             record(DatabaseRecoveryInstallStage.NEW_ENVELOPE_READY)
-            val staging = roomFactory.openAndVerify(stagingName, passphrase)
+            val staging = roomFactory.open(stagingName, passphrase)
             try {
+                // 恢复 staging 永远走同步双扫描，不参与普通冷启动的后台策略。
+                roomFactory.verifyIntegrity(staging)
                 if (validated != null) {
                     runBlocking {
                         staging.withTransaction {
@@ -424,15 +440,15 @@ internal class DatabaseRecoveryBootstrapInstaller(
 
     fun cleanupCommittedOldKeyMaterial(): Boolean = keyMaterial.cleanupOldQuarantine()
 
-    private fun provisionRecoveryPassphrase(): SqlCipherPassphrase {
+    private fun provisionRecoveryPassphrase(): DatabaseKeyMaterial {
         val store = AndroidDatabasePassphraseEnvelopeStore(context)
         return when (val result = store.createNew()) {
-            is NewPassphraseResult.Available -> result.passphrase
+            is NewPassphraseResult.Available -> result.keyMaterial
             NewPassphraseResult.ExistingEnvelope -> error("旧信封未完成隔离")
             is NewPassphraseResult.Failed -> {
                 keyMaterial.deleteCurrentAliasAfterExplicitRecovery()
                 when (val retried = store.createNew()) {
-                    is NewPassphraseResult.Available -> retried.passphrase
+                    is NewPassphraseResult.Available -> retried.keyMaterial
                     else -> error("无法创建恢复密钥")
                 }
             }
@@ -562,8 +578,10 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     private val installer: DatabaseRecoveryBootstrapInstaller,
     private val reader: DatabaseRecoveryBackupReader = DatabaseRecoveryBackupReader(context),
     private val journal: AndroidDatabaseRecoveryInstallJournal = AndroidDatabaseRecoveryInstallJournal(context),
-    /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除备份恢复补偿失败标记。 */
-    private val clearBackupRecoveryRequired: () -> Unit = {}
+    /** 新恢复 pair 换入后，提交 marker 前永久丢弃此前未完成 rekey 的反向恢复能力。 */
+    private val retireLegacyRekey: () -> Boolean = { true },
+    /** 恢复动作提交成功后，与 recoveryFiles 标记一并清除全部在线恢复责任。 */
+    private val clearRecoveryResponsibilities: () -> Unit = {}
 ) {
     suspend fun restoreLocal(uri: Uri): DatabaseRecoveryActionResult = withContext(Dispatchers.IO) {
         val validated = reader.readLocal(uri).getOrElse { error ->
@@ -665,24 +683,37 @@ internal class DatabaseRecoveryBootstrapCoordinator(
                     applyActiveProfileSelection(validated.activeProfileId)
                 }
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
-                recoveryFiles.clearMarkerAfterExplicitDecision()
-                clearBackupRecoveryRequired()
-                journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
+                commitExplicitRecoveryDecision(
+                    legacyRekeyAlreadyRetired = false,
+                    retireLegacyRekey = retireLegacyRekey,
+                    recordLegacyRekeyRetired = {
+                        journal.record(attempt, DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED)
+                    },
+                    clearRecoveryResponsibilities = clearRecoveryResponsibilities,
+                    clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
+                    recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
+                )
                 true
-            }.getOrElse {
-                runCatching {
-                    val payload = journal.readSettings(attempt)
-                    runBlocking {
-                        settingsRepository.restoreAllSettingsAndSelection(
-                            payload.oldSettings,
-                            payload.oldSelectedSemesterId
-                        )
-                        activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
+            }.getOrElse { failureCause ->
+                if (failureCause is RecoveryResponsibilitiesPendingException) {
+                    // replacement 与 SETTINGS_APPLIED journal 保留；下一冷启动会重试同一提交步骤，
+                    // 不能因 marker 删除故障伪造 RestartRequired 或回滚到不可判定状态。
+                    false
+                } else {
+                    runCatching {
+                        val payload = journal.readSettings(attempt)
+                        runBlocking {
+                            settingsRepository.restoreAllSettingsAndSelection(
+                                payload.oldSettings,
+                                payload.oldSelectedSemesterId
+                            )
+                            activeProfileSelectionStore.restoreRawSelection(payload.oldActiveProfileId)
+                        }
                     }
+                    val rolledBack = installer.rollbackNewReplacement(attempt)
+                    if (rolledBack) runCatching { journal.record(attempt, DatabaseRecoveryInstallStage.ROLLED_BACK) }
+                    false
                 }
-                val rolledBack = installer.rollbackNewReplacement(attempt)
-                if (rolledBack) runCatching { journal.record(attempt, DatabaseRecoveryInstallStage.ROLLED_BACK) }
-                false
             }
         }
         return if (succeeded) {
@@ -702,7 +733,7 @@ internal class DatabaseRecoveryBootstrapCoordinator(
     }
 
     private fun finishOrRollback(attempt: DatabaseRecoveryInstallAttempt): DatabaseRecoveryInstallRecovery {
-        val finished = runCatching {
+        val finished = try {
             val payload = journal.readSettings(attempt)
             runBlocking {
                 settingsRepository.restoreAllSettingsAndSelection(
@@ -714,10 +745,23 @@ internal class DatabaseRecoveryBootstrapCoordinator(
             if (attempt.stage == DatabaseRecoveryInstallStage.MAIN_SWAPPED) {
                 journal.record(attempt, DatabaseRecoveryInstallStage.SETTINGS_APPLIED)
             }
-            recoveryFiles.clearMarkerAfterExplicitDecision()
-            clearBackupRecoveryRequired()
-            journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED)
-        }.isSuccess
+            commitExplicitRecoveryDecision(
+                legacyRekeyAlreadyRetired =
+                    attempt.stage == DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED,
+                retireLegacyRekey = retireLegacyRekey,
+                recordLegacyRekeyRetired = {
+                    journal.record(attempt, DatabaseRecoveryInstallStage.LEGACY_REKEY_RETIRED)
+                },
+                clearRecoveryResponsibilities = clearRecoveryResponsibilities,
+                clearRecoveryStateMarker = recoveryFiles::clearMarkerAfterExplicitDecision,
+                recordCommitted = { journal.record(attempt, DatabaseRecoveryInstallStage.COMMITTED) },
+            )
+            true
+        } catch (_: RecoveryResponsibilitiesPendingException) {
+            return DatabaseRecoveryInstallRecovery.KEEP_RECOVERY_MODE
+        } catch (_: Throwable) {
+            false
+        }
         if (finished) return DatabaseRecoveryInstallRecovery.COMMITTED
         return rollback(attempt)
     }
@@ -760,6 +804,34 @@ internal class DatabaseRecoveryBootstrapCoordinator(
         error is IllegalArgumentException -> DatabaseRecoveryActionFailure.BackupInvalid
         else -> DatabaseRecoveryActionFailure.WebDavUnavailable
     }
+}
+
+/** marker 清除未确认时保持 SETTINGS_APPLIED journal，供下次冷启动安全重试。 */
+internal class RecoveryResponsibilitiesPendingException(cause: Throwable) : IllegalStateException(cause)
+
+/**
+ * 显式恢复提交的唯一顺序：先确认全部在线责任 marker，再确认 recovery-state-v1，最后记录
+ * COMMITTED。任一 marker 故障绝不允许越过 COMMITTED，journal 保留为可机械重试的状态。
+ */
+internal fun commitExplicitRecoveryDecision(
+    legacyRekeyAlreadyRetired: Boolean,
+    retireLegacyRekey: () -> Boolean,
+    recordLegacyRekeyRetired: () -> Unit,
+    clearRecoveryResponsibilities: () -> Unit,
+    clearRecoveryStateMarker: () -> Unit,
+    recordCommitted: () -> Unit,
+) {
+    try {
+        if (!legacyRekeyAlreadyRetired) {
+            check(retireLegacyRekey()) { "旧 rekey 恢复责任未能退休" }
+            recordLegacyRekeyRetired()
+        }
+        clearRecoveryResponsibilities()
+        clearRecoveryStateMarker()
+    } catch (failure: Throwable) {
+        throw RecoveryResponsibilitiesPendingException(failure)
+    }
+    recordCommitted()
 }
 
 /**

@@ -138,8 +138,16 @@ internal object BackupPayloadValidator {
             course.id
         }
         require(courseIds.distinct().size == courseIds.size) { "备份包含重复课程 ID" }
-        val courseById = courses.associateBy { it.id }
-        courses.asSequence()
+        val normalizedCourses = normalizeLegacySelfOrigins(courses)
+        // 旧版本允许同一业务键落入多行；恢复时必须与 v6→v7 迁移一致保留最小 ID，
+        // 否则携带历史重复数据的 v1-v4 备份会在唯一索引处被整体拒绝。
+        val deduplicatedCourses = normalizedCourses
+            .groupBy { course -> course.backupBusinessKey() }
+            .values
+            .map { duplicates -> duplicates.minBy(Course::id) }
+            .sortedBy(Course::id)
+        val courseById = deduplicatedCourses.associateBy { it.id }
+        deduplicatedCourses.asSequence()
             .filter { course -> course.originId > 0L }
             .groupBy { course -> course.originId }
             .forEach { (originId, family) ->
@@ -196,7 +204,7 @@ internal object BackupPayloadValidator {
         return ValidatedBackupRestore(
             settings = settings,
             semesters = semesters,
-            courses = courses,
+            courses = deduplicatedCourses,
             selectedSemesterId = resolvedSelectedSemesterId,
             profiles = profiles,
             sourceBindings = sourceBindings,
@@ -231,6 +239,57 @@ internal object BackupPayloadValidator {
     ).toString()
 
     private const val LEGACY_PROFILE_ID = 1L
+
+    /**
+     * 复刻 v6→v7 对旧 self-origin 普通课程的保守归一化。
+     *
+     * originId 是调课家族 token，不是可靠外键；只有没有其他片段引用、且自身未修改的
+     * self-origin 行可以安全归零。被 sibling 引用的锚点必须保留，避免拆散调课家族。
+     */
+    private fun normalizeLegacySelfOrigins(courses: List<Course>): List<Course> {
+        val referencedOriginIds = courses.asSequence()
+            .filter { course -> course.originId > 0L && course.originId != course.id }
+            .mapTo(hashSetOf()) { course -> course.originId }
+        return courses.map { course ->
+            if (
+                !course.isModified &&
+                course.originId == course.id &&
+                course.id !in referencedOriginIds
+            ) {
+                course.copy(originId = 0L)
+            } else {
+                course
+            }
+        }
+    }
+
+    /** 生成与数据库 index_courses_dedupe 完全一致的备份课程业务键。 */
+    private fun Course.backupBusinessKey(): CourseBusinessKey = CourseBusinessKey(
+        semesterId = semesterId,
+        name = name,
+        dayOfWeek = dayOfWeek,
+        startSection = startSection,
+        duration = duration,
+        startWeek = startWeek,
+        endWeek = endWeek,
+        weekType = weekType,
+        originId = originId,
+        isModified = isModified,
+    )
+
+    /** 必须与 CourseEntity.index_courses_dedupe 的列顺序保持同一业务语义。 */
+    private data class CourseBusinessKey(
+        val semesterId: Long,
+        val name: String,
+        val dayOfWeek: Int,
+        val startSection: Int,
+        val duration: Int,
+        val startWeek: Int,
+        val endWeek: Int,
+        val weekType: Int,
+        val originId: Long,
+        val isModified: Boolean,
+    )
 }
 
 /** 先完整验证并解析，再允许调用方进入 Room 替换事务。 */

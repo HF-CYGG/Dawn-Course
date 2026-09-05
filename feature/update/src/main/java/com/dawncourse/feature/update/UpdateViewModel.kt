@@ -3,6 +3,7 @@ package com.dawncourse.feature.update
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.util.runSuspendCatching
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -113,6 +114,23 @@ sealed interface UpdateEvent {
 }
 
 /**
+ * 根据入口决定更新检查失败后的安全 UI 状态。
+ * 自动检查不能阻塞首页，手动检查只显示固定文案，避免泄露网络异常细节。
+ */
+internal fun updateFailureState(isManual: Boolean): UpdateUiState =
+    if (isManual) {
+        UpdateUiState.Error(UPDATE_CHECK_FAILURE_MESSAGE)
+    } else {
+        UpdateUiState.Idle
+    }
+
+/** 更新检查失败的通用文案，不携带 Throwable、地址或凭据。 */
+private const val UPDATE_CHECK_FAILURE_MESSAGE = "检查更新失败，请检查网络或稍后重试"
+
+/** 忽略版本设置写入失败的通用提示。 */
+private const val IGNORE_VERSION_FAILURE_MESSAGE = "忽略版本设置未保存，请稍后重试"
+
+/**
  * 更新模块 ViewModel
  * 负责管理更新检查的逻辑和 UI 状态
  *
@@ -149,50 +167,37 @@ class UpdateViewModel @Inject constructor(
     fun checkUpdate(isManual: Boolean = false, currentVersionCode: Long) {
         viewModelScope.launch {
             _uiState.value = UpdateUiState.Checking
-            val result = repository.checkUpdate()
-            val settings = settingsRepository.settings.first()
+            val result = runSuspendCatching { repository.checkUpdate() }.getOrElse {
+                _uiState.value = updateFailureState(isManual)
+                return@launch
+            }
+            val settings = runSuspendCatching { settingsRepository.settings.first() }.getOrElse {
+                _uiState.value = updateFailureState(isManual)
+                return@launch
+            }
             val ignoredVersion = settings.ignoredUpdateVersion
-            
-            result.onSuccess { info ->
-                try {
-                    // 判定逻辑：
-                    // 1. 远程版本 > 本地版本
-                    // 2. 且 (是手动检查 OR (不是手动检查 且 没被用户跳过))
-                    // 3. 强制更新会无视跳过逻辑
-                    val shouldShow = info.versionCode > currentVersionCode && 
-                                     (isManual || info.isForce || info.versionCode != ignoredVersion)
 
-                    if (shouldShow) {
-                        // 发现新版本，显示更新弹窗
-                        _uiState.value = UpdateUiState.Available(info)
-                    } else if (isManual) {
-                        // 手动检查但没更新，显示版本详情弹窗
-                        _uiState.value = UpdateUiState.VersionInfo(info)
-                    } else {
-                        // 自动检查且无更新（或已忽略），保持空闲
-                        _uiState.value = UpdateUiState.Idle
-                    }
-                } catch (e: Exception) {
-                    _uiState.value = UpdateUiState.Error(e.message ?: "Unknown error")
-                }
-            }.onFailure {
-                // 错误处理逻辑
-                val errorMsg = when {
-                    it.message?.contains("Cleartext HTTP traffic") == true -> 
-                        "系统限制了明文流量，请联系开发者适配 (Cleartext Error)"
-                    it is java.net.UnknownHostException -> 
-                        "无法连接服务器，请检查网络 (DNS Error)"
-                    it is java.net.SocketTimeoutException -> 
-                        "连接超时，请重试 (Timeout)"
-                    else -> formatUpdateErrorMessage(it)
-                }
-                
-                // 只有手动检查才显示错误弹窗，自动检查失败静默处理
-                if (isManual) {
-                    _uiState.value = UpdateUiState.Error(errorMsg)
+            result.onSuccess { info ->
+                // 判定逻辑：
+                // 1. 远程版本 > 本地版本
+                // 2. 且 (是手动检查 OR (不是手动检查 且 没被用户跳过))
+                // 3. 强制更新会无视跳过逻辑
+                val shouldShow = info.versionCode > currentVersionCode &&
+                    (isManual || info.isForce || info.versionCode != ignoredVersion)
+
+                if (shouldShow) {
+                    // 发现新版本，显示更新弹窗
+                    _uiState.value = UpdateUiState.Available(info)
+                } else if (isManual) {
+                    // 手动检查但没更新，显示版本详情弹窗
+                    _uiState.value = UpdateUiState.VersionInfo(info)
                 } else {
+                    // 自动检查且无更新（或已忽略），保持空闲
                     _uiState.value = UpdateUiState.Idle
                 }
+            }.onFailure {
+                // Repository 失败仅显示固定提示，不将异常细节传入 UI。
+                _uiState.value = updateFailureState(isManual)
             }
         }
     }
@@ -203,7 +208,12 @@ class UpdateViewModel @Inject constructor(
      */
     fun ignoreVersion(versionCode: Int) {
         viewModelScope.launch {
-            settingsRepository.setIgnoredUpdateVersion(versionCode)
+            val result = runSuspendCatching {
+                settingsRepository.setIgnoredUpdateVersion(versionCode)
+            }
+            if (result.isFailure) {
+                _eventFlow.emit(UpdateEvent.ShowToast(IGNORE_VERSION_FAILURE_MESSAGE))
+            }
             _uiState.value = UpdateUiState.Idle
         }
     }

@@ -28,8 +28,46 @@ data class MuteSessionRecord(
     /** 已失败的自动恢复次数。 */
     val recoveryAttempt: Int,
     /** 独立于 Alarm registry 持久保存的课程结束恢复时刻。 */
-    val recoveryAt: Instant? = null
+    val recoveryAt: Instant? = null,
+    /** v3 系统状态所有权；重叠会话复制同一份租约，最后一个会话负责恢复。 */
+    val ownership: MuteSystemOwnership = MuteSystemOwnership.legacyV2(),
 )
+
+/** 应用施加静音效果的方式。 */
+enum class MuteApplicationMode {
+    /** Android 15+ 由 setInterruptionFilter 创建/更新的应用隐式 AutomaticZenRule。 */
+    APP_OWNED_DND,
+    /** 无 DND 权限或隐式规则激活失败时，仅把 NORMAL 降级到 VIBRATE。 */
+    RINGER_VIBRATE_FALLBACK,
+    /** v2 兼容责任：只能恢复应用此前设置的 VIBRATE，绝不能调用 DND ALL。 */
+    LEGACY_V2_VIBRATE,
+    /** 损坏或未知记录的隔离态，禁止自动修改任何系统状态。 */
+    UNKNOWN_QUARANTINED,
+}
+
+/** 跨进程保存的系统静音租约。 */
+data class MuteSystemOwnership(
+    val mode: MuteApplicationMode,
+    val originalRingerState: RingerState,
+    val ownedRingerState: RingerState?,
+    val appDndActivationOwned: Boolean,
+) {
+    companion object {
+        fun legacyV2(): MuteSystemOwnership = MuteSystemOwnership(
+            mode = MuteApplicationMode.LEGACY_V2_VIBRATE,
+            originalRingerState = RingerState.NORMAL,
+            ownedRingerState = RingerState.VIBRATE,
+            appDndActivationOwned = false,
+        )
+
+        fun quarantined(): MuteSystemOwnership = MuteSystemOwnership(
+            mode = MuteApplicationMode.UNKNOWN_QUARANTINED,
+            originalRingerState = RingerState.NORMAL,
+            ownedRingerState = null,
+            appDndActivationOwned = false,
+        )
+    }
+}
 
 /** 可替换的持久化边界，供纯 JVM 状态机与并发测试使用。 */
 interface MuteSessionPersistence {
@@ -55,6 +93,16 @@ interface MuteSessionPersistence {
 
     /** 新建 ACTIVE 责任并持久保存独立恢复边界。 */
     fun add(key: TriggerKey, recoveryAt: Instant?): Boolean = add(key)
+
+    /** v3 新建责任，同时原子保存系统状态租约。 */
+    fun add(
+        key: TriggerKey,
+        recoveryAt: Instant?,
+        ownership: MuteSystemOwnership,
+    ): Boolean = add(key, recoveryAt)
+
+    /** DND 激活失败转入震动时，更新全部活动重叠会话的同一租约。 */
+    fun replaceOwnershipForActiveSessions(ownership: MuteSystemOwnership) = Unit
 
     /** 回滚未能建立的责任。 */
     fun remove(key: TriggerKey)
@@ -95,6 +143,16 @@ interface RingerController {
     /** 是否拥有勿扰策略访问权限。 */
     val hasPolicyAccess: Boolean
 
+    /** 当前平台能否用应用隐式 AutomaticZenRule，而不修改全局 DND。 */
+    val supportsAppOwnedDnd: Boolean
+        get() = false
+
+    /** 激活 Dawn Course 自己的隐式规则；不得修改其他应用或用户规则。 */
+    fun activateAppOwnedDnd(): Boolean = false
+
+    /** 只撤销 Dawn Course 自己的隐式规则贡献。 */
+    fun deactivateAppOwnedDnd(): Boolean = false
+
     /** 切换为震动。 */
     fun setVibrate()
 
@@ -127,60 +185,195 @@ sealed interface MuteRecoveryOutcome {
 class MuteSessionCoordinator @Inject constructor(
     private val persistence: MuteSessionPersistence
 ) {
-    /** 应用首次切换到震动或已有重叠会话时持有恢复责任。 */
+    /** 首个会话建立系统状态租约，重叠会话复制租约且不重复写系统状态。 */
     @Synchronized
     fun mute(
         unmuteKey: TriggerKey,
         ringer: RingerController,
         recoveryAt: Instant? = null
     ): Boolean {
-        if (!ringer.hasPolicyAccess) return false
         val records = persistence.records()
-        val shouldOwn = MuteSessionPolicy.shouldOwnMuteSession(
-            isRingerNormal = ringer.state == RingerState.NORMAL,
-            hasActiveOwnedSession = records.any { record ->
-                record.status != MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED
-            },
-            isRingerVibrate = ringer.state == RingerState.VIBRATE,
-            hasExhaustedResponsibility = records.any { record ->
-                record.status == MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED
+        val inheritedOwnership = records.firstOrNull { record ->
+            record.status != MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED
+        }?.ownership ?: records.firstOrNull { record ->
+            record.status == MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED &&
+                record.ownership.ownedRingerState == ringer.state
+        }?.ownership
+        if (inheritedOwnership != null) {
+            persistence.add(unmuteKey, recoveryAt, inheritedOwnership)
+            return true
+        }
+
+        val originalRinger = ringer.state
+        if (ringer.supportsAppOwnedDnd && ringer.hasPolicyAccess) {
+            val dndOwnership = MuteSystemOwnership(
+                mode = MuteApplicationMode.APP_OWNED_DND,
+                originalRingerState = originalRinger,
+                ownedRingerState = null,
+                appDndActivationOwned = true,
+            )
+            val added = persistence.add(unmuteKey, recoveryAt, dndOwnership)
+            var activationUncertain = false
+            try {
+                if (ringer.activateAppOwnedDnd()) return true
+            } catch (_: Exception) {
+                // Binder 异常不能证明 PRIORITY 未在 system_server 生效；必须保留 ALL 清理责任。
+                activationUncertain = true
             }
+            if (originalRinger != RingerState.NORMAL) {
+                if (activationUncertain) return true
+                if (added) persistence.remove(unmuteKey)
+                return false
+            }
+            val fallback = if (activationUncertain) {
+                dndOwnership.copy(ownedRingerState = RingerState.VIBRATE)
+            } else {
+                fallbackOwnership(originalRinger)
+            }
+            persistence.replaceOwnershipForActiveSessions(fallback)
+            return setFallbackVibrateOrRollback(
+                unmuteKey = unmuteKey,
+                ringer = ringer,
+                added = added,
+                originalRinger = originalRinger,
+                dndOnlyOwnershipOnFallbackFailure = dndOwnership.takeIf { activationUncertain },
+            )
+        }
+
+        if (originalRinger != RingerState.NORMAL) return false
+        val added = persistence.add(unmuteKey, recoveryAt, fallbackOwnership(originalRinger))
+        return setFallbackVibrateOrRollback(
+            unmuteKey = unmuteKey,
+            ringer = ringer,
+            added = added,
+            originalRinger = originalRinger,
         )
-        if (!shouldOwn) return false
-        val added = persistence.add(unmuteKey, recoveryAt)
-        if (ringer.state != RingerState.NORMAL) return true
+    }
+
+    private fun setFallbackVibrateOrRollback(
+        unmuteKey: TriggerKey,
+        ringer: RingerController,
+        added: Boolean,
+        originalRinger: RingerState,
+        dndOnlyOwnershipOnFallbackFailure: MuteSystemOwnership? = null,
+    ): Boolean {
         try {
             ringer.setVibrate()
         } catch (failure: Exception) {
+            val stateAfterFailure = readRingerStateOrNull(ringer)
+            if (stateAfterFailure == RingerState.VIBRATE) return true
+            if (dndOnlyOwnershipOnFallbackFailure != null && stateAfterFailure == originalRinger) {
+                persistence.replaceOwnershipForActiveSessions(dndOnlyOwnershipOnFallbackFailure)
+                return true
+            }
+            if (dndOnlyOwnershipOnFallbackFailure != null) return true
+            if (stateAfterFailure == originalRinger) {
+                if (added) persistence.remove(unmuteKey)
+                throw failure
+            }
+            // 无法确认实际状态时 fail-closed 保留责任，让已安排的 UNMUTE 完成收敛。
+            return true
+        }
+        val stateAfterWrite = readRingerStateOrNull(ringer)
+        if (stateAfterWrite != RingerState.VIBRATE) {
+            if (dndOnlyOwnershipOnFallbackFailure != null && stateAfterWrite == originalRinger) {
+                persistence.replaceOwnershipForActiveSessions(dndOnlyOwnershipOnFallbackFailure)
+                return true
+            }
+            if (dndOnlyOwnershipOnFallbackFailure != null) return true
+            if (stateAfterWrite == null) return true
             if (added) persistence.remove(unmuteKey)
-            throw failure
+            return false
         }
         return true
     }
 
-    /** 最后一条活动会话必须先成功恢复铃声，再消费责任。 */
+    /** 最后一条活动会话只恢复记录中由应用拥有的系统状态。 */
     @Synchronized
     fun unmute(unmuteKey: TriggerKey, ringer: RingerController): MuteRecoveryOutcome {
         val record = persistence.record(unmuteKey) ?: return MuteRecoveryOutcome.NoAction
         if (record.status == MuteSessionStatus.EXHAUSTED_USER_ACTION_REQUIRED) {
             return MuteRecoveryOutcome.Exhausted
         }
-        if (ringer.state != RingerState.VIBRATE) {
-            persistence.consume(unmuteKey)
-            return MuteRecoveryOutcome.ResponsibilityReleased
-        }
         val remainingActive = persistence.activeKeys() - unmuteKey
         if (remainingActive.isNotEmpty()) {
             persistence.consume(unmuteKey)
             return MuteRecoveryOutcome.ResponsibilityReleased
         }
-        if (!ringer.hasPolicyAccess) return recordFailure(unmuteKey)
+        return when (record.ownership.mode) {
+            MuteApplicationMode.APP_OWNED_DND -> restoreOwnedDnd(unmuteKey, record, ringer)
+            MuteApplicationMode.RINGER_VIBRATE_FALLBACK,
+            MuteApplicationMode.LEGACY_V2_VIBRATE -> restoreOwnedRinger(unmuteKey, record, ringer)
+            MuteApplicationMode.UNKNOWN_QUARANTINED -> MuteRecoveryOutcome.Exhausted
+        }
+    }
+
+    private fun restoreOwnedDnd(
+        key: TriggerKey,
+        record: MuteSessionRecord,
+        ringer: RingerController,
+    ): MuteRecoveryOutcome {
+        if (!record.ownership.appDndActivationOwned) {
+            persistence.consume(key)
+            return MuteRecoveryOutcome.ResponsibilityReleased
+        }
+        if (!ringer.supportsAppOwnedDnd || !ringer.hasPolicyAccess) return recordFailure(key)
         return try {
-            ringer.setNormal()
-            persistence.consume(unmuteKey)
+            if (!ringer.deactivateAppOwnedDnd()) return recordFailure(key)
+            restoreOwnedRingerAfterDnd(key, record, ringer)
+        } catch (_: Exception) {
+            recordFailure(key)
+        }
+    }
+
+    /** DND 结果不确定时可能同时建立震动降级；两份责任都确认清理后才消费。 */
+    private fun restoreOwnedRingerAfterDnd(
+        key: TriggerKey,
+        record: MuteSessionRecord,
+        ringer: RingerController,
+    ): MuteRecoveryOutcome {
+        if (record.ownership.ownedRingerState == null) {
+            persistence.consume(key)
+            return MuteRecoveryOutcome.Recovered
+        }
+        return restoreOwnedRinger(key, record, ringer)
+    }
+
+    private fun restoreOwnedRinger(
+        key: TriggerKey,
+        record: MuteSessionRecord,
+        ringer: RingerController,
+    ): MuteRecoveryOutcome {
+        if (record.ownership.ownedRingerState != RingerState.VIBRATE) {
+            persistence.consume(key)
+            return MuteRecoveryOutcome.ResponsibilityReleased
+        }
+        val currentRingerState = readRingerStateOrNull(ringer) ?: return recordFailure(key)
+        if (currentRingerState != RingerState.VIBRATE) {
+            persistence.consume(key)
+            return MuteRecoveryOutcome.ResponsibilityReleased
+        }
+        return try {
+            when (record.ownership.originalRingerState) {
+                RingerState.NORMAL -> {
+                    try {
+                        ringer.setNormal()
+                    } catch (_: Exception) {
+                        if (readRingerStateOrNull(ringer) != RingerState.NORMAL) {
+                            return recordFailure(key)
+                        }
+                    }
+                    if (readRingerStateOrNull(ringer) != RingerState.NORMAL) {
+                        return recordFailure(key)
+                    }
+                }
+                RingerState.VIBRATE -> Unit
+                RingerState.SILENT -> return recordFailure(key)
+            }
+            persistence.consume(key)
             MuteRecoveryOutcome.Recovered
         } catch (_: Exception) {
-            recordFailure(unmuteKey)
+            recordFailure(key)
         }
     }
 
@@ -240,4 +433,15 @@ class MuteSessionCoordinator @Inject constructor(
         /** 自动恢复最多尝试三次。 */
         const val MAX_RECOVERY_ATTEMPTS = 3
     }
+
+    private fun fallbackOwnership(original: RingerState): MuteSystemOwnership =
+        MuteSystemOwnership(
+            mode = MuteApplicationMode.RINGER_VIBRATE_FALLBACK,
+            originalRingerState = original,
+            ownedRingerState = RingerState.VIBRATE,
+            appDndActivationOwned = false,
+        )
+
+    private fun readRingerStateOrNull(ringer: RingerController): RingerState? =
+        runCatching { ringer.state }.getOrNull()
 }

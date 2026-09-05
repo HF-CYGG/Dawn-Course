@@ -112,11 +112,13 @@ import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.ImportCommitRepository
 import com.dawncourse.core.domain.repository.ScriptSyncRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.core.ui.components.AnimatedDropdownMenu
 import com.dawncourse.feature.import_module.model.ParsedCourse
 import com.dawncourse.feature.import_module.model.toDomainCourse
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.time.LocalTime
 import java.time.LocalDate
@@ -125,6 +127,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import javax.inject.Inject
+
+/** 外部脚本/仓库操作统一保证失败后释放 busy；取消和 Error 绝不能被吞掉。 */
+internal suspend fun <T> runQidiUiAction(
+    setBusy: (Boolean) -> Unit,
+    block: suspend () -> T,
+): Result<T> {
+    setBusy(true)
+    return try {
+        Result.success(block())
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Exception) {
+        Result.failure(failure)
+    } finally {
+        setBusy(false)
+    }
+}
 
 /**
  * 正方教务“自动更新（实验）”页面
@@ -376,26 +395,15 @@ fun QidiAutoSyncScreen(
         logItems.add(SyncLog(LocalTime.now().format(timeFormatter), message, type))
     }
 
-    fun buildErrorPayload(reason: String, throwable: Throwable? = null): String {
-        val logs = logItems.takeLast(12).joinToString("\n") { item ->
-            "[${item.time}] ${item.type.name} ${item.message}"
-        }
-        val exceptionText = if (throwable != null) {
-            "${throwable::class.java.simpleName}: ${throwable.message.orEmpty()}".trim()
-        } else {
-            ""
-        }
+    fun buildErrorPayload(reason: String): String {
         return listOf(
             "原因：$reason",
             "当前步骤：$currentStep",
-            "页面地址：$addressBar",
-            "异常信息：$exceptionText".trim(),
-            "最近日志：\n$logs"
         ).filter { it.isNotBlank() }.joinToString("\n")
     }
 
-    fun reportError(reason: String, throwable: Throwable? = null) {
-        errorDialogText = buildErrorPayload(reason, throwable)
+    fun reportError(reason: String) {
+        errorDialogText = buildErrorPayload(reason)
         showErrorDialog = true
     }
 
@@ -453,7 +461,8 @@ fun QidiAutoSyncScreen(
             }
         }
         scope.launch {
-            val js = """
+            try {
+                val js = """
                 (function(){
                   try{
                     // 修复：同时兼容 id 与 name 的学年学期下拉框
@@ -475,18 +484,23 @@ fun QidiAutoSyncScreen(
                   }catch(e){ return 'fail'; }
                 })();
             """.trimIndent()
-            val res = suspendEvaluateJs(wv, js)
-            val txt = parseJsReturn(res)
-            if (txt == "ok") {
-                targetYear = selectedYear
-                targetTerm = selectedTerm
-                val yearLabel = availableYears.firstOrNull { it.first == selectedYear }?.second ?: selectedYear
-                val termLabel = availableTerms.firstOrNull { it.first == selectedTerm }?.second ?: selectedTerm
-                appliedYearLabel = yearLabel
-                appliedTermLabel = mapTermDisplay(selectedTerm, termLabel)
-                addLog("已应用学年学期选择", SyncLogType.SUCCESS)
-                onApplied()
-            } else {
+                val res = suspendEvaluateJs(wv, js)
+                val txt = parseJsReturn(res)
+                if (txt == "ok") {
+                    targetYear = selectedYear
+                    targetTerm = selectedTerm
+                    val yearLabel = availableYears.firstOrNull { it.first == selectedYear }?.second ?: selectedYear
+                    val termLabel = availableTerms.firstOrNull { it.first == selectedTerm }?.second ?: selectedTerm
+                    appliedYearLabel = yearLabel
+                    appliedTermLabel = mapTermDisplay(selectedTerm, termLabel)
+                    addLog("已应用学年学期选择", SyncLogType.SUCCESS)
+                    onApplied()
+                } else {
+                    addLog("应用学年学期失败", SyncLogType.WARNING)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
                 addLog("应用学年学期失败", SyncLogType.WARNING)
             }
         }
@@ -515,14 +529,27 @@ fun QidiAutoSyncScreen(
 
     fun startSyncFlow() {
         scope.launch {
+            try {
             // 自动更新流程开始：创建脚本拉取任务，确保云端拉取计入统计
             viewModel.beginScriptPullTask()
             showProgressDialog = true
             currentStep = "读取绑定凭据"
             addLog("开始读取绑定凭据", SyncLogType.INFO)
-            val creds = viewModel.loadQidiCredentials()
+            val creds = runQidiUiAction(
+                setBusy = { busy -> loading = busy; if (!busy) showProgressDialog = false },
+            ) { viewModel.loadQidiCredentials() }.getOrElse {
+                currentStep = "自动更新未完成"
+                subTitle = "自动更新未完成，请稍后重试"
+                addLog("读取凭据失败", SyncLogType.ERROR)
+                reportError("自动更新未完成")
+                return@launch
+            }
+            // 凭据读取完成后，后续 WebView 生命周期自行维持加载态。
+            showProgressDialog = true
             val needProvider = provider
             if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
+                loading = false
+                showProgressDialog = false
                 subTitle = "未绑定${providerName}凭据，请在设置中绑定"
                 currentStep = "未绑定账号"
                 addLog("未绑定${providerName}凭据", SyncLogType.WARNING)
@@ -532,9 +559,15 @@ fun QidiAutoSyncScreen(
             val endpoint = creds.endpointUrl
             credsForAutoFill = creds
             addLog("已读取绑定凭据", SyncLogType.INFO)
-            val wv = webView ?: return@launch
+            val wv = webView ?: run {
+                loading = false
+                showProgressDialog = false
+                reportError("WebView 未初始化")
+                return@launch
+            }
             if (endpoint.isNullOrBlank()) {
                 loading = false
+                showProgressDialog = false
                 currentStep = "等待输入入口"
                 subTitle = "请设置${providerName}教务入口地址"
                 showEndpointDialog = true
@@ -549,6 +582,7 @@ fun QidiAutoSyncScreen(
             val normalized = normalizeEndpointForLoad(endpoint)
             if (normalized.isNullOrBlank()) {
                 loading = false
+                showProgressDialog = false
                 subTitle = "入口地址无效，请在设置中重新绑定"
                 currentStep = "入口地址无效"
                 addLog("入口地址无效", SyncLogType.WARNING)
@@ -562,7 +596,17 @@ fun QidiAutoSyncScreen(
             pageStatePollingJob?.cancel()
             addressBar = normalized
             wv.loadUrl(normalized)
-            addLog("开始加载入口：$normalized", SyncLogType.INFO)
+            addLog("开始加载教务入口", SyncLogType.INFO)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                loading = false
+                showProgressDialog = false
+                currentStep = "自动更新未完成"
+                subTitle = "自动更新未完成，请稍后重试"
+                addLog("自动更新未完成", SyncLogType.ERROR)
+                reportError("自动更新未完成")
+            }
         }
     }
 
@@ -588,7 +632,9 @@ fun QidiAutoSyncScreen(
                 val courseUtils = viewModel.getScriptContent("course_utils.js", "js")
                 val qidiProvider = if (provider == SyncProviderType.QIDI) {
                     // 起迪：尝试使用 provider 脚本
-                    runCatching { viewModel.getScriptContent("qidi_provider.js", "js") }.getOrNull()
+                    runSuspendCatching {
+                        viewModel.getScriptContent("qidi_provider.js", "js")
+                    }.getOrNull()
                 } else null
                 addLog("已加载解析脚本", SyncLogType.INFO)
                 val js = buildString {
@@ -743,7 +789,7 @@ fun QidiAutoSyncScreen(
                     subTitle = "请先在设置中配置当前学期"
                     addLog("检测到本地未设置当前学期，无法保存课表", SyncLogType.ERROR)
                     // 丝滑收起底部面板，避免用户误判为闪退
-                    runCatching { sheetState.hide() }
+                    runSuspendCatching { sheetState.hide() }
                     showProgressDialog = false
                     showNoSemesterDialog = true
                     return@launch
@@ -754,7 +800,7 @@ fun QidiAutoSyncScreen(
                     currentStep = "需要先导入课表"
                     subTitle = "请先通过教务系统导入一次课表"
                     addLog("当前学期尚无课表数据，需先完成首次导入", SyncLogType.WARNING)
-                    runCatching { sheetState.hide() }
+                    runSuspendCatching { sheetState.hide() }
                     showProgressDialog = false
                     showNeedInitialImportDialog = true
                     return@launch
@@ -781,7 +827,9 @@ fun QidiAutoSyncScreen(
                     showDiffSelectDialog = true
                     syncStep = SyncStep.Done
                 }
-            } catch (_: Throwable) {
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
                 loading = false
                 subTitle = "提取失败：请重试或更换入口"
                 currentStep = "提取失败"
@@ -789,6 +837,8 @@ fun QidiAutoSyncScreen(
                 reportError("提取失败")
             } finally {
                 // 一次提取流程结束后清理任务 ID，避免后续无关动作串统计
+                loading = false
+                showProgressDialog = false
                 viewModel.endScriptPullTask()
             }
         }
@@ -802,9 +852,10 @@ fun QidiAutoSyncScreen(
         }
         selectableOptionsFetchJob?.cancel()
         selectableOptionsFetchJob = scope.launch {
-            val maxAttempts = 8
-            repeat(maxAttempts) { attempt ->
-                val res = suspendEvaluateJs(
+            try {
+                val maxAttempts = 8
+                repeat(maxAttempts) { attempt ->
+                    val res = suspendEvaluateJs(
                     wv,
                     """
                     (function(){
@@ -833,30 +884,37 @@ fun QidiAutoSyncScreen(
                     })();
                     """.trimIndent()
                 )
-                val txt = parseJsReturn(res)
-                if (txt.isNotBlank()) {
-                    applyOptionSnapshot(txt)
-                    if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
-                        termReadFallbackTriggered = false
-                        addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
-                        if (showProgressDialog) {
-                            runCatching { sheetState.hide() }
-                            showProgressDialog = false
+                    val txt = parseJsReturn(res)
+                    if (txt.isNotBlank()) {
+                        applyOptionSnapshot(txt)
+                        if (availableYears.isNotEmpty() && availableTerms.isNotEmpty()) {
+                            termReadFallbackTriggered = false
+                            addLog("已读取学年与学期选项", SyncLogType.SUCCESS)
+                            if (showProgressDialog) {
+                                runSuspendCatching { sheetState.hide() }
+                                showProgressDialog = false
+                            }
+                            return@launch
                         }
-                        return@launch
+                    }
+                    if (attempt < maxAttempts - 1) {
+                        currentStep = "等待学年学期加载"
+                        subTitle = "系统选项仍在加载，正在重试..."
+                        if (attempt == 0 || attempt == maxAttempts / 2) {
+                            addLog("学年学期选项暂未就绪，继续等待加载", SyncLogType.INFO)
+                        }
+                        kotlinx.coroutines.delay(600)
                     }
                 }
-                if (attempt < maxAttempts - 1) {
-                    currentStep = "等待学年学期加载"
-                    subTitle = "系统选项仍在加载，正在重试..."
-                    if (attempt == 0 || attempt == maxAttempts / 2) {
-                        addLog("学年学期选项暂未就绪，继续等待加载", SyncLogType.INFO)
-                    }
-                    kotlinx.coroutines.delay(600)
-                }
+                addLog("学年学期选项持续为空，转入解析失败流程", SyncLogType.WARNING)
+                triggerParseFailureFlow("未能正确读取学年学期选项")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                currentStep = "读取学年学期失败"
+                subTitle = "读取选项失败，请稍后重试"
+                addLog("读取学年学期失败", SyncLogType.ERROR)
             }
-            addLog("学年学期选项持续为空，转入解析失败流程", SyncLogType.WARNING)
-            triggerParseFailureFlow("未能正确读取学年学期选项")
         }
     }
 
@@ -865,7 +923,8 @@ fun QidiAutoSyncScreen(
         val wv = webView ?: return
         pageStatePollingJob?.cancel()
         pageStatePollingJob = scope.launch {
-            repeat(30) {
+            try {
+                repeat(30) {
                 if (syncStep != SyncStep.Login || needManualLogin || termReadFallbackTriggered) return@launch
                 val res = suspendEvaluateJs(
                     wv,
@@ -977,7 +1036,14 @@ fun QidiAutoSyncScreen(
                     suspendEvaluateJs(wv, openMenuJs)
                 }
 
-                kotlinx.coroutines.delay(1000)
+                    kotlinx.coroutines.delay(1000)
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                currentStep = "页面状态读取失败"
+                subTitle = "页面状态读取失败，请稍后重试"
+                addLog("页面状态读取失败", SyncLogType.ERROR)
             }
         }
     }
@@ -1099,7 +1165,7 @@ fun QidiAutoSyncScreen(
             currentStep = "操作中止：未设置本地学期"
             subTitle = "请先在设置中配置当前学期"
             addLog("检测到本地未设置当前学期，无法保存课表", SyncLogType.ERROR)
-            runCatching { sheetState.hide() }
+            runSuspendCatching { sheetState.hide() }
             showProgressDialog = false
             showNoSemesterDialog = true
             return
@@ -1111,7 +1177,7 @@ fun QidiAutoSyncScreen(
             currentStep = "需要先导入课表"
             subTitle = "请先通过教务系统导入一次课表"
             addLog("当前学期尚无课表数据，需先完成首次导入", SyncLogType.WARNING)
-            runCatching { sheetState.hide() }
+            runSuspendCatching { sheetState.hide() }
             showProgressDialog = false
             showNeedInitialImportDialog = true
             return
@@ -1179,12 +1245,18 @@ fun QidiAutoSyncScreen(
                     if (parsed.isNotEmpty()) {
                         handleParsedCourses(parsed)
                     }
-                } catch (e: Throwable) {
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (_: Exception) {
                     loading = false
+                    showProgressDialog = false
                     currentStep = "解析失败流程异常"
                     subTitle = "无法完成解析失败处理"
-                    addLog("解析失败流程异常：${e.message ?: e.javaClass.simpleName}", SyncLogType.ERROR)
-                    reportError("解析失败流程异常", e)
+                    addLog("解析失败流程异常", SyncLogType.ERROR)
+                    reportError("解析失败流程异常")
+                } finally {
+                    loading = false
+                    showProgressDialog = false
                 }
             }
         }
@@ -1202,7 +1274,14 @@ fun QidiAutoSyncScreen(
             subTitle = "仅支持新正方系统自动更新"
             return@LaunchedEffect
         }
-        val creds = viewModel.loadQidiCredentials()
+        val creds = runQidiUiAction(
+            setBusy = { busy -> loading = busy },
+        ) { viewModel.loadQidiCredentials() }.getOrElse {
+            subTitle = "自动更新未完成，请稍后重试"
+            addLog("读取凭据失败", SyncLogType.ERROR)
+            reportError("自动更新未完成")
+            return@LaunchedEffect
+        }
         val needProvider = provider
         if (creds == null || creds.provider != needProvider || creds.type != SyncCredentialType.PASSWORD) {
             subTitle = "未绑定${providerName}凭据，请在设置中绑定"
@@ -1216,7 +1295,7 @@ fun QidiAutoSyncScreen(
             val normalized = normalizeEndpointForLoad(endpoint)
             if (normalized.isNullOrBlank()) {
                 subTitle = "入口地址无效，请在设置中重新绑定"
-                addLog("入口地址无效：$endpoint", SyncLogType.WARNING)
+                addLog("入口地址无效", SyncLogType.WARNING)
                 reportError("入口地址无效")
                 return@LaunchedEffect
             }
@@ -1308,7 +1387,7 @@ fun QidiAutoSyncScreen(
                             val url = normalizeEndpointForLoad(endpointInput)
                             if (url.isNullOrBlank()) {
                                 subTitle = "请输入有效网址"
-                                addLog("输入的地址无效：$endpointInput", SyncLogType.WARNING)
+                                addLog("输入的地址无效", SyncLogType.WARNING)
                                 return@TextButton
                             }
                             triedJwglxtFallback = false
@@ -1318,7 +1397,7 @@ fun QidiAutoSyncScreen(
                             pageStatePollingJob?.cancel()
                             addressBar = url
                             wv.loadUrl(url)
-                            addLog("手动前往地址：$url", SyncLogType.ACTION)
+                            addLog("手动前往教务入口", SyncLogType.ACTION)
                             showEndpointDialog = false
                         }
                     ) { Text("保存并打开") }
@@ -1352,16 +1431,22 @@ fun QidiAutoSyncScreen(
                         onClick = {
                             showDiffSelectDialog = false
                             scope.launch {
-                                loading = true
                                 showProgressDialog = true
                                 currentStep = "覆盖写入当前学期"
                                 addLog("开始覆盖写入当前学期", SyncLogType.ACTION)
-                                val count = viewModel.applyToCurrentSemester(pendingParsedCourses, provider)
+                                val result = runQidiUiAction(
+                                    setBusy = { busy -> loading = busy; if (!busy) showProgressDialog = false },
+                                ) { viewModel.applyToCurrentSemester(pendingParsedCourses, provider) }
+                                val count = result.getOrElse {
+                                    currentStep = "同步未完成"
+                                    subTitle = "同步未完成，请稍后重试"
+                                    addLog("同步未完成", SyncLogType.ERROR)
+                                    reportError("同步未完成")
+                                    return@launch
+                                }
                                 subTitle = "同步成功：更新 ${count} 门课程"
                                 currentStep = "同步完成"
                                 addLog("同步成功：更新 ${count} 门课程", SyncLogType.SUCCESS)
-                                loading = false
-                                showProgressDialog = false
                                 onFinish()
                             }
                         }
@@ -1447,23 +1532,29 @@ fun QidiAutoSyncScreen(
                                 return@TextButton
                             }
                             scope.launch {
-                                loading = true
                                 showProgressDialog = true
                                 currentStep = "应用部分变更"
                                 addLog("开始应用部分变更", SyncLogType.ACTION)
-                                val result = viewModel.applyPartialUpdate(
+                                val actionResult = runQidiUiAction(
+                                    setBusy = { busy -> loading = busy; if (!busy) showProgressDialog = false },
+                                ) { viewModel.applyPartialUpdate(
                                     pendingParsedCourses,
                                     selected,
                                     provider,
-                                )
+                                ) }
+                                val result = actionResult.getOrElse {
+                                    currentStep = "同步未完成"
+                                    subTitle = "同步未完成，请稍后重试"
+                                    addLog("同步未完成", SyncLogType.ERROR)
+                                    reportError("同步未完成")
+                                    return@launch
+                                }
                                 subTitle = "同步完成：新增 ${result.added} 项，移除 ${result.removed} 项"
                                 currentStep = "同步完成"
                                 addLog(
                                     "同步完成：新增 ${result.added} 项，移除 ${result.removed} 项",
                                     SyncLogType.SUCCESS
                                 )
-                                loading = false
-                                showProgressDialog = false
                                 onFinish()
                             }
                         }
@@ -1631,14 +1722,20 @@ fun QidiAutoSyncScreen(
                                     onClick = {
                                         val wv = webView ?: return@OutlinedButton
                                         scope.launch {
-                                            val clickJs = viewModel.getScriptContent("zf_refresh_captcha_click.js", "js")
-                                            suspendEvaluateJs(wv, clickJs)
-                                            val srcJs = viewModel.getScriptContent("zf_refresh_captcha_src.js", "js")
-                                            val res = suspendEvaluateJs(wv, srcJs)
-                                            val src = parseJsReturn(res).replace("\\/", "/")
-                                            if (src.isNotBlank()) {
-                                                captchaUrl = src
-                                                addLog("已刷新验证码", SyncLogType.ACTION)
+                                            try {
+                                                val clickJs = viewModel.getScriptContent("zf_refresh_captcha_click.js", "js")
+                                                suspendEvaluateJs(wv, clickJs)
+                                                val srcJs = viewModel.getScriptContent("zf_refresh_captcha_src.js", "js")
+                                                val res = suspendEvaluateJs(wv, srcJs)
+                                                val src = parseJsReturn(res).replace("\\/", "/")
+                                                if (src.isNotBlank()) {
+                                                    captchaUrl = src
+                                                    addLog("已刷新验证码", SyncLogType.ACTION)
+                                                }
+                                            } catch (cancellation: CancellationException) {
+                                                throw cancellation
+                                            } catch (_: Exception) {
+                                                addLog("刷新验证码失败", SyncLogType.ERROR)
                                             }
                                         }
                                     }
@@ -1653,10 +1750,16 @@ fun QidiAutoSyncScreen(
                                         val wv = webView ?: return@Button
                                         val safe = escapeJs(code)
                                         scope.launch {
-                                            val baseJs = viewModel.getScriptContent("zf_submit_captcha.js", "js")
-                                            val js = baseJs.replace("{{CAPTCHA_CODE}}", safe)
-                                            suspendEvaluateJs(wv, js)
-                                            addLog("已提交验证码并触发登录", SyncLogType.ACTION)
+                                            try {
+                                                val baseJs = viewModel.getScriptContent("zf_submit_captcha.js", "js")
+                                                val js = baseJs.replace("{{CAPTCHA_CODE}}", safe)
+                                                suspendEvaluateJs(wv, js)
+                                                addLog("已提交验证码并触发登录", SyncLogType.ACTION)
+                                            } catch (cancellation: CancellationException) {
+                                                throw cancellation
+                                            } catch (_: Exception) {
+                                                addLog("提交验证码失败", SyncLogType.ERROR)
+                                            }
                                         }
                                     }
                                 ) { Text("继续登录") }
@@ -1902,7 +2005,7 @@ fun QidiAutoSyncScreen(
                     }
                     if (showProgressDialog && !fallbackFlowActive) {
                         currentStep = "页面加载中"
-                        addLog("开始加载：$url", SyncLogType.INFO)
+                        addLog("开始加载教务页面", SyncLogType.INFO)
                     }
                     if (url.isNotBlank()) {
                         addressBar = url
@@ -2033,7 +2136,7 @@ fun QidiAutoSyncScreen(
                                         currentStep = "需要验证码或手动登录"
                                         addLog("检测到登录失败或验证码", SyncLogType.WARNING)
                                         if (yzm) addLog("验证码已可见", SyncLogType.ACTION)
-                                        if (wrong) addLog("错误提示：$loginErrorMessage", SyncLogType.WARNING)
+                                        if (wrong) addLog("检测到登录错误提示", SyncLogType.WARNING)
                                         if (captchaUrl.isNotBlank()) addLog("验证码地址已获取", SyncLogType.ACTION)
                                     }
                                 }
@@ -2054,7 +2157,7 @@ fun QidiAutoSyncScreen(
                                         }
                                     }
                                     if (showProgressDialog) {
-                                        addLog("当前地址：$currentWebViewUrl", SyncLogType.INFO)
+                                        addLog("当前教务页面已更新", SyncLogType.INFO)
                                     }
                                 }
                                 if (isKebiao) {
@@ -2070,8 +2173,10 @@ fun QidiAutoSyncScreen(
                                 } else if (!needManualLogin && !isKebiao && !hasSelect) {
                                     pollPageStateIfNeeded()
                                 }
-                            } catch (e: Throwable) {
-                                reportError("页面状态解析失败", e)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (_: Exception) {
+                                reportError("页面状态解析失败")
                             }
                         }
                     }
@@ -2133,8 +2238,10 @@ fun QidiAutoSyncScreen(
                                 } else {
                                     pollPageStateIfNeeded()
                                 }
-                            } catch (e: Throwable) {
-                                reportError("页面状态解析失败", e)
+                            } catch (cancellation: CancellationException) {
+                                throw cancellation
+                            } catch (_: Exception) {
+                                reportError("页面状态解析失败")
                             }
                         }
                     }
@@ -2147,7 +2254,7 @@ fun QidiAutoSyncScreen(
                             currentStep = "页面加载失败"
                             addLog("页面加载失败：$desc", SyncLogType.ERROR)
                         }
-                        reportError("页面加载失败：$desc")
+                        reportError("页面加载失败")
                     }
                 }
             )
@@ -2173,7 +2280,7 @@ private fun CaptchaImage(
                 settings.useWideViewPort = true
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 // 仅展示远程验证码图片，禁止访问 content:// 避免恶意页面链接读取本地内容。
-                settings.allowContentAccess = false
+                settings.setAllowContentAccess(false)
                 if (!userAgent.isNullOrBlank()) {
                     settings.userAgentString = userAgent
                 }
@@ -2389,7 +2496,7 @@ private fun WebViewBox(
             settings.displayZoomControls = false
             // 教务登录依赖页面 JavaScript，但不需要本地文件、content URI 或脚本弹窗能力。
             settings.allowFileAccess = false
-            settings.allowContentAccess = false
+            settings.setAllowContentAccess(false)
             settings.setAllowFileAccessFromFileURLs(false)
             settings.setAllowUniversalAccessFromFileURLs(false)
             settings.javaScriptCanOpenWindowsAutomatically = false
@@ -2677,7 +2784,7 @@ class QidiSyncViewModel @Inject constructor(
     /** 读取一次活动上下文并固定本次同步的 Profile/学期范围。 */
     private suspend fun resolveCapturedTarget(): QidiSyncTarget {
         capturedTarget?.let { return it }
-        val context = timetableProfileRepository.observeActiveContext().first()
+        val context = timetableProfileRepository.getActiveContext()
             ?: throw IllegalStateException("未选择活动课表")
         val semester = context.semester ?: throw IllegalStateException("活动课表尚未选择学期")
         return QidiSyncTarget(context.profile.id, semester.id).also { capturedTarget = it }

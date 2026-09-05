@@ -37,17 +37,17 @@ sealed interface DatabaseStartupState {
 sealed interface DatabaseStartupPlan {
     /** 创建全新的加密数据库。 */
     data class CreateNewEncryptedDatabase(
-        val passphrase: SqlCipherPassphrase
+        val keyMaterial: DatabaseKeyMaterial
     ) : DatabaseStartupPlan
 
     /** 将已确认的明文数据库以原子换入方式转换为加密数据库。 */
     data class EncryptPlaintextDatabase(
-        val passphrase: SqlCipherPassphrase
+        val keyMaterial: DatabaseKeyMaterial
     ) : DatabaseStartupPlan
 
     /** 使用 SQLCipher 打开已加密数据库。 */
     data class OpenEncryptedDatabase(
-        val passphrase: SqlCipherPassphrase
+        val keyMaterial: DatabaseKeyMaterial
     ) : DatabaseStartupPlan
 
     /** 不允许继续打开或创建数据库，必须展示可见恢复入口。 */
@@ -83,7 +83,10 @@ enum class DatabaseRecoveryReason {
     RecoveryStateCorrupt,
 
     /** 用户选择的本地或 WebDAV 备份未通过验证或无法原子恢复。 */
-    RestoreFailed
+    RestoreFailed,
+
+    /** Ready 后双完整性校验失败，必须重启后物理隔离。 */
+    IntegrityVerificationFailed,
 }
 
 /** 数据库文件检查器，生产实现与 JVM 测试实现均可替换。 */
@@ -126,7 +129,7 @@ internal object DatabaseStartupStateResolver {
  * SQLCipher 启动前的 fail-closed 协调器。
  *
  * 此类不接触 Room，也不执行数据库复制；后续 DataModule 接线必须只在收到非恢复计划时
- * 创建数据库，并且在 [SqlCipherPassphrase.close] 前完成 SQLCipher 打开或原子换入。
+ * 创建数据库，并且在 [DatabaseKeyMaterial.close] 前完成 SQLCipher 打开或原子换入。
  */
 class DatabaseStartupCoordinator(
     private val fileInspector: DatabaseFileInspector,
@@ -152,11 +155,11 @@ class DatabaseStartupCoordinator(
     /** 无数据库时允许复用健康信封或创建首个信封，但永不覆盖异常信封。 */
     private fun prepareNewDatabase(): DatabaseStartupPlan = when (val existing = loadExistingSafely()) {
         is ExistingPassphraseResult.Available -> {
-            DatabaseStartupPlan.CreateNewEncryptedDatabase(existing.passphrase)
+            DatabaseStartupPlan.CreateNewEncryptedDatabase(existing.keyMaterial)
         }
 
         ExistingPassphraseResult.Missing -> provisionNewPassphrase(
-            onAvailable = { passphrase -> DatabaseStartupPlan.CreateNewEncryptedDatabase(passphrase) }
+            onAvailable = { keyMaterial -> DatabaseStartupPlan.CreateNewEncryptedDatabase(keyMaterial) }
         )
 
         is ExistingPassphraseResult.Invalid -> {
@@ -167,11 +170,11 @@ class DatabaseStartupCoordinator(
     /** 明文库在没有历史信封时可以创建首个信封，随后由调用方做原子加密换入。 */
     private fun preparePlaintextMigration(): DatabaseStartupPlan = when (val existing = loadExistingSafely()) {
         is ExistingPassphraseResult.Available -> {
-            DatabaseStartupPlan.EncryptPlaintextDatabase(existing.passphrase)
+            DatabaseStartupPlan.EncryptPlaintextDatabase(existing.keyMaterial)
         }
 
         ExistingPassphraseResult.Missing -> provisionNewPassphrase(
-            onAvailable = { passphrase -> DatabaseStartupPlan.EncryptPlaintextDatabase(passphrase) }
+            onAvailable = { keyMaterial -> DatabaseStartupPlan.EncryptPlaintextDatabase(keyMaterial) }
         )
 
         is ExistingPassphraseResult.Invalid -> {
@@ -182,7 +185,7 @@ class DatabaseStartupCoordinator(
     /** 不透明库只允许使用已成功解封的既有口令打开。 */
     private fun prepareEncryptedDatabase(): DatabaseStartupPlan = when (val existing = loadExistingSafely()) {
         is ExistingPassphraseResult.Available -> {
-            DatabaseStartupPlan.OpenEncryptedDatabase(existing.passphrase)
+            DatabaseStartupPlan.OpenEncryptedDatabase(existing.keyMaterial)
         }
 
         ExistingPassphraseResult.Missing,
@@ -193,9 +196,9 @@ class DatabaseStartupCoordinator(
 
     /** 将创建结果统一映射为计划；创建竞争或失败都不能覆盖旧信封。 */
     private fun provisionNewPassphrase(
-        onAvailable: (SqlCipherPassphrase) -> DatabaseStartupPlan
+        onAvailable: (DatabaseKeyMaterial) -> DatabaseStartupPlan
     ): DatabaseStartupPlan = when (val created = createNewSafely()) {
-        is NewPassphraseResult.Available -> onAvailable(created.passphrase)
+        is NewPassphraseResult.Available -> onAvailable(created.keyMaterial)
         NewPassphraseResult.ExistingEnvelope -> {
             DatabaseStartupPlan.RecoveryRequired(DatabaseRecoveryReason.ExistingEnvelopeCannotBeReplaced)
         }

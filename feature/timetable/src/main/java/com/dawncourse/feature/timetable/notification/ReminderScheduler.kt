@@ -43,6 +43,9 @@ object ReminderScheduler {
      * 系统事件进入唯一串行链，最终闹钟状态由后续任务收敛。
      */
     internal val IMMEDIATE_WORK_POLICY: ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
+    /** 每个已消费边界都追加到同一串行链尾，避免 RUNNING 期间的新续排被静默丢弃。 */
+    internal const val CONTINUATION_WORK_NAME = "CourseTriggerScheduleContinuation"
+    internal val CONTINUATION_WORK_POLICY: ExistingWorkPolicy = ExistingWorkPolicy.APPEND_OR_REPLACE
     private val TARGET_LOCAL_TIME: LocalTime = LocalTime.of(6, 0)
 
     /**
@@ -96,6 +99,32 @@ object ReminderScheduler {
             enqueueImmediateWork(context, forceReplay)
         }.onFailure { Log.w(TAG, "triggerImmediateWork failed", it) }
     }
+
+    /**
+     * 单次 Alarm 被消费后把续排追加到唯一串行链，并在 Receiver 结束 goAsync 前确认持久化。
+     *
+     * APPEND_OR_REPLACE 保证已有 Worker 处于 RUNNING 时仍存在一个尾部 reconcile；
+     * [DailySchedulerExecutionLock] 再与周期/系统即时 Worker 统一串行，避免并发全量对账。
+     */
+    suspend fun triggerContinuationWorkAndAwait(context: Context): Boolean = try {
+        withTimeoutOrNull(IMMEDIATE_ENQUEUE_TIMEOUT_MILLIS) {
+            awaitWorkManagerOperation(enqueueContinuationWork(context))
+        } ?: false
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (failure: Exception) {
+        Log.w(TAG, "trigger continuation work failed", failure)
+        false
+    }
+
+    private fun enqueueContinuationWork(context: Context) =
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            CONTINUATION_WORK_NAME,
+            CONTINUATION_WORK_POLICY,
+            OneTimeWorkRequestBuilder<DailySchedulerWorker>()
+                .setInputData(createImmediateWorkData(forceReplay = false))
+                .build(),
+        )
 
     /** 系统广播必须等到 WorkManager 确认命令已持久化后才能结束 goAsync。 */
     suspend fun triggerImmediateWorkAndAwait(

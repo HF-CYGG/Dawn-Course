@@ -1,4 +1,5 @@
 /**
+ * @version 3
  * 强智教务系统 (QiangZhi) 解析脚本
  * 基于新版正方教务系统解析逻辑提取，并针对强智系统特性进行优化。
  * 包含针对新版页面结构变更（内容在 span 标签内）的兼容性支持。
@@ -10,6 +11,10 @@ function scheduleHtmlParser(html) {
     // 强智系统逻辑与新版正方高度一致，均基于 id="day-section" 或 class="timetable_con" 识别
     var courses = parseQiangZhi(html);
     courses = dedupeCourses(courses);
+    // 诊断用来源标记（grid/list）在对外返回前剥掉，避免污染下游 schema 校验与落库
+    for (var i = 0; i < courses.length; i++) {
+        if (courses[i] && courses[i]._src !== undefined) delete courses[i]._src;
+    }
     return JSON.stringify(courses);
 }
 
@@ -135,7 +140,8 @@ function parseQiangZhi(html) {
                         position: location,
                         day: day,
                         weeks: weeks,
-                        sections: sections
+                        sections: sections,
+                        _src: 'grid'
                     });
                 } else if (weeks.length === 0) {
                     reportDropped("no_weeks");
@@ -149,6 +155,9 @@ function parseQiangZhi(html) {
     }
 
     // 处理列表模式 (tr > td > jc_1-2-3)
+    //
+    // 网格可能只解析出部分课程，列表视图仍需参与补全；两侧重复项统一交给
+    // scheduleHtmlParser 返回前的 dedupeCourses 按业务键收敛。
     var listRegex = /<tr[^>]*>[\s\S]*?<td[^>]*id=["']?jc_(\d+)-(\d+)-(\d+)["']?[^>]*>[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>[\s\S]*?<\/tr>/gi;
     var listMatch;
     while ((listMatch = listRegex.exec(html)) !== null) {
@@ -197,7 +206,8 @@ function parseQiangZhi(html) {
                     position: listLocation,
                     day: listDay,
                     weeks: listWeeks,
-                    sections: listSections
+                    sections: listSections,
+                    _src: 'list'
                 });
             } else if (listDay <= 0) {
                 reportDropped("no_day");

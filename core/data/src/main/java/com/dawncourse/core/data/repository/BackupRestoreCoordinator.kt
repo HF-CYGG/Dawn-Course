@@ -40,7 +40,7 @@ internal class BackupRestoreCoordinator @Inject constructor(
                     profiles = database.timetableProfileDao().getAllProfilesOnce().map { it.toDomain() },
                     semesters = database.semesterDao().getAllSemestersOnce().map { it.toDomain() },
                     courses = database.courseDao().getAllCoursesOnce().map { it.toDomain() },
-                    sourceBindings = database.syncSourceBindingDao().getAllOnce().map { it.toDomain() },
+                    sourceBindings = database.syncSourceBindingDao().getAllOnce(),
                 )
             }
             val preImage = BackupRestorePreImage(
@@ -66,6 +66,7 @@ internal class BackupRestoreCoordinator @Inject constructor(
                             preImage = preImage,
                             replacement = replacement,
                             replaceRoom = ::replaceRoom,
+                            restorePreImageRoom = ::restorePreImageRoom,
                             replaceSettingsAndSelection = ::restoreSettingsAndSelection,
                             enterRecoveryRequired = {
                                 // 补偿不完整时，在释放独占 lease 前先永久阻断业务写入；随后
@@ -142,6 +143,20 @@ internal class BackupRestoreCoordinator @Inject constructor(
         }
     }
 
+    /** 已验证的备份使用领域模型写入；仅补偿 pre-image 直接写回原始 binding 实体。 */
+    private suspend fun restorePreImageRoom(preImage: BackupRestorePreImage) {
+        database.withTransaction {
+            database.syncSourceBindingDao().deleteAll()
+            database.courseDao().deleteAllCourses()
+            database.semesterDao().deleteAllSemesters()
+            database.timetableProfileDao().deleteAll()
+            preImage.profiles.forEach { database.timetableProfileDao().insert(it.toEntity()) }
+            preImage.semesters.forEach { database.semesterDao().insertSemester(it.toEntity()) }
+            preImage.courses.forEach { database.courseDao().insertCourse(it.toEntity()) }
+            preImage.sourceBindings.forEach { database.syncSourceBindingDao().insert(it) }
+        }
+    }
+
     private fun idExists(
         id: Long,
         semesters: List<Semester>
@@ -151,6 +166,6 @@ internal class BackupRestoreCoordinator @Inject constructor(
         val profiles: List<TimetableProfile>,
         val semesters: List<Semester>,
         val courses: List<Course>,
-        val sourceBindings: List<SyncSourceBinding>,
+        val sourceBindings: List<com.dawncourse.core.data.local.entity.SyncSourceBindingEntity>,
     )
 }

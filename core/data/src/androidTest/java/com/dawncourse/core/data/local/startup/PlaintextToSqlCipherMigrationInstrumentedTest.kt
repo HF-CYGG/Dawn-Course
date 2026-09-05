@@ -154,8 +154,8 @@ class PlaintextToSqlCipherMigrationInstrumentedTest {
     }
 
     /** 返回由测试持有并最终清零的固定 32-byte SQLCipher 口令。 */
-    private fun testPassphrase(): SqlCipherPassphrase =
-        SqlCipherPassphrase.fromBytes(ByteArray(32) { index -> (index + 1).toByte() })
+    private fun testPassphrase(): DatabaseKeyMaterial =
+        DatabaseKeyMaterial.RawKeyLiteral.fromBytes(ByteArray(32) { index -> (index + 1).toByte() })
 
     /** 只读取 SQLite 固定文件头，不尝试输出文件内容。 */
     private fun hasPlaintextSqliteHeader(file: File): Boolean {

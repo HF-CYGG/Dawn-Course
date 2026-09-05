@@ -18,6 +18,13 @@ interface TimetableProfileRepository {
     /** 观察当前运行时选择及其所属学期。 */
     fun observeActiveContext(): Flow<ActiveTimetableContext?>
 
+    /**
+     * 在线性化选择区间内读取当前活动课表及其学期。
+     *
+     * 单次业务读取不得依赖共享观察流的 replay，以免紧随切换后的读取得到上一帧状态。
+     */
+    suspend fun getActiveContext(): ActiveTimetableContext?
+
     /** 观察指定课表的学期，不暴露跨课表记录。 */
     fun observeSemesters(profileId: Long): Flow<List<Semester>>
 

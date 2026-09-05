@@ -5,10 +5,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** UI 与后台入口共同观察的数据库启动状态，不包含数据库句柄或底层异常。 */
 enum class DatabaseRecoveryEntryMode {
@@ -26,7 +28,7 @@ sealed interface DatabaseRuntimeState {
     /** 正在 IO 线程完成恢复、检查、密钥准备与数据库打开。 */
     data object Starting : DatabaseRuntimeState
 
-    /** 数据库已通过完整性校验并可供 Hilt Repository 使用。 */
+    /** Room 首次连接已安全完成；条件策略允许双完整性扫描在本状态发布后后台收口。 */
     data object Ready : DatabaseRuntimeState
 
     /** 必须由用户选择恢复或明确放弃；原因不携带敏感路径。 */
@@ -47,22 +49,51 @@ fun interface DatabaseStartupCriticalSection {
 
 /** 外层锁内完成全部步骤的初始化入口。 */
 fun interface DatabaseStartupInitializer<T : Any> {
-    /** 返回已验证句柄或稳定恢复原因，底层异常不得直接进入 UI。 */
+    /** 返回已通过同步前置条件的句柄或稳定恢复原因，底层异常不得直接进入 UI。 */
     fun initialize(): DatabaseStartupInitialization<T>
 }
 
 /** 一次完整初始化的内部结果。 */
 sealed interface DatabaseStartupInitialization<out T : Any> {
-    /** 句柄已打开并验证；标记用于避免同一次迁移启动过早删除明文 pre-image。 */
+    /** 句柄已完成首次连接；标记用于避免同一次迁移启动过早删除明文 pre-image。 */
     data class Ready<T : Any>(
         val handle: T,
-        val migratedPlaintextThisRun: Boolean
+        val migratedPlaintextThisRun: Boolean,
+        /** 迁移/rekey journal 最终提交后才可执行的启动完整性责任；普通路径必须为 null。 */
+        val deferredIntegrityCompletionMode: IntegrityVerificationMode? = null,
+        /** 非 null 时只能在发布 Ready 后执行，失败结果会单向进入在线恢复。 */
+        val postReadyAction: DatabasePostReadyAction? = null,
     ) : DatabaseStartupInitialization<T>
 
     /** 初始化必须停止。 */
     data class RecoveryRequired(
         val reason: DatabaseRecoveryReason
     ) : DatabaseStartupInitialization<Nothing>
+}
+
+/** Ready 发布后的非阻塞完整性责任；异常回退必须复用同一个 fail-closed 入口。 */
+class DatabasePostReadyAction(
+    private val runAction: suspend () -> DatabasePostReadyResult,
+    private val failClosedAfterUnexpectedException: suspend () -> DatabasePostReadyResult.RecoveryRequired,
+) {
+    /** 返回稳定状态转换，不传播底层异常、路径或 SQL 结果。 */
+    suspend fun run(): DatabasePostReadyResult = runAction()
+
+    /** run 异常时由责任拥有者执行 marker 与写门的不可取消收口。 */
+    suspend fun failClosedAfterUnexpectedException(): DatabasePostReadyResult.RecoveryRequired =
+        failClosedAfterUnexpectedException.invoke()
+}
+
+/** Ready 后动作的稳定结果。 */
+sealed interface DatabasePostReadyResult {
+    /** 后台责任已经成功收口，保持 Ready。 */
+    data object Complete : DatabasePostReadyResult
+
+    /** 后台发现数据库不可信；marker 和写门状态已经在返回前确定。 */
+    data class RecoveryRequired(
+        val reason: DatabaseRecoveryReason,
+        val entryMode: DatabaseRecoveryEntryMode,
+    ) : DatabasePostReadyResult
 }
 
 /**
@@ -103,6 +134,33 @@ class DatabaseStartupRuntimeController<T : Any>(
                 is DatabaseStartupInitialization.Ready -> {
                     synchronized(handleLock) { readyHandle = outcome.handle }
                     mutableState.value = DatabaseRuntimeState.Ready
+                    outcome.postReadyAction?.let { action ->
+                        // 独立协程保证 Ready 发布不等待后台双扫描；action 返回 Recovery 前已经
+                        // 完成专用 marker 与写门线性化，Controller 只负责最后的状态切换。
+                        scope.launch(ioDispatcher) {
+                            val result = try {
+                                action.run()
+                            } catch (_: Throwable) {
+                                // Controller 不复制半套 marker/lease 协议；生产 action 自己拥有
+                                // 不可取消的收口入口。若异常来源本身也异常，仍稳定撤销 Ready。
+                                withContext(NonCancellable) {
+                                    runCatching { action.failClosedAfterUnexpectedException() }
+                                        .getOrDefault(
+                                            DatabasePostReadyResult.RecoveryRequired(
+                                                DatabaseRecoveryReason.IntegrityVerificationFailed,
+                                                DatabaseRecoveryEntryMode.MARKER_RETRY_REQUIRED,
+                                            ),
+                                        )
+                                }
+                            }
+                            when (result) {
+                                DatabasePostReadyResult.Complete -> Unit
+                                is DatabasePostReadyResult.RecoveryRequired -> {
+                                    enterRuntimeRecovery(result.reason, result.entryMode)
+                                }
+                            }
+                        }
+                    }
                 }
                 is DatabaseStartupInitialization.RecoveryRequired -> {
                     mutableState.value = DatabaseRuntimeState.RecoveryRequired(outcome.reason)

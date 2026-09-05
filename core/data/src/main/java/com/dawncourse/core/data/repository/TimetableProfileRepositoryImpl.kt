@@ -20,6 +20,7 @@ class TimetableProfileRepositoryImpl @Inject constructor(
 ) : TimetableProfileRepository {
     override fun observeProfiles(): Flow<List<TimetableProfile>> = coordinator.observeProfiles()
     override fun observeActiveContext(): Flow<ActiveTimetableContext?> = coordinator.observeActiveContext()
+    override suspend fun getActiveContext(): ActiveTimetableContext? = coordinator.getActiveContext()
     override fun observeSemesters(profileId: Long): Flow<List<Semester>> = coordinator.observeSemesters(profileId)
     override fun observeProfileSummaries(): Flow<List<TimetableProfileSummary>> = coordinator.observeProfileSummaries()
     override suspend fun switch(profileId: Long): ProfileMutationResult = coordinator.switch(profileId)

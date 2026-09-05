@@ -78,7 +78,7 @@ class DatabaseStartupCoordinatorTest {
             keyProvider = FakeKeyProvider(),
             randomByteSource = FixedRandomByteSource()
         )
-        (creator.createNew() as NewPassphraseResult.Available).passphrase.close()
+        (creator.createNew() as NewPassphraseResult.Available).keyMaterial.close()
         val keyProvider = FakeKeyProvider(existingResult = KeyEncryptionKeyResult.MissingOrInvalid)
         val envelopeStore = DatabaseKeyEnvelopeStore(
             atomicByteStore = atomicByteStore,
@@ -108,7 +108,7 @@ class DatabaseStartupCoordinatorTest {
             keyProvider = keyProvider,
             randomByteSource = FixedRandomByteSource()
         )
-        (creator.createNew() as NewPassphraseResult.Available).passphrase.close()
+        (creator.createNew() as NewPassphraseResult.Available).keyMaterial.close()
         val coordinator = DatabaseStartupCoordinator(
             fileInspector = FakeFileInspector(DatabaseFileInspection.OpaqueData),
             envelopeStore = DatabaseKeyEnvelopeStore(
@@ -121,10 +121,10 @@ class DatabaseStartupCoordinatorTest {
         val result = coordinator.prepare()
 
         assertTrue(result is DatabaseStartupPlan.OpenEncryptedDatabase)
-        (result as DatabaseStartupPlan.OpenEncryptedDatabase).passphrase.useBytes { bytes ->
+        (result as DatabaseStartupPlan.OpenEncryptedDatabase).keyMaterial.useStoredBytes { bytes ->
             assertTrue(bytes.contentEquals(ByteArray(32) { it.toByte() }))
         }
-        result.passphrase.close()
+        result.keyMaterial.close()
     }
 
     @Test
@@ -257,7 +257,7 @@ class DatabaseStartupCoordinatorTest {
         val result = store.createNew()
 
         assertTrue(result is NewPassphraseResult.Available)
-        (result as NewPassphraseResult.Available).passphrase.close()
+        (result as NewPassphraseResult.Available).keyMaterial.close()
         assertEquals(listOf("lock", "read", "key", "write", "unlock"), events)
     }
 
@@ -280,7 +280,9 @@ class DatabaseStartupCoordinatorTest {
 
         override fun createNew(): NewPassphraseResult {
             createCalls += 1
-            return NewPassphraseResult.Available(SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 }))
+            return NewPassphraseResult.Available(
+                DatabaseKeyMaterial.RawKeyLiteral.fromBytes(ByteArray(32) { 7 })
+            )
         }
     }
 

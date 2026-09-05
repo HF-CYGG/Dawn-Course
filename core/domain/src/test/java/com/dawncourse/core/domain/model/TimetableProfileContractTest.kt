@@ -85,5 +85,6 @@ class TimetableProfileContractTest {
         assertTrue("copyCredentials" in credentialMethods)
         assertTrue("observeBoundProvider" in credentialMethods)
         assertTrue("createSemester" in profileMethods)
+        assertTrue("getActiveContext" in profileMethods)
     }
 }

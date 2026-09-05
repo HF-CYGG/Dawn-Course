@@ -333,14 +333,17 @@ internal fun TimetableScreen(
                                         onCourseClick = { course -> selectedCourse = course }
                                     )
                                 } else {
-                                    // 空状态或加载状态
+                                    // 空状态、加载或明确根错误态
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .padding(top = 100.dp),
                                         contentAlignment = androidx.compose.ui.Alignment.Center
                                     ) {
-                                        Text("加载中...", style = MaterialTheme.typography.bodyLarge)
+                                        Text(
+                                            if (uiState is TimetableUiState.Error) "课表加载失败，请稍后重试" else "加载中...",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                        )
                                     }
                                 }
                             }

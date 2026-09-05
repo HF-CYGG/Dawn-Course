@@ -5,6 +5,7 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
 import com.dawncourse.core.domain.repository.TimetableProfileRepository
+import com.dawncourse.feature.widget.policy.WidgetTimelineBoundaryPolicy
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -55,7 +56,7 @@ class WidgetTimelineBuilder @Inject constructor(
         if (isStillCurrent(second.contextKey)) {
             second.timeline
         } else {
-            val latest = timetableProfileRepository.observeActiveContext().first()
+            val latest = timetableProfileRepository.getActiveContext()
             second.timeline.copy(
                 profileId = latest?.profile?.id,
                 displayCourses = emptyList(),
@@ -71,8 +72,8 @@ class WidgetTimelineBuilder @Inject constructor(
         today: LocalDate,
         now: LocalTime
     ): WidgetTimelineAttempt {
-        // Profile 与其活动学期由同一领域 Flow 原子给出，禁止分别读取旧选择状态。
-        val activeContext = timetableProfileRepository.observeActiveContext().first()
+        // Profile 与其活动学期由领域层在同一选择锁内解析，禁止分别读取旧选择状态。
+        val activeContext = timetableProfileRepository.getActiveContext()
         val semester = activeContext?.semester
         val settings = settingsRepository.settings.first()
         val sectionTimes = settings.sectionTimes
@@ -131,7 +132,7 @@ class WidgetTimelineBuilder @Inject constructor(
                 emptyMessage
             },
             isBeforeSemesterStart = isBeforeSemesterStart,
-            nextUpdateMillis = computeNextCourseEndMillis(courses, sectionTimes, today, now),
+            nextUpdateMillis = computeNextCourseBoundaryMillis(courses, sectionTimes, today, now),
             sourceCourseCount = allCourses.size
             )
         )
@@ -139,7 +140,7 @@ class WidgetTimelineBuilder @Inject constructor(
 
     /** 构建完成后确认 Profile 与学期仍未切换。 */
     private suspend fun isStillCurrent(expected: WidgetContextKey): Boolean {
-        val current = timetableProfileRepository.observeActiveContext().first()
+        val current = timetableProfileRepository.getActiveContext()
         return expected == WidgetContextKey(
             profileId = current?.profile?.id,
             semesterId = current?.semester?.id
@@ -168,6 +169,9 @@ class WidgetTimelineBuilder @Inject constructor(
                 currentWeek in course.startWeek..course.endWeek &&
                 course.matchesWeekType(currentWeek)
         }
+        // 小组件侧按「起始节-课程名」折叠同一时段重复课，取信息最全的一条。
+        // 注意：这只是独立兜底，不再是主要防线——「课表整体重复」的根因修复在解析层
+        // (parsers/qiangzhi.js 双采集收敛 + common_parser_utils.js 去重键) 与数据库业务键唯一索引。
         .groupBy { "${it.startSection}-${it.name}" }
         .map { (_, coursesAtTime) ->
             coursesAtTime.maxByOrNull { if (it.location.isNotBlank()) 1 else 0 }
@@ -225,24 +229,19 @@ class WidgetTimelineBuilder @Inject constructor(
         return now.isBefore(endTime)
     }
 
-    private fun computeNextCourseEndMillis(
+    private fun computeNextCourseBoundaryMillis(
         courses: List<Course>,
         sectionTimes: List<SectionTime>,
         today: LocalDate,
         now: LocalTime
-    ): Long? {
-        if (courses.isEmpty() || sectionTimes.isEmpty()) return null
-        val nextEndTime = courses.mapNotNull { course ->
-            val endSectionIndex = course.startSection + course.duration - 2
-            sectionTimes.getOrNull(endSectionIndex)?.endTime
-                ?.let(::parseSectionTime)
-                ?.takeIf { it.isAfter(now) }
-        }.minOrNull() ?: return null
-        val triggerAt = today.atTime(nextEndTime)
-            .atZone(ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
-        return triggerAt.takeIf { it > Instant.now().toEpochMilli() }
+    ): Long? = ZoneId.systemDefault().let { zoneId ->
+        WidgetTimelineBoundaryPolicy.nextFutureBoundaryMillis(
+            courses = courses,
+            sectionTimes = sectionTimes,
+            today = today,
+            zoneId = zoneId,
+            nowMillis = today.atTime(now).atZone(zoneId).toInstant().toEpochMilli(),
+        )
     }
 
     private fun parseSectionTime(value: String): LocalTime? {
@@ -252,8 +251,8 @@ class WidgetTimelineBuilder @Inject constructor(
         if (parts.size == 2) {
             val hour = parts[0].toIntOrNull()
             val minute = parts[1].toIntOrNull()
-            if (hour == 24 && minute != null && minute in 0..59) {
-                return LocalTime.of(23, 59)
+            if (hour == 24) {
+                return if (minute == 0) LocalTime.MAX else null
             }
         }
         val formatters = listOf(

@@ -182,6 +182,8 @@ sealed interface ProfileManagementDialog {
 @Immutable
 data class ProfileManagementUiState(
     val isLoading: Boolean = true,
+    /** 任一根数据流失败后进入只读安全态，禁止把失败伪装成空课表。 */
+    val hasLoadError: Boolean = false,
     val isMutating: Boolean = false,
     val profiles: List<ProfileRowUiModel> = emptyList(),
     val activeProfileId: Long? = null,
@@ -189,6 +191,10 @@ data class ProfileManagementUiState(
     val semestersByProfile: Map<Long, List<ProfileSemesterUiModel>> = emptyMap(),
     val dialog: ProfileManagementDialog = ProfileManagementDialog.None,
 ) {
+    /** 只有完整数据已加载且没有其他写操作时才允许修改。 */
+    val canMutate: Boolean
+        get() = !isLoading && !hasLoadError && !isMutating
+
     /** 永久删除必须同时满足“已有真实预览”和“不是最后一套”。 */
     val canConfirmDeletion: Boolean
         get() = profiles.size > 1 && dialog is ProfileManagementDialog.DeleteConfirmation
@@ -205,6 +211,9 @@ data class ProfileSemesterUiModel(
 
 /** 一次性 UI 事件，供 Snackbar 与主线后续对账接线。 */
 sealed interface ProfileManagementEvent {
+    /** 根数据流中断，页面保持空状态并提示用户重试。 */
+    data object LoadFailed : ProfileManagementEvent
+
     data class MutationSucceeded(
         val operation: ProfileMutationOperation,
         val profileId: Long? = null,

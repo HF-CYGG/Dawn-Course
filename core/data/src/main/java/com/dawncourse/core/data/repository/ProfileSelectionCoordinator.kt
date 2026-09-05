@@ -2,6 +2,7 @@ package com.dawncourse.core.data.repository
 
 import androidx.room.withTransaction
 import com.dawncourse.core.data.local.AppDatabase
+import com.dawncourse.core.data.local.startup.DawnStartupTrace
 import com.dawncourse.core.data.local.dao.CourseDao
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.local.dao.SyncSourceBindingDao
@@ -28,8 +29,15 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
@@ -37,9 +45,23 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+/** Profile 选择修复的唯一 Room 写事务入口，测试可精确验证是否发生修复事务。 */
+open class ProfileSelectionRepairTransactionRunner @Inject constructor(
+    private val database: AppDatabase,
+) {
+    open suspend fun <T> run(block: suspend () -> T): T = database.withTransaction(block)
+}
+
+/** 共享上游把失败也建模为事件，避免 [shareIn] 吞掉上游异常而让订阅者永久等待。 */
+private sealed interface ActiveContextEvent {
+    data class Value(val context: ActiveTimetableContext?) : ActiveContextEvent
+    data class Failure(val cause: Throwable) : ActiveContextEvent
+}
 
 /** 串行化 Profile、学期选择与跨存储补偿，确保运行时只有一套选择事实。 */
 @Singleton
@@ -53,8 +75,32 @@ class ProfileSelectionCoordinator @Inject constructor(
     private val legacySemesterSelectionStore: SemesterSelectionStore,
     private val credentialsRepository: CredentialsRepository,
     private val mutationGate: OperationalDataMutationGate,
+    private val repairTransactionRunner: ProfileSelectionRepairTransactionRunner =
+        ProfileSelectionRepairTransactionRunner(database),
 ) {
     private val mutationMutex = Mutex()
+
+    /**
+     * 进程内只有一个活动上下文上游，避免多个 ViewModel/Widget 重复执行启动修复。
+     * Room 与 DataStore 仍是唯一事实源，replay 只复用其最近一次自然发射。
+     */
+    private val activeContextScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val sharedActiveContextEvents = activeContextSource()
+        .map<ActiveTimetableContext?, ActiveContextEvent> { ActiveContextEvent.Value(it) }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            emit(ActiveContextEvent.Failure(failure))
+        }
+        .shareIn(
+            scope = activeContextScope,
+            // 上游停止后立即清掉 replay，下一位订阅者只能等待 DAO/DataStore 的重新读取，
+            // 不能把停订阅期间可能已过期的旧上下文当作当前选择。
+            started = SharingStarted.WhileSubscribed(
+                stopTimeoutMillis = ACTIVE_CONTEXT_STOP_TIMEOUT_MS,
+                replayExpirationMillis = 0,
+            ),
+            replay = 1,
+        )
 
     /**
      * 供同一 data 模块的复合写入协调器复用 Profile 选择锁。
@@ -90,8 +136,27 @@ class ProfileSelectionCoordinator @Inject constructor(
         block(success(profile, validSemester(profile)).activeContext)
     }
 
+    /** 单次读取直接解析当前 DataStore/Room 事实，不能复用共享观察流的 replay。 */
+    suspend fun getActiveContext(): ActiveTimetableContext? = withOperationalProfileMutation {
+        val profileId = resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
+        profileDao.getProfileById(profileId)?.let { profile ->
+            success(profile, validSemester(profile)).activeContext
+        }
+    }
+
     /** 首次仅从遗留学期键桥接；之后无效 ID 稳定回退到排序第一项。 */
     fun observeActiveContext(): Flow<ActiveTimetableContext?> = flow {
+        sharedActiveContextEvents.collect { event ->
+            when (event) {
+                is ActiveContextEvent.Value -> emit(event.context)
+                is ActiveContextEvent.Failure -> throw event.cause
+            }
+        }
+    }
+
+    /** 共享流的唯一上游，订阅者仅消费 Room/DataStore 的自然变更。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun activeContextSource(): Flow<ActiveTimetableContext?> = flow {
         withOperationalProfileMutation {
             resolveAndRepairSelectionLocked(activeSelectionStore.rawActiveProfileId.first())
         }
@@ -559,13 +624,17 @@ class ProfileSelectionCoordinator @Inject constructor(
             ) return@withTransaction false
             courseDao.deleteCoursesBySemester(semesterId)
             if (courses.isNotEmpty()) {
-                courseDao.insertCourses(courses.map { it.copy(id = 0L, semesterId = semesterId).toEntity() })
+                // 网络同步写入：命中业务键唯一索引的重复行直接忽略（解析层去重之外的兜底）。
+                courseDao.insertCoursesIgnoringDuplicates(
+                    courses.map { it.copy(id = 0L, semesterId = semesterId).toEntity() },
+                )
             }
             true
         }
     }
 
-    private suspend fun resolveAndRepairSelectionLocked(rawProfileId: Long?): Long {
+    private suspend fun resolveAndRepairSelectionLocked(rawProfileId: Long?): Long =
+        DawnStartupTrace.asyncSection(DawnStartupTrace.RESOLVE_PROFILE_SELECTION) {
         var profiles = profileDao.getAllProfilesOnce()
         if (profiles.isEmpty()) {
             val created = TimetableProfileEntity(uuid = UUID.randomUUID().toString(), name = DEFAULT_PROFILE_NAME)
@@ -593,15 +662,28 @@ class ProfileSelectionCoordinator @Inject constructor(
                     }
                 }
         }
-        database.withTransaction {
-            profiles.forEach { profile ->
-                val activeSemester = profile.activeSemesterId?.let { semesterDao.getSemesterById(it) }
-                if (profile.activeSemesterId != null && activeSemester?.profileId != profile.id) {
-                    profileDao.updateActiveSemesterId(profile.id, null)
+        if (profiles.hasInvalidActiveSemester()) {
+            // 仅在只读预检发现失配时开启写事务；事务内重新读取，避免预检快照覆盖并发正确值。
+            repairTransactionRunner.run {
+                profileDao.getAllProfilesOnce().forEach { currentProfile ->
+                    val activeSemester = currentProfile.activeSemesterId
+                        ?.let { semesterDao.getSemesterById(it) }
+                    if (currentProfile.activeSemesterId != null && activeSemester?.profileId != currentProfile.id) {
+                        profileDao.updateActiveSemesterId(currentProfile.id, null)
+                    }
                 }
             }
         }
-        return resolved
+        resolved
+    }
+
+    /** 一致数据只做只读核验，不进入 Room 修复事务。 */
+    private suspend fun List<TimetableProfileEntity>.hasInvalidActiveSemester(): Boolean {
+        for (profile in this) {
+            val activeSemester = profile.activeSemesterId?.let { semesterDao.getSemesterById(it) }
+            if (profile.activeSemesterId != null && activeSemester?.profileId != profile.id) return true
+        }
+        return false
     }
 
     private suspend fun createEmptyLocked(name: String): Pair<TimetableProfileEntity, SemesterEntity?> {
@@ -793,5 +875,6 @@ class ProfileSelectionCoordinator @Inject constructor(
 
     private companion object {
         const val DEFAULT_PROFILE_NAME = "默认课表"
+        const val ACTIVE_CONTEXT_STOP_TIMEOUT_MS = 5_000L
     }
 }

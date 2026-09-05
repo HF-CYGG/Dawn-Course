@@ -81,6 +81,96 @@ class BackupRestoreGateTest {
     }
 
     @Test
+    fun legacyDuplicateCourseBusinessKeyKeepsLowestIdBeforeRestore() = runBlocking {
+        var committedCourses: List<Course>? = null
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 22L, semesterId = 1L, name = "重复课程"),
+                    course(id = 21L, semesterId = 1L, name = "重复课程"),
+                ),
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(21L), committedCourses?.map(Course::id))
+    }
+
+    @Test
+    fun v4DuplicateCourseBusinessKeyUsesSameDeterministicCleanup() = runBlocking {
+        val profile = TimetableProfile(
+            id = 7L,
+            uuid = "d8b80996-3127-4a4f-a348-ae9110805f56",
+            name = "主课表",
+            activeSemesterId = 11L,
+        )
+        var committedCourses: List<Course>? = null
+
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                version = 4,
+                semesters = listOf(semester(id = 11L, profileId = 7L)),
+                courses = listOf(
+                    course(id = 42L, semesterId = 11L, originId = 42L, name = "重复课程"),
+                    course(id = 40L, semesterId = 11L, originId = 40L, name = "重复课程"),
+                ),
+                selectedSemesterId = null,
+                profiles = listOf(profile),
+                sourceBindings = emptyList(),
+                activeProfileId = 7L,
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(40L), committedCourses?.map(Course::id))
+        assertEquals(listOf(0L), committedCourses?.map(Course::originId))
+    }
+
+    @Test
+    fun referencedSelfOriginAnchorKeepsAdjustmentFamily() = runBlocking {
+        var committedCourses: List<Course>? = null
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 40L, semesterId = 1L, originId = 40L, name = "调课家族"),
+                    course(
+                        id = 41L,
+                        semesterId = 1L,
+                        originId = 40L,
+                        isModified = true,
+                        name = "调课家族",
+                    ),
+                ),
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(40L, 40L), committedCourses?.map(Course::originId))
+    }
+
+    @Test
+    fun duplicateCourseIdsStillFailBeforeDestructiveRestore() = runBlocking {
+        var commitCalled = false
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 21L, semesterId = 1L, name = "课程 A"),
+                    course(id = 21L, semesterId = 1L, name = "课程 B"),
+                ),
+            ),
+        ) { commitCalled = true }
+
+        assertTrue(result.isFailure)
+        assertFalse(commitCalled)
+    }
+
+    @Test
     fun v2NullAndInvalidPositiveSelectionFailBeforeCommit() = runBlocking {
         var commitCount = 0
 
@@ -277,15 +367,22 @@ class BackupRestoreGateTest {
         isCurrent = isCurrent
     )
 
-    private fun course(id: Long, semesterId: Long, originId: Long = 0L) = Course(
+    private fun course(
+        id: Long,
+        semesterId: Long,
+        originId: Long = 0L,
+        isModified: Boolean = false,
+        name: String = "课程$id",
+    ) = Course(
         id = id,
         semesterId = semesterId,
-        name = "课程$id",
+        name = name,
         dayOfWeek = 1,
         startSection = 1,
         duration = 2,
         startWeek = 1,
         endWeek = 16,
+        isModified = isModified,
         originId = originId,
     )
 }

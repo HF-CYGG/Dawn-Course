@@ -92,7 +92,52 @@ object AppDatabaseMigrations {
         }
     }
 
-    val ALL: Array<Migration> = arrayOf(MIGRATION_3_5, MIGRATION_4_5, MIGRATION_5_6)
+    /**
+     * v6 → v7：课程表业务键去重 + 唯一索引。
+     *
+     * 背景：解析器退化成「同一门课抓两份」时，导入路径 id = 0L + AUTOINCREMENT 让
+     * OnConflictStrategy.REPLACE 事实等价 INSERT，重复行长期累积。此迁移一次性清掉存量重复
+     * （每组业务键只留 MIN(id)），并建唯一索引把后续重复挡在库外。
+     * 业务键纳入 originId / isModified，避免误删调课拆分出的记录。
+     */
+    val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // v3/v4→v5 曾把每条普通课程写成 originId=id，导致历史重复因 originId 不同
+            // 无法命中下方业务键。只归零没有 sibling 引用的孤立 self-origin 行；被其他
+            // 调课片段引用的锚点继续保留家族 token，避免拆散真实调课记录。
+            db.execSQL(
+                """
+                UPDATE `courses`
+                SET `originId` = 0
+                WHERE `isModified` = 0
+                  AND `originId` = `id`
+                  AND NOT EXISTS (
+                      SELECT 1 FROM `courses` AS `sibling`
+                      WHERE `sibling`.`originId` = `courses`.`id`
+                        AND `sibling`.`id` <> `courses`.`id`
+                  )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                DELETE FROM `courses`
+                WHERE `id` NOT IN (
+                    SELECT MIN(`id`) FROM `courses`
+                    GROUP BY `semesterId`, `name`, `dayOfWeek`, `startSection`, `duration`,
+                             `startWeek`, `endWeek`, `weekType`, `originId`, `isModified`
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_courses_dedupe` ON `courses` " +
+                    "(`semesterId`, `name`, `dayOfWeek`, `startSection`, `duration`, " +
+                    "`startWeek`, `endWeek`, `weekType`, `originId`, `isModified`)",
+            )
+        }
+    }
+
+    val ALL: Array<Migration> =
+        arrayOf(MIGRATION_3_5, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
     private fun rebuildCoursesForV5(db: SupportSQLiteDatabase) {
         val historicalSequence = readSequenceHighWater(db)

@@ -14,7 +14,7 @@ class PlaintextToSqlCipherMigratorTest {
         val snapshot = sampleSnapshot()
         val backend = FakeMigrationBackend(events, snapshot)
         val migrator = PlaintextToSqlCipherMigrator(files, backend)
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = migrator.migrate(passphrase)
 
@@ -38,7 +38,7 @@ class PlaintextToSqlCipherMigratorTest {
         val files = FakeMigrationFiles(events)
         val snapshot = sampleSnapshot()
         val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
         val success = migrator.migrate(passphrase) as PlaintextToSqlCipherMigrationResult.Success
         events.clear()
 
@@ -55,7 +55,7 @@ class PlaintextToSqlCipherMigratorTest {
         val files = FakeMigrationFiles(events)
         val snapshot = sampleSnapshot()
         val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
         val success = migrator.migrate(passphrase) as PlaintextToSqlCipherMigrationResult.Success
         events.clear()
 
@@ -76,7 +76,7 @@ class PlaintextToSqlCipherMigratorTest {
         )
         val backend = FakeMigrationBackend(events, source, exported = target)
         val migrator = PlaintextToSqlCipherMigrator(files, backend)
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = migrator.migrate(passphrase)
 
@@ -97,7 +97,7 @@ class PlaintextToSqlCipherMigratorTest {
         val snapshot = sampleSnapshot()
         val backend = FakeMigrationBackend(events, snapshot, reopenFailure = true)
         val migrator = PlaintextToSqlCipherMigrator(files, backend)
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = migrator.migrate(passphrase)
 
@@ -115,7 +115,7 @@ class PlaintextToSqlCipherMigratorTest {
         val files = FakeMigrationFiles(events, recovery = DatabaseMigrationRecovery.Recovered)
         val snapshot = sampleSnapshot()
         val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = migrator.migrate(passphrase)
 
@@ -130,7 +130,7 @@ class PlaintextToSqlCipherMigratorTest {
         val files = FakeMigrationFiles(events, recovery = DatabaseMigrationRecovery.Failed)
         val snapshot = sampleSnapshot()
         val migrator = PlaintextToSqlCipherMigrator(files, FakeMigrationBackend(events, snapshot))
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = migrator.migrate(passphrase)
 
@@ -153,7 +153,7 @@ class PlaintextToSqlCipherMigratorTest {
                 error("模拟 checkpoint 失败")
             }
         }
-        val passphrase = SqlCipherPassphrase.fromBytes(ByteArray(32) { 7 })
+        val passphrase = testLegacyPassphrase()
 
         val result = PlaintextToSqlCipherMigrator(files, backend).migrate(passphrase)
 
@@ -241,7 +241,7 @@ class PlaintextToSqlCipherMigratorTest {
         override fun exportPlaintextToEncrypted(
             plaintextDatabase: File,
             encryptedDatabase: File,
-            passphrase: SqlCipherPassphrase,
+            keyMaterial: DatabaseKeyMaterial,
             sourceSnapshot: DatabaseMigrationSnapshot
         ): DatabaseMigrationVerification {
             events += "export"
@@ -250,11 +250,14 @@ class PlaintextToSqlCipherMigratorTest {
 
         override fun inspectEncrypted(
             database: File,
-            passphrase: SqlCipherPassphrase
+            keyMaterial: DatabaseKeyMaterial
         ): DatabaseMigrationVerification {
             events += "inspect-encrypted"
             if (reopenFailure) error("模拟换入后重开失败")
             return DatabaseMigrationVerification(reopened, integrityOk = true, cipherIntegrityOk = true)
         }
     }
+
+    private fun testLegacyPassphrase(): DatabaseKeyMaterial =
+        DatabaseKeyMaterial.LegacyPassphrase.fromBytes(ByteArray(32) { 7 })
 }

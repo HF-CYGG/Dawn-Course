@@ -31,4 +31,11 @@ class WidgetRestorePolicyTest {
         assertEquals("DawnWidgetSystemRestore", WidgetSyncManager.IMMEDIATE_RESTORE_WORK_NAME)
         assertEquals(ExistingWorkPolicy.REPLACE, WidgetSyncManager.IMMEDIATE_RESTORE_WORK_POLICY)
     }
+
+    @Test
+    fun `启动未完成时只保留一个两秒延迟重试`() {
+        assertEquals("DawnWidgetStartupRetryWork", WidgetSyncManager.STARTUP_RETRY_WORK_NAME)
+        assertEquals(2_000L, WidgetSyncManager.STARTUP_RETRY_DELAY_MILLIS)
+        assertEquals(ExistingWorkPolicy.KEEP, WidgetSyncManager.STARTUP_RETRY_WORK_POLICY)
+    }
 }

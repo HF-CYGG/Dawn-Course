@@ -1,4 +1,5 @@
 /**
+ * @version 2
  * 青果 (Kingosoft) 教务系统解析脚本
  * 适配 Dawn Course 架构 (QuickJS 环境，无 DOM API)
  *
@@ -41,7 +42,7 @@ function scheduleHtmlParser(html) {
 
     var listCourses = parseListTable(cleanHtml);
     if (listCourses && listCourses.length > 0) {
-        return listCourses;
+        return dedupeCourses(listCourses);
     }
 
     // 3. 遍历每一行进行解析
@@ -89,10 +90,10 @@ function scheduleHtmlParser(html) {
     
     // 4. 兜底策略：如果没找到表头，尝试使用旧版逻辑
     if (!headerFound) {
-        return parseWithLegacyLogic(html);
+        return dedupeCourses(parseWithLegacyLogic(html));
     }
 
-    return courses;
+    return dedupeCourses(courses);
 }
 
 /**

@@ -3,6 +3,7 @@ package com.dawncourse.feature.settings
 import android.webkit.URLUtil
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.dawncourse.core.domain.util.runSuspendCatching
 import com.dawncourse.core.domain.model.AppFontStyle
 import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.DividerType
@@ -44,15 +45,19 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.channels.Channel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.catch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,11 +89,25 @@ class SettingsViewModel @Inject constructor(
     private val readLocalBackupPreviewUseCase: ReadLocalBackupPreviewUseCase,
     private val widgetUpdateRepository: WidgetUpdateRepository,
     private val generateIcsUseCase: GenerateIcsUseCase,
-    private val calendarExportRepository: CalendarExportRepository
+    private val calendarExportRepository: CalendarExportRepository,
+    private val autoMuteDndAvailabilityReader: AutoMuteDndAvailabilityReader,
+    private val scheduleReliabilityAvailabilityReader: ScheduleReliabilityAvailabilityReader,
 ) : ViewModel() {
 
     private val _credentialBindingEvents = MutableSharedFlow<CredentialBindingUiEvent>(extraBufferCapacity = 1)
     val credentialBindingEvents: SharedFlow<CredentialBindingUiEvent> = _credentialBindingEvents.asSharedFlow()
+    private val uiEventChannel = Channel<SettingsUiEvent>(Channel.BUFFERED)
+    /** 普通写入和根流失败的独立事件，不能伪装成凭据绑定结果。 */
+    val uiEvents = settingsUiEventFlow(uiEventChannel)
+
+    /** 普通设置写入统一收敛为语义失败事件，取消语义由 runSuspendCatching 保留。 */
+    private fun launchSettingsOperation(operation: suspend () -> Unit) {
+        viewModelScope.launch {
+            if (runSuspendCatching(operation).isFailure) {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed)
+            }
+        }
+    }
 
     /**
      * 当前的应用设置状态流
@@ -96,15 +115,45 @@ class SettingsViewModel @Inject constructor(
      * 包含所有个性化配置项（如动态取色、透明度、壁纸等）。
      * 初始值为默认配置，后续会根据 DataStore 中的数据自动更新。
      */
-    val settings: StateFlow<AppSettings> = settingsRepository.settings
+    val settings: StateFlow<AppSettings> = recoverSettingsFlow(
+        upstream = settingsRepository.settings,
+        fallback = AppSettings(),
+        onFailure = { uiEventChannel.send(SettingsUiEvent.OperationFailed) },
+    )
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = AppSettings()
         )
 
+    private val _autoMuteDndCapability = MutableStateFlow(
+        autoMuteDndAvailabilityReader.readCapability(),
+    )
+    val autoMuteDndCapability: StateFlow<AutoMuteDndCapability> =
+        _autoMuteDndCapability.asStateFlow()
+
+    /** 系统设置返回前后以 ON_RESUME 实时权限为准，但绝不清除 enableAutoMute 期望。 */
+    fun refreshAutoMuteDndAvailability() {
+        _autoMuteDndCapability.value = autoMuteDndAvailabilityReader.readCapability()
+    }
+
+    private val _scheduleReliabilityAvailability = MutableStateFlow(
+        scheduleReliabilityAvailabilityReader.read(),
+    )
+    val scheduleReliabilityAvailability: StateFlow<ScheduleReliabilityAvailability> =
+        _scheduleReliabilityAvailability.asStateFlow()
+
+    /** 返回设置页后重新读取系统调度能力；读取结果不覆盖任何用户偏好。 */
+    fun refreshScheduleReliabilityAvailability() {
+        _scheduleReliabilityAvailability.value = scheduleReliabilityAvailabilityReader.read()
+    }
+
     /** Room 中由 selected_semester_id 指向的当前学期。 */
     val currentSemester: StateFlow<Semester?> = semesterRepository.getCurrentSemester()
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { uiEventChannel.send(SettingsUiEvent.OperationFailed); emit(null) } else throw failure
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -114,6 +163,10 @@ class SettingsViewModel @Inject constructor(
     /** 当前 Profile 与其活动学期，供设置页顶部展示管理入口。 */
     val activeTimetableContext: StateFlow<ActiveTimetableContext?> =
         timetableProfileRepository.observeActiveContext()
+            .catch { failure ->
+                if (failure is CancellationException) throw failure
+                if (failure is Exception) { uiEventChannel.send(SettingsUiEvent.OperationFailed); emit(null) } else throw failure
+            }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -127,6 +180,10 @@ class SettingsViewModel @Inject constructor(
         .observeActiveContext()
         .flatMapLatest { context ->
             context?.profile?.id?.let(credentialsRepository::observeBoundProvider) ?: flowOf(null)
+        }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { uiEventChannel.send(SettingsUiEvent.OperationFailed); emit(null) } else throw failure
         }
         .stateIn(
             scope = viewModelScope,
@@ -145,6 +202,10 @@ class SettingsViewModel @Inject constructor(
             val status = if (info.success) "成功" else "失败"
             "$dateStr · $status · ${info.message.ifBlank { "" }}"
         }
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { uiEventChannel.send(SettingsUiEvent.OperationFailed); emit("尚未同步") } else throw failure
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -157,6 +218,10 @@ class SettingsViewModel @Inject constructor(
      * 用于控制 WebDAV 弹窗的“已绑定/未绑定”展示。
      */
     val webDavCredentials: StateFlow<WebDavCredentials?> = webDavCredentialsRepository.credentials
+        .catch { failure ->
+            if (failure is CancellationException) throw failure
+            if (failure is Exception) { uiEventChannel.send(SettingsUiEvent.OperationFailed); emit(null) } else throw failure
+        }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -204,7 +269,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindWakeUpToken(token: String) {
         viewModelScope.launch {
-            val profileId = activeProfileId() ?: return@launch
+            val profileId = runSuspendCatching { activeProfileId() }.getOrElse {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed); return@launch
+            } ?: return@launch
             // 仅保存口令，用户名留空
             val creds = SyncCredentials(
                 provider = SyncProviderType.WAKEUP,
@@ -213,10 +280,11 @@ class SettingsViewModel @Inject constructor(
                 secret = token,
                 endpointUrl = null
             )
-            publishCredentialBindingResult(
+            val result = runSuspendCatching { publishCredentialBindingResult(
                 syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
                 CredentialBindingUiEvent.Saved,
-            )
+            ) }
+            if (result.isFailure) uiEventChannel.send(SettingsUiEvent.OperationFailed)
         }
     }
 
@@ -225,11 +293,14 @@ class SettingsViewModel @Inject constructor(
      */
     fun clearSyncCredentials() {
         viewModelScope.launch {
-            val profileId = activeProfileId() ?: return@launch
-            publishCredentialBindingResult(
+            val profileId = runSuspendCatching { activeProfileId() }.getOrElse {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed); return@launch
+            } ?: return@launch
+            val result = runSuspendCatching { publishCredentialBindingResult(
                 syncSourceBindingRepository.clearCredentialsAndUnbindIfActive(profileId),
                 CredentialBindingUiEvent.Cleared,
-            )
+            ) }
+            if (result.isFailure) uiEventChannel.send(SettingsUiEvent.OperationFailed)
         }
     }
 
@@ -242,7 +313,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindQidiCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
-            val profileId = activeProfileId() ?: return@launch
+            val profileId = runSuspendCatching { activeProfileId() }.getOrElse {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed); return@launch
+            } ?: return@launch
             val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.QIDI,
@@ -251,10 +324,11 @@ class SettingsViewModel @Inject constructor(
                 secret = password,
                 endpointUrl = normalized
             )
-            publishCredentialBindingResult(
+            val result = runSuspendCatching { publishCredentialBindingResult(
                 syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
                 CredentialBindingUiEvent.Saved,
-            )
+            ) }
+            if (result.isFailure) uiEventChannel.send(SettingsUiEvent.OperationFailed)
         }
     }
 
@@ -263,7 +337,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun bindZfCredentials(endpoint: String, username: String, password: String) {
         viewModelScope.launch {
-            val profileId = activeProfileId() ?: return@launch
+            val profileId = runSuspendCatching { activeProfileId() }.getOrElse {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed); return@launch
+            } ?: return@launch
             val normalized = normalizeEndpointInput(endpoint)
             val creds = SyncCredentials(
                 provider = SyncProviderType.ZF,
@@ -272,10 +348,11 @@ class SettingsViewModel @Inject constructor(
                 secret = password,
                 endpointUrl = normalized
             )
-            publishCredentialBindingResult(
+            val result = runSuspendCatching { publishCredentialBindingResult(
                 syncSourceBindingRepository.saveCredentialsAndRebindIfActive(profileId, creds),
                 CredentialBindingUiEvent.Saved,
-            )
+            ) }
+            if (result.isFailure) uiEventChannel.send(SettingsUiEvent.OperationFailed)
         }
     }
 
@@ -295,7 +372,11 @@ class SettingsViewModel @Inject constructor(
     fun exportLocalBackup(uri: String) {
         viewModelScope.launch {
             _localBackupState.value = LocalBackupUiState(isProcessing = true)
-            _localBackupState.value = exportLocalBackupUseCase(uri).toUiState()
+            _localBackupState.value = runSuspendCatching {
+                exportLocalBackupUseCase(uri).toUiState()
+            }.getOrElse {
+                LocalBackupUiState(success = false, message = "备份导出未完成，请稍后重试")
+            }
         }
     }
 
@@ -307,7 +388,11 @@ class SettingsViewModel @Inject constructor(
     fun importLocalBackup(uri: String) {
         viewModelScope.launch {
             _localBackupState.value = LocalBackupUiState(isProcessing = true)
-            _localBackupState.value = importLocalBackupUseCase(uri).toUiState()
+            _localBackupState.value = runSuspendCatching {
+                importLocalBackupUseCase(uri).toUiState()
+            }.getOrElse {
+                LocalBackupUiState(success = false, message = "备份还原未完成，请稍后重试")
+            }
         }
     }
 
@@ -338,8 +423,10 @@ class SettingsViewModel @Inject constructor(
                     success = success,
                     message = if (success) "导出日历成功" else "导出日历失败"
                 )
-            } catch (e: Exception) {
-                _calendarExportState.value = CalendarExportUiState(success = false, message = "导出日历发生错误：${e.message}")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                _calendarExportState.value = CalendarExportUiState(success = false, message = "导出日历未完成，请稍后重试")
             }
         }
     }
@@ -362,7 +449,15 @@ class SettingsViewModel @Inject constructor(
                 isLoading = true,
                 pendingUri = uri
             )
-            _localBackupPreviewState.value = readLocalBackupPreviewUseCase(uri).toUiState(uri)
+            _localBackupPreviewState.value = runSuspendCatching {
+                readLocalBackupPreviewUseCase(uri).toUiState(uri)
+            }.getOrElse {
+                LocalBackupPreviewUiState(
+                    success = false,
+                    message = "备份预览未完成，请稍后重试",
+                    pendingUri = uri,
+                )
+            }
         }
     }
 
@@ -390,9 +485,7 @@ class SettingsViewModel @Inject constructor(
      * @param enabled true 表示启用，false 表示禁用
      */
     fun setDynamicColor(enabled: Boolean) {
-        viewModelScope.launch {
-            settingsRepository.setDynamicColor(enabled)
-        }
+        launchSettingsOperation { settingsRepository.setDynamicColor(enabled) }
     }
 
     /**
@@ -401,21 +494,15 @@ class SettingsViewModel @Inject constructor(
      * @param value 透明度值，范围 0.0 - 1.0
      */
     fun setTransparency(value: Float) {
-        viewModelScope.launch {
-            settingsRepository.setTransparency(value)
-        }
+        launchSettingsOperation { settingsRepository.setTransparency(value) }
     }
 
     fun setBackgroundBlur(value: Float) {
-        viewModelScope.launch {
-            settingsRepository.setBackgroundBlur(value)
-        }
+        launchSettingsOperation { settingsRepository.setBackgroundBlur(value) }
     }
 
     fun setBackgroundBrightness(value: Float) {
-        viewModelScope.launch {
-            settingsRepository.setBackgroundBrightness(value)
-        }
+        launchSettingsOperation { settingsRepository.setBackgroundBrightness(value) }
     }
 
     private fun normalizeEndpointInput(raw: String): String {
@@ -445,9 +532,7 @@ class SettingsViewModel @Inject constructor(
      * @param style 选定的字体样式枚举 [AppFontStyle]
      */
     fun setFontStyle(style: AppFontStyle) {
-        viewModelScope.launch {
-            settingsRepository.setFontStyle(style)
-        }
+        launchSettingsOperation { settingsRepository.setFontStyle(style) }
     }
 
     /**
@@ -456,7 +541,7 @@ class SettingsViewModel @Inject constructor(
      * @param uri 壁纸图片的 URI 字符串，若为 null 则清除壁纸
      */
     fun setWallpaperUri(uri: String?) {
-        viewModelScope.launch {
+        launchSettingsOperation {
             settingsRepository.setWallpaperUri(uri)
             settingsRepository.generateBlurredWallpaper(uri)
             if (uri != null) {
@@ -472,9 +557,7 @@ class SettingsViewModel @Inject constructor(
      * @param type 分割线样式 [DividerType]
      */
     fun setDividerType(type: DividerType) {
-        viewModelScope.launch {
-            settingsRepository.setDividerType(type)
-        }
+        launchSettingsOperation { settingsRepository.setDividerType(type) }
     }
 
     /**
@@ -483,9 +566,7 @@ class SettingsViewModel @Inject constructor(
      * @param width 宽度值 (dp)
      */
     fun setDividerWidth(width: Float) {
-        viewModelScope.launch {
-            settingsRepository.setDividerWidth(width)
-        }
+        launchSettingsOperation { settingsRepository.setDividerWidth(width) }
     }
 
     /**
@@ -494,9 +575,7 @@ class SettingsViewModel @Inject constructor(
      * @param color 颜色 Hex 字符串
      */
     fun setDividerColor(color: String) {
-        viewModelScope.launch {
-            settingsRepository.setDividerColor(color)
-        }
+        launchSettingsOperation { settingsRepository.setDividerColor(color) }
     }
 
     /**
@@ -505,9 +584,7 @@ class SettingsViewModel @Inject constructor(
      * @param alpha 不透明度 (0.0 - 1.0)
      */
     fun setDividerAlpha(alpha: Float) {
-        viewModelScope.launch {
-            settingsRepository.setDividerAlpha(alpha)
-        }
+        launchSettingsOperation { settingsRepository.setDividerAlpha(alpha) }
     }
 
     /**
@@ -516,15 +593,11 @@ class SettingsViewModel @Inject constructor(
      * @param count 节数 (8-16)
      */
     fun setMaxDailySections(count: Int) {
-        viewModelScope.launch {
-            settingsRepository.setMaxDailySections(count)
-        }
+        launchSettingsOperation { settingsRepository.setMaxDailySections(count) }
     }
 
     fun setCourseItemHeight(height: Int) {
-        viewModelScope.launch {
-            settingsRepository.setCourseItemHeight(height)
-        }
+        launchSettingsOperation { settingsRepository.setCourseItemHeight(height) }
     }
 
     /**
@@ -533,9 +606,7 @@ class SettingsViewModel @Inject constructor(
      * @param duration 节数 (1-4)
      */
     fun setDefaultCourseDuration(duration: Int) {
-        viewModelScope.launch {
-            settingsRepository.setDefaultCourseDuration(duration)
-        }
+        launchSettingsOperation { settingsRepository.setDefaultCourseDuration(duration) }
     }
 
     /**
@@ -544,55 +615,51 @@ class SettingsViewModel @Inject constructor(
      * @param duration 新的时长（节数）
      */
     fun updateAllCoursesDuration(duration: Int) {
-        viewModelScope.launch {
-            courseRepository.updateAllCoursesDuration(duration)
-        }
+        launchSettingsOperation { courseRepository.updateAllCoursesDuration(duration) }
     }
 
     fun setSectionTimes(times: List<com.dawncourse.core.domain.model.SectionTime>) {
-        viewModelScope.launch {
-            settingsRepository.setSectionTimes(times)
-        }
+        launchSettingsOperation { settingsRepository.setSectionTimes(times) }
     }
 
     fun setCardCornerRadius(radius: Int) {
-        viewModelScope.launch { settingsRepository.setCardCornerRadius(radius) }
+        launchSettingsOperation { settingsRepository.setCardCornerRadius(radius) }
     }
 
     fun setCardAlpha(alpha: Float) {
-        viewModelScope.launch { settingsRepository.setCardAlpha(alpha) }
+        launchSettingsOperation { settingsRepository.setCardAlpha(alpha) }
     }
 
     fun setShowCourseIcons(show: Boolean) {
-        viewModelScope.launch { settingsRepository.setShowCourseIcons(show) }
+        launchSettingsOperation { settingsRepository.setShowCourseIcons(show) }
     }
 
     fun setWallpaperMode(mode: com.dawncourse.core.domain.model.WallpaperMode) {
-        viewModelScope.launch { settingsRepository.setWallpaperMode(mode) }
+        launchSettingsOperation { settingsRepository.setWallpaperMode(mode) }
     }
 
     fun setThemeMode(mode: com.dawncourse.core.domain.model.AppThemeMode) {
-        viewModelScope.launch { settingsRepository.setThemeMode(mode) }
+        launchSettingsOperation { settingsRepository.setThemeMode(mode) }
     }
 
     fun setShowWeekend(show: Boolean) {
-        viewModelScope.launch { settingsRepository.setShowWeekend(show) }
+        launchSettingsOperation { settingsRepository.setShowWeekend(show) }
     }
 
     fun setShowSidebarTime(show: Boolean) {
-        viewModelScope.launch { settingsRepository.setShowSidebarTime(show) }
+        launchSettingsOperation { settingsRepository.setShowSidebarTime(show) }
     }
 
     fun setShowSidebarIndex(show: Boolean) {
-        viewModelScope.launch { settingsRepository.setShowSidebarIndex(show) }
+        launchSettingsOperation { settingsRepository.setShowSidebarIndex(show) }
     }
 
     fun setHideNonThisWeek(hide: Boolean) {
-        viewModelScope.launch { settingsRepository.setHideNonThisWeek(hide) }
+        launchSettingsOperation { settingsRepository.setHideNonThisWeek(hide) }
     }
 
     fun setShowDateInHeader(show: Boolean) {
-        viewModelScope.launch { settingsRepository.setShowDateInHeader(show) }
+        launchSettingsOperation { settingsRepository.setShowDateInHeader(show) }
     }
 
     /**
@@ -601,8 +668,8 @@ class SettingsViewModel @Inject constructor(
      * 学期名称、周数和开学日期只写 Room，不再镜像到 AppSettings。
      */
     fun updateCurrentSemester(name: String, weeks: Int, startDate: Long) {
-        viewModelScope.launch {
-            val semester = semesterRepository.getCurrentSemester().first() ?: return@launch
+        launchSettingsOperation {
+            val semester = semesterRepository.getCurrentSemester().first() ?: return@launchSettingsOperation
             semesterRepository.updateSemester(
                 semester.copy(
                     name = name,
@@ -623,9 +690,21 @@ class SettingsViewModel @Inject constructor(
      */
     fun getMaxCourseWeek(onResult: (Int) -> Unit) {
         viewModelScope.launch {
-            val currentSemester = semesterRepository.getCurrentSemester().first()
+            val currentSemester = runSuspendCatching {
+                semesterRepository.getCurrentSemester().first()
+            }.getOrElse {
+                uiEventChannel.send(SettingsUiEvent.OperationFailed)
+                onResult(0)
+                return@launch
+            }
             if (currentSemester != null) {
-                val maxWeek = courseRepository.getMaxWeekInSemester(currentSemester.id)
+                val maxWeek = runSuspendCatching {
+                    courseRepository.getMaxWeekInSemester(currentSemester.id)
+                }.getOrElse {
+                    uiEventChannel.send(SettingsUiEvent.OperationFailed)
+                    onResult(0)
+                    return@launch
+                }
                 onResult(maxWeek)
             } else {
                 onResult(0)
@@ -638,42 +717,42 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setEnableClassReminder(enable: Boolean) {
-        viewModelScope.launch { settingsRepository.setEnableClassReminder(enable) }
+        launchSettingsOperation { settingsRepository.setEnableClassReminder(enable) }
     }
 
     fun setReminderMinutes(minutes: Int) {
-        viewModelScope.launch { settingsRepository.setReminderMinutes(minutes) }
+        launchSettingsOperation { settingsRepository.setReminderMinutes(minutes) }
     }
 
     fun setEnablePersistentNotification(enable: Boolean) {
-        viewModelScope.launch { settingsRepository.setEnablePersistentNotification(enable) }
+        launchSettingsOperation { settingsRepository.setEnablePersistentNotification(enable) }
     }
 
     fun setEnableAutoMute(enable: Boolean) {
-        viewModelScope.launch { settingsRepository.setEnableAutoMute(enable) }
+        launchSettingsOperation { settingsRepository.setEnableAutoMute(enable) }
     }
 
     /**
      * 设置 WebDAV 自动同步开关
      */
     fun setEnableWebDavAutoSync(enable: Boolean) {
-        viewModelScope.launch { settingsRepository.setEnableWebDavAutoSync(enable) }
+        launchSettingsOperation { settingsRepository.setEnableWebDavAutoSync(enable) }
     }
 
     fun setWebDavAutoSyncMode(mode: WebDavAutoSyncMode) {
-        viewModelScope.launch { settingsRepository.setWebDavAutoSyncMode(mode) }
+        launchSettingsOperation { settingsRepository.setWebDavAutoSyncMode(mode) }
     }
 
     fun setWebDavAutoSyncFixedAt(timestamp: Long) {
-        viewModelScope.launch { settingsRepository.setWebDavAutoSyncFixedAt(timestamp) }
+        launchSettingsOperation { settingsRepository.setWebDavAutoSyncFixedAt(timestamp) }
     }
 
     fun setWebDavAutoSyncIntervalValue(value: Int) {
-        viewModelScope.launch { settingsRepository.setWebDavAutoSyncIntervalValue(value) }
+        launchSettingsOperation { settingsRepository.setWebDavAutoSyncIntervalValue(value) }
     }
 
     fun setWebDavAutoSyncIntervalUnit(unit: WebDavAutoSyncIntervalUnit) {
-        viewModelScope.launch { settingsRepository.setWebDavAutoSyncIntervalUnit(unit) }
+        launchSettingsOperation { settingsRepository.setWebDavAutoSyncIntervalUnit(unit) }
     }
 
     /**
@@ -696,14 +775,16 @@ class SettingsViewModel @Inject constructor(
                 )
                 return@launch
             }
-            webDavCredentialsRepository.saveCredentials(
+            val saved = runSuspendCatching { webDavCredentialsRepository.saveCredentials(
                 WebDavCredentials(
                     serverUrl = normalizedUrl,
                     username = username.trim(),
                     password = password
                 )
+            ) }.isSuccess
+            _webDavActionResult.emit(
+                if (saved) WebDavSyncResult(true, "已保存 WebDAV 账号") else webDavOperationFailureResult(),
             )
-            _webDavActionResult.emit(WebDavSyncResult(true, "已保存 WebDAV 账号"))
         }
     }
 
@@ -712,8 +793,12 @@ class SettingsViewModel @Inject constructor(
      */
     fun clearWebDavCredentials() {
         viewModelScope.launch {
-            webDavCredentialsRepository.clearCredentials()
-            _webDavActionResult.emit(WebDavSyncResult(true, "已清除 WebDAV 账号"))
+            val cleared = runSuspendCatching {
+                webDavCredentialsRepository.clearCredentials()
+            }.isSuccess
+            _webDavActionResult.emit(
+                if (cleared) WebDavSyncResult(true, "已清除 WebDAV 账号") else webDavOperationFailureResult(),
+            )
         }
     }
 
@@ -722,7 +807,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun refreshWebDavRemoteInfo() {
         viewModelScope.launch {
-            _webDavRemoteInfo.emit(fetchWebDavRemoteInfoUseCase())
+            _webDavRemoteInfo.emit(runSuspendCatching {
+                fetchWebDavRemoteInfoUseCase()
+            }.getOrElse { webDavOperationFailureResult() })
         }
     }
 
@@ -733,7 +820,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun uploadWebDavBackup(forceUpload: Boolean) {
         viewModelScope.launch {
-            _webDavActionResult.emit(uploadWebDavBackupUseCase(forceUpload))
+            _webDavActionResult.emit(runSuspendCatching {
+                uploadWebDavBackupUseCase(forceUpload)
+            }.getOrElse { webDavOperationFailureResult() })
         }
     }
 
@@ -742,7 +831,9 @@ class SettingsViewModel @Inject constructor(
      */
     fun downloadWebDavBackup() {
         viewModelScope.launch {
-            _webDavActionResult.emit(downloadWebDavBackupUseCase())
+            _webDavActionResult.emit(runSuspendCatching {
+                downloadWebDavBackupUseCase()
+            }.getOrElse { webDavOperationFailureResult() })
         }
     }
 
@@ -756,7 +847,7 @@ class SettingsViewModel @Inject constructor(
      * 4. 恢复所有设置到默认值
      */
     fun clearAllData() {
-        viewModelScope.launch {
+        launchSettingsOperation {
             // 全应用重置必须逐个删除 Profile 作用域凭据，禁止遗留其他课表账号。
             timetableProfileRepository.observeProfiles().first().forEach { profile ->
                 credentialsRepository.clearCredentials(profile.id)
@@ -769,7 +860,14 @@ class SettingsViewModel @Inject constructor(
 
     /** 获取操作时刻的活动 Profile，避免把凭据写入旧的选择。 */
     private suspend fun activeProfileId(): Long? =
-        timetableProfileRepository.observeActiveContext().first()?.profile?.id
+        timetableProfileRepository.getActiveContext()?.profile?.id
+
+    /** WebDAV 外部 I/O 异常的固定安全结果，不携带服务器地址或异常消息。 */
+    private fun webDavOperationFailureResult(): WebDavSyncResult = WebDavSyncResult(
+        success = false,
+        message = "操作未完成，请稍后重试",
+        code = SyncErrorCode.UNKNOWN,
+    )
 
     /** ViewModel 只发布语义事件，用户可见文案由 UI 资源层决定。 */
     private suspend fun publishCredentialBindingResult(
@@ -786,6 +884,20 @@ enum class CredentialBindingUiEvent {
     Cleared,
     Rejected,
     Inconsistent,
+}
+
+/** 普通设置或根 Flow 的固定失败语义。 */
+enum class SettingsUiEvent { OperationFailed }
+
+internal fun settingsUiEventFlow(channel: Channel<SettingsUiEvent>) = channel.receiveAsFlow()
+
+internal fun <T> recoverSettingsFlow(
+    upstream: kotlinx.coroutines.flow.Flow<T>,
+    fallback: T,
+    onFailure: suspend () -> Unit,
+): kotlinx.coroutines.flow.Flow<T> = upstream.catch { failure ->
+    if (failure is CancellationException) throw failure
+    if (failure is Exception) { onFailure(); emit(fallback) } else throw failure
 }
 
 /** 纯映射便于验证失败与不一致状态不会被误报为保存成功。 */

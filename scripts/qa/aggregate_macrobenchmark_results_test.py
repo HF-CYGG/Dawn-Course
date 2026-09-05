@@ -9,6 +9,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).with_name("aggregate_macrobenchmark_results.py")
 JOURNEYS = [
     "coldStart_toToday",
+    "coldStart_toToday_withBaselineProfile",
     "coldStart_toWeekTimetable",
     "switchWeek_fiveTimes",
     "flingCourseGrid_withMoreThanOneHundredCourses",
@@ -28,6 +29,7 @@ def samples() -> list[float]:
 def benchmark(name: str, *, repeat: int = 100, trace: bool = True) -> dict:
     startup = name in {
         "coldStart_toToday",
+        "coldStart_toToday_withBaselineProfile",
         "coldStart_toWeekTimetable",
         "roomColdQuery_toTimetableUiState_withSeededLargeDataset",
     }
@@ -72,7 +74,7 @@ def run(root: Path) -> subprocess.CompletedProcess[str]:
 
 
 class AggregateMacrobenchmarkResultsTest(unittest.TestCase):
-    def test_complete_six_journey_set_is_aggregated_in_stable_order(self) -> None:
+    def test_complete_seven_journey_set_is_aggregated_in_stable_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             write_results(root, [benchmark(name) for name in reversed(JOURNEYS)])

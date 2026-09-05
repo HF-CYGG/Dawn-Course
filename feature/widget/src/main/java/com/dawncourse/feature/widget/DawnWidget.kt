@@ -1,7 +1,10 @@
 package com.dawncourse.feature.widget
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -42,7 +45,12 @@ import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.ColorFilter
 import com.dawncourse.feature.widget.R
+import com.dawncourse.core.data.repository.StartupSnapshotRuntime
+import com.dawncourse.core.data.repository.StartupSnapshotRuntimeState
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.feature.widget.policy.WidgetContentSource
+import com.dawncourse.feature.widget.policy.WidgetContentDecision
+import com.dawncourse.feature.widget.policy.WidgetContentSourcePolicy
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -55,6 +63,9 @@ import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.repository.OperationalDataGate
 import com.dawncourse.core.domain.repository.OperationalDataReadiness
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 
 // 莫兰迪/马卡龙色系 (Day) / 深色适配 (Night)
 private val WidgetCourseColors = listOf(
@@ -107,9 +118,17 @@ private object WidgetColors {
  * 2. 根据 Widget 尺寸自动切换布局 (FocusCourseItem, CourseListLayout)
  * 3. 过滤非当前周次或非当日的课程
  */
+internal data class WidgetTimelineResolution(
+    val timeline: WidgetTimeline,
+    val source: WidgetContentSource,
+)
+
 class DawnWidget : GlanceAppWidget() {
 
     companion object {
+        private const val TAG = "DawnWidget"
+        private const val SNAPSHOT_WAIT_MILLIS = 250L
+        private const val DATABASE_WAIT_MILLIS = 1_500L
         private val SMALL_SQUARE = DpSize(100.dp, 100.dp)       // 1x1
         private val HORIZONTAL_RECTANGLE = DpSize(240.dp, 70.dp) // 4x1, 3x1 (Height < 100dp)
         private val VERTICAL_RECTANGLE = DpSize(140.dp, 200.dp) // 2x3, 2x4 (Width ~140-160, Height > 200)
@@ -119,37 +138,16 @@ class DawnWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val appContext = context.applicationContext
-        val entryPoint = EntryPointAccessors.fromApplication(
-            appContext,
-            WidgetEntryPoint::class.java
-        )
-        val readiness = entryPoint.operationalDataGate().readiness()
-        if (readiness != OperationalDataReadiness.READY) {
-            provideContent {
-                GlanceTheme {
-                    TimetableWidgetContent(
-                        courses = emptyList(),
-                        today = LocalDate.now(),
-                        currentWeek = 0,
-                        sectionTimes = emptyList(),
-                        emptyMessage = if (readiness == OperationalDataReadiness.STARTING) {
-                            "正在准备课表数据"
-                        } else {
-                            "请打开应用恢复课表数据"
-                        },
-                        isBeforeSemesterStart = false
-                    )
-                }
-            }
-            return
-        }
-        val timeline = entryPoint.widgetTimelineBuilder().build()
-        if (timeline.nextUpdateMillis != null) {
-            WidgetSyncManager.scheduleNextCourseUpdate(context, timeline.nextUpdateMillis)
-        }
+        refreshTimeline(context)
+        // 若本请求在解析期间已被更高代际取代，绝不能把它自己的旧结果作为 composition fallback。
+        val initialTimeline = WidgetSyncManager.widgetTimelineState.value
+            ?: safeTimeline("正在准备课表数据")
 
         provideContent {
+            // Glance 1.1.x 的活跃 session 不会在 updateAll 时重跑 provideGlance 外层；
+            // 共享 StateFlow 让新 snapshot/live 结果进入现有 composition。
+            val latestTimeline by WidgetSyncManager.widgetTimelineState.collectAsState()
+            val timeline = latestTimeline ?: initialTimeline
             GlanceTheme {
                 TimetableWidgetContent(
                     courses = timeline.displayCourses,
@@ -163,6 +161,112 @@ class DawnWidget : GlanceAppWidget() {
         }
     }
 
+    /** 重新解析并发布内容；供活跃 Glance session、Worker 与 Receiver 共享。 */
+    internal suspend fun refreshTimeline(context: Context): WidgetTimelineResolution {
+        val appContext = context.applicationContext
+        // 在任何快照/Room 解析前登记代际，较晚开始的 live 更新必须压过较早的旧快照。
+        val nextUpdateRequest = WidgetSyncManager.registerNextCourseUpdateRequest()
+        val resolution = try {
+            val entryPoint = EntryPointAccessors.fromApplication(
+                appContext,
+                WidgetEntryPoint::class.java,
+            )
+            resolveTimeline(appContext, entryPoint)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            Log.w(TAG, "resolve Widget content failed", failure)
+            WidgetSyncManager.scheduleStartupRetry(appContext)
+            WidgetTimelineResolution(
+                timeline = safeTimeline("课表暂时不可用，请稍后重试"),
+                source = WidgetContentSource.STARTING_RETRY,
+            )
+        }
+        WidgetSyncManager.publishWidgetTimeline(nextUpdateRequest, resolution.timeline)
+        WidgetSyncManager.scheduleNextCourseUpdate(
+            context = appContext,
+            request = nextUpdateRequest,
+            triggerAtMillis = resolution.timeline.nextUpdateMillis,
+        )
+        return resolution
+    }
+
+    /** 不接触 Room/快照的 Recovery 安全投影，可同步发布为更高代际。 */
+    internal fun recoverySafeTimeline(): WidgetTimeline =
+        safeTimeline("请打开应用恢复课表数据")
+
+    /** 快照缺失时只在有限窗口内等待数据库，禁止 Widget 更新无限占住系统任务。 */
+    private suspend fun resolveTimeline(
+        context: Context,
+        entryPoint: WidgetEntryPoint,
+    ): WidgetTimelineResolution {
+        val operationalDataGate = entryPoint.operationalDataGate()
+        if (operationalDataGate.readiness() == OperationalDataReadiness.RECOVERY_REQUIRED) {
+            Log.w(TAG, "operational data gate is closed; rendering recovery-safe Widget")
+            return WidgetTimelineResolution(
+                safeTimeline("请打开应用恢复课表数据"),
+                WidgetContentSource.RECOVERY_SAFE_UI,
+            )
+        }
+
+        val snapshotState = entryPoint.startupSnapshotRuntime().awaitSettledSnapshot()
+        val snapshot = (snapshotState as? StartupSnapshotRuntimeState.Available)?.snapshot
+        val afterSnapshotReadiness = operationalDataGate.readiness()
+        val readiness = when {
+            afterSnapshotReadiness != OperationalDataReadiness.STARTING -> afterSnapshotReadiness
+            snapshot != null -> OperationalDataReadiness.STARTING
+            else -> operationalDataGate.awaitReadiness(DATABASE_WAIT_MILLIS)
+        }
+        val decision = WidgetContentSourcePolicy.decide(snapshot, readiness)
+        if (decision.requiresStartupRetry) {
+            // 快照首帧和准备态都需要有限次重试，数据库/Recovery 分支不应额外调度。
+            WidgetSyncManager.scheduleStartupRetry(context)
+        }
+        val timeline = when (decision) {
+            is WidgetContentDecision.StartupSnapshotContent -> {
+                StartupSnapshotWidgetTimelineMapper().map(decision.snapshot, System.currentTimeMillis())
+            }
+            WidgetContentDecision.Database -> entryPoint.widgetTimelineBuilder().build()
+            WidgetContentDecision.StartingRetry -> {
+                safeTimeline("正在准备课表数据")
+            }
+            WidgetContentDecision.RecoverySafeUi -> {
+                Log.w(TAG, "operational data gate closed while resolving Widget content")
+                safeTimeline("请打开应用恢复课表数据")
+            }
+        }
+        if (decision.source != WidgetContentSource.RECOVERY_SAFE_UI &&
+            operationalDataGate.readiness() == OperationalDataReadiness.RECOVERY_REQUIRED
+        ) {
+            Log.w(TAG, "operational data gate closed after Widget content resolution")
+            return WidgetTimelineResolution(
+                safeTimeline("请打开应用恢复课表数据"),
+                WidgetContentSource.RECOVERY_SAFE_UI,
+            )
+        }
+        return WidgetTimelineResolution(timeline, decision.source)
+    }
+
+    private suspend fun StartupSnapshotRuntime.awaitSettledSnapshot(): StartupSnapshotRuntimeState {
+        val current = state.value
+        if (current !is StartupSnapshotRuntimeState.Loading) return current
+        return withTimeoutOrNull(SNAPSHOT_WAIT_MILLIS) {
+            state.first { it !is StartupSnapshotRuntimeState.Loading }
+        } ?: state.value
+    }
+
+    private fun safeTimeline(message: String): WidgetTimeline = WidgetTimeline(
+        profileId = null,
+        displayCourses = emptyList(),
+        today = LocalDate.now(),
+        currentWeek = 0,
+        sectionTimes = emptyList(),
+        emptyMessage = message,
+        isBeforeSemesterStart = false,
+        nextUpdateMillis = null,
+        sourceCourseCount = 0,
+    )
+
     /**
      * Hilt EntryPoint 用于在 GlanceAppWidget 中注入依赖
      */
@@ -171,6 +275,7 @@ class DawnWidget : GlanceAppWidget() {
     interface WidgetEntryPoint {
         /** 在解析数据库依赖前读取无阻塞启动状态。 */
         fun operationalDataGate(): OperationalDataGate
+        fun startupSnapshotRuntime(): StartupSnapshotRuntime
         fun widgetTimelineBuilder(): WidgetTimelineBuilder
     }
 
@@ -652,8 +757,8 @@ class DawnWidget : GlanceAppWidget() {
         if (parts.size == 2) {
             val hour = parts[0].toIntOrNull()
             val minute = parts[1].toIntOrNull()
-            if (hour == 24 && minute != null && minute in 0..59) {
-                return LocalTime.of(23, 59)
+            if (hour == 24) {
+                return if (minute == 0) LocalTime.MAX else null
             }
         }
         val formatters = listOf(

@@ -1,11 +1,14 @@
 package com.dawncourse.feature.timetable.notification
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.dawncourse.core.domain.model.Course
+import com.dawncourse.core.domain.model.TriggerUriCodec
 import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.repository.CourseRepository
 import com.dawncourse.core.domain.repository.SettingsRepository
@@ -107,14 +110,14 @@ class DailySchedulerWorker @AssistedInject constructor(
             val settings = settingsRepository.get().settings.first()
             val now = Instant.now()
             val zoneId = ZoneId.systemDefault()
-            // 先捕获同一 Flow 发射的 Profile + Semester，再读取课程；完成后复核，
+            // 先在同一选择锁内捕获 Profile + Semester，再读取课程；完成后复核，
             // Profile 切换竞态时宁可交给下一次 reconcile，也不能注册旧课表的 Desired。
-            val activeContext = timetableProfileRepository.get().observeActiveContext().first()
+            val activeContext = timetableProfileRepository.get().getActiveContext()
             val semester = activeContext?.semester
             val courses = semester?.let { value ->
                 courseRepository.get().getCoursesBySemester(value.id).first()
             }.orEmpty()
-            val verifiedContext = timetableProfileRepository.get().observeActiveContext().first()
+            val verifiedContext = timetableProfileRepository.get().getActiveContext()
             if (activeContext?.profile?.id != verifiedContext?.profile?.id ||
                 activeContext?.semester?.id != verifiedContext?.semester?.id
             ) {
@@ -147,7 +150,7 @@ class DailySchedulerWorker @AssistedInject constructor(
                 generateTriggerHorizonUseCase(
                     profileId = profileId,
                     firstDate = snapshot.now.atZone(snapshot.zoneId).toLocalDate(),
-                    dayCount = TRIGGER_HORIZON_DAYS,
+                    dayCount = ScheduleHorizonPolicy.DAY_COUNT,
                     now = snapshot.now,
                     zoneId = snapshot.zoneId,
                     semesterStartDateMillis = semester.startDate,
@@ -171,9 +174,17 @@ class DailySchedulerWorker @AssistedInject constructor(
             markerPending = replayClaim.isPending,
         )
         var triggerReconciled = false
-        if (desired != null) {
+        val muteSessionRecords = try {
+            appMuteSessionStore.records()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            Log.w(TAG, "静音责任读取失败: ${failure.javaClass.simpleName}")
+            shouldRetry = true
+            null
+        }
+        if (desired != null && muteSessionRecords != null) {
             try {
-                val muteSessionRecords = appMuteSessionStore.records()
                 triggerReconciler.reconcile(
                     desired = desired,
                     forceReplay = forceReplay,
@@ -187,6 +198,27 @@ class DailySchedulerWorker @AssistedInject constructor(
                 throw cancellation
             } catch (failure: Exception) {
                 Log.w(TAG, "系统触发器对账失败: ${failure.javaClass.simpleName}")
+                shouldRetry = true
+            }
+        }
+
+        if (muteSessionRecords != null && snapshot.profileId != null && snapshot.semester != null) {
+            try {
+                MissedMuteCatchUpPolicy.find(
+                    enabled = snapshot.settings.enableAutoMute,
+                    profileId = snapshot.profileId,
+                    now = snapshot.now,
+                    zoneId = snapshot.zoneId,
+                    semesterStartDateMillis = snapshot.semester.startDate,
+                    semesterWeekCount = snapshot.semester.weekCount,
+                    courses = snapshot.courses,
+                    sectionTimes = snapshot.settings.sectionTimes,
+                    protectedUnmuteKeys = muteSessionRecords.mapTo(mutableSetOf()) { it.key },
+                ).forEach(::deliverMissedMute)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                Log.w(TAG, "进行中课程补静音失败: ${failure.javaClass.simpleName}")
                 shouldRetry = true
             }
         }
@@ -358,10 +390,18 @@ class DailySchedulerWorker @AssistedInject constructor(
     private fun formatTime(value: Instant, zoneId: ZoneId): String =
         value.atZone(zoneId).toLocalTime().format(STATUS_TIME_FORMATTER)
 
+    /** 显式广播复用 Receiver 的 Profile、课程窗口、设置与 v3 ownership 二次校验。 */
+    private fun deliverMissedMute(catchUp: MissedMuteCatchUp) {
+        val intent = Intent(applicationContext, SilenceReceiver::class.java).apply {
+            action = TriggerIntentPolicy.expectedAction(catchUp.muteKey.kind)
+            data = Uri.parse(TriggerUriCodec.encode(catchUp.muteKey))
+        }
+        applicationContext.sendBroadcast(intent)
+    }
+
     private companion object {
         /** 课程状态通知使用的固定 24 小时时间格式。 */
         val STATUS_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-        const val TRIGGER_HORIZON_DAYS = 2
         const val TAG = "DailySchedulerWorker"
     }
 

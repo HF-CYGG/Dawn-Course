@@ -4,8 +4,15 @@ import com.dawncourse.core.domain.model.AppSettings
 import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.SectionTime
 import com.dawncourse.core.domain.model.Semester
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -52,7 +59,7 @@ class ScheduleRevisionTest {
     }
 
     @Test
-    fun `课程名称与地点变化都会改变revision`() {
+    fun `Widget 展示字段变化都会改变 revision`() {
         val before = ScheduleRevision.create(settings, semester, listOf(course))
 
         assertNotEquals(
@@ -62,6 +69,14 @@ class ScheduleRevisionTest {
         assertNotEquals(
             before,
             ScheduleRevision.create(settings, semester, listOf(course.copy(location = "B202")))
+        )
+        assertNotEquals(
+            before,
+            ScheduleRevision.create(settings, semester, listOf(course.copy(teacher = "李老师")))
+        )
+        assertNotEquals(
+            before,
+            ScheduleRevision.create(settings, semester, listOf(course.copy(color = "#123456")))
         )
     }
 
@@ -116,5 +131,56 @@ class ScheduleRevisionTest {
         )
 
         assertNotEquals(first, second)
+    }
+
+    @Test
+    fun `调度版本的课程映射在默认计算调度器上执行`() = runBlocking {
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "schedule-revision-test")
+        }
+        val dispatcher = executor.asCoroutineDispatcher()
+        var upstreamThreadName: String? = null
+
+        try {
+            val result = scheduleRevisionFlow(
+                settings = flow {
+                    upstreamThreadName = Thread.currentThread().name
+                    emit(settings)
+                },
+                activeSemesterSchedule = flowOf(
+                    ActiveSemesterSchedule(
+                        profileId = semester.profileId,
+                        semester = semester,
+                        courses = listOf(course),
+                    )
+                ),
+                computationDispatcher = dispatcher,
+            ).first()
+
+            assertTrue(result is MainUiState.Success)
+            assertTrue(upstreamThreadName?.contains("schedule-revision-test") == true)
+        } finally {
+            dispatcher.close()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `根聚合上游 Exception 应收敛为安全错误状态而非冒泡`() = runBlocking {
+        val result = runCatching {
+            scheduleRevisionFlow(
+                settings = flow { throw IllegalStateException("settings storage unavailable") },
+                activeSemesterSchedule = flowOf(
+                    ActiveSemesterSchedule(
+                        profileId = semester.profileId,
+                        semester = semester,
+                        courses = listOf(course),
+                    )
+                ),
+            ).first()
+        }
+
+        assertTrue("上游异常不应从根 Flow 冒泡", result.isSuccess)
+        assertEquals("Error", result.getOrThrow()::class.simpleName)
     }
 }

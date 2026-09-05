@@ -1,10 +1,13 @@
 package com.dawncourse.feature.widget
 
+import android.annotation.SuppressLint
 import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import androidx.annotation.RequiresApi
 import com.dawncourse.feature.widget.worker.WidgetSyncManager
 import java.util.Calendar
 
@@ -24,7 +27,7 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
     companion object {
         // 2. 调度函数 (在 App 启动或 Widget 首次创建时调用)
         fun scheduleNextMidnightUpdate(context: Context) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
             
             // 计算下一个 00:01 的时间戳
             val calendar = Calendar.getInstance().apply {
@@ -42,22 +45,27 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            // 设置精准闹钟 (Doze 模式下也能唤醒)
-            // 注意：Android 12+ 需要 SCHEDULE_EXACT_ALARM 权限，这里假设已有或作为 best effort
-            try {
-                alarmManager.setExactAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            } catch (e: SecurityException) {
-                // 如果没有精确闹钟权限，则使用非精确闹钟作为 fallback
-                 alarmManager.setAndAllowWhileIdle(
-                    AlarmManager.RTC_WAKEUP,
-                    calendar.timeInMillis,
-                    pendingIntent
-                )
-            }
+            MidnightAlarmStrategy.schedule(
+                requiresExactAlarmCapability = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+                triggerAtMillis = calendar.timeInMillis,
+                operations = object : MidnightAlarmOperations {
+                    @RequiresApi(Build.VERSION_CODES.S)
+                    override fun canScheduleExactAlarm(): Boolean =
+                        alarmManager.canScheduleExactAlarms()
+
+                    override fun scheduleExact(triggerAtMillis: Long) {
+                        scheduleExact(alarmManager, triggerAtMillis, pendingIntent)
+                    }
+
+                    override fun scheduleInexact(triggerAtMillis: Long) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerAtMillis,
+                            pendingIntent,
+                        )
+                    }
+                },
+            )
         }
 
         /**
@@ -71,7 +79,7 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
          * - 减少无意义的后台唤醒与系统资源开销
          */
         fun cancelNextMidnightUpdate(context: Context) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
 
             // 使用与 scheduleNextMidnightUpdate 完全一致的 requestCode 与 intent，才能准确定位并取消同一条闹钟
             val intent = explicitIntent(context)
@@ -84,12 +92,12 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
 
             try {
                 alarmManager.cancel(pendingIntent)
-            } catch (_: Throwable) {
+            } catch (_: Exception) {
             } finally {
                 // 双保险：同时取消 PendingIntent 自身，避免被复用导致残留行为
                 try {
                     pendingIntent.cancel()
-                } catch (_: Throwable) {
+                } catch (_: Exception) {
                 }
             }
         }
@@ -100,5 +108,21 @@ class MidnightUpdateReceiver : BroadcastReceiver() {
          */
         private fun explicitIntent(context: Context): Intent =
             Intent(context, MidnightUpdateReceiver::class.java)
+
+        /**
+         * capability 策略已在调用前确认精确闹钟权限；suppression 仅覆盖该平台调用。
+         */
+        @SuppressLint("MissingPermission")
+        private fun scheduleExact(
+            alarmManager: AlarmManager,
+            triggerAtMillis: Long,
+            pendingIntent: PendingIntent,
+        ) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                triggerAtMillis,
+                pendingIntent,
+            )
+        }
     }
 }

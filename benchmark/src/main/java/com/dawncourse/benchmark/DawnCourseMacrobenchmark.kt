@@ -1,5 +1,6 @@
 package com.dawncourse.benchmark
 
+import androidx.benchmark.macro.BaselineProfileMode
 import androidx.benchmark.macro.CompilationMode
 import androidx.benchmark.macro.ExperimentalMetricApi
 import androidx.benchmark.macro.FrameTimingMetric
@@ -27,6 +28,22 @@ class DawnCourseMacrobenchmark {
         packageName = TARGET_PACKAGE,
         metrics = listOf(StartupTimingMetric(), FrameTimingMetric()),
         compilationMode = CompilationMode.None(),
+        startupMode = StartupMode.COLD,
+        iterations = ITERATIONS,
+        setupBlock = {
+            BenchmarkSeedClient.seedCourses()
+            pressHome()
+        }
+    ) {
+        startActivityAndWait()
+        waitForTimetable()
+    }
+
+    @Test
+    fun coldStart_toToday_withBaselineProfile() = benchmarkRule.measureRepeated(
+        packageName = TARGET_PACKAGE,
+        metrics = listOf(StartupTimingMetric(), FrameTimingMetric()),
+        compilationMode = CompilationMode.Partial(baselineProfileMode = BaselineProfileMode.Require),
         startupMode = StartupMode.COLD,
         iterations = ITERATIONS,
         setupBlock = {
@@ -148,7 +165,7 @@ class DawnCourseMacrobenchmark {
     }
 
     /**
-     * P1 再接入 Profile 安装/切换矩阵；P0 不伪造已启用或已禁用的 Profile 场景。
+     * P1 再接入 Profile 安装/切换矩阵；当前仅测量 Require 安装态与 None 对照态。
      */
     @Ignore("P1：待接入真实 Baseline Profile 切换与安装态验证后执行")
     @Test

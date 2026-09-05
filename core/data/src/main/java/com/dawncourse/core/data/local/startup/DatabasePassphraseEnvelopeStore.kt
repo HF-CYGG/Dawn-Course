@@ -7,32 +7,75 @@ import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** SQLCipher 口令的受控容器；调用方完成数据库打开后必须调用 [close] 清零。 */
-class SqlCipherPassphrase private constructor(
-    private var bytes: ByteArray?
+/**
+ * 明确区分 SQLCipher 旧派生口令与 raw-key literal 的受控密钥材料。
+ *
+ * SQLCipher 会把普通字节当作 passphrase 再执行 KDF；raw key 必须转换成
+ * `x'<64 hex>'` 字面量。所有数据库入口都接收本类型，禁止用裸 [ByteArray]
+ * 隐式表达密钥模式。
+ */
+sealed class DatabaseKeyMaterial private constructor(
+    private var keyBytes: ByteArray?
 ) : AutoCloseable {
+    /** 持久协议中的密钥模式。 */
+    enum class Mode {
+        LEGACY_PASSPHRASE,
+        RAW_KEY_LITERAL
+    }
+
+    /** 当前材料的明确模式。 */
+    abstract val mode: Mode
+
     /**
-     * 在受控作用域内提供口令字节。
+     * 在受控作用域内提供 SQLCipher API 需要的字节。
      *
-     * 调用方不得保存该数组引用，也不得写入日志；SQLCipher 打开完成后必须关闭本对象。
+     * Legacy 模式提供原口令；Raw 模式提供临时的 `x'<64 hex>'` ASCII 字面量。
+     * 调用方不得保存数组引用，也不得写入日志。
      */
-    fun <T> useBytes(block: (ByteArray) -> T): T {
-        val current = checkNotNull(bytes) { "SQLCipher 口令已清零" }
-        return block(current)
-    }
+    abstract fun <T> useSqlCipherBytes(block: (ByteArray) -> T): T
 
-    /** 尽力清空内存中的口令字节。 */
+    /** 仅供信封加解密使用原始 32 字节；不得传给 SQLCipher。 */
+    internal fun <T> useStoredBytes(block: (ByteArray) -> T): T = block(requireKeyBytes())
+
+    protected fun requireKeyBytes(): ByteArray = checkNotNull(keyBytes) { "SQLCipher 密钥材料已清零" }
+
+    /** 尽力清空内存中的密钥字节。 */
     override fun close() {
-        bytes?.fill(0)
-        bytes = null
+        keyBytes?.fill(0)
+        keyBytes = null
     }
 
-    internal companion object {
-        /** 为 JVM 测试构造独立副本，调用者输入不会被此对象持有。 */
-        fun fromBytes(bytes: ByteArray): SqlCipherPassphrase = SqlCipherPassphrase(bytes.copyOf())
+    /** v1 信封解封后的旧派生口令。 */
+    class LegacyPassphrase private constructor(bytes: ByteArray) : DatabaseKeyMaterial(bytes) {
+        override val mode: Mode = Mode.LEGACY_PASSPHRASE
 
-        /** 接管仅在本方法内新建或解封的数组所有权，避免额外保留敏感副本。 */
-        fun takeOwnership(bytes: ByteArray): SqlCipherPassphrase = SqlCipherPassphrase(bytes)
+        override fun <T> useSqlCipherBytes(block: (ByteArray) -> T): T = block(requireKeyBytes())
+
+        internal companion object {
+            fun fromBytes(bytes: ByteArray): LegacyPassphrase = LegacyPassphrase(bytes.copyOf())
+
+            fun takeOwnership(bytes: ByteArray): LegacyPassphrase = LegacyPassphrase(bytes)
+        }
+    }
+
+    /** v2 信封解封后的 32 字节 raw key。 */
+    class RawKeyLiteral private constructor(bytes: ByteArray) : DatabaseKeyMaterial(bytes) {
+        override val mode: Mode = Mode.RAW_KEY_LITERAL
+
+        override fun <T> useSqlCipherBytes(block: (ByteArray) -> T): T {
+            val literal = requireKeyBytes().toSqlCipherRawLiteral()
+            return try {
+                block(literal)
+            } finally {
+                literal.clearSensitiveBytes()
+            }
+        }
+
+        internal companion object {
+            fun fromBytes(bytes: ByteArray): RawKeyLiteral = RawKeyLiteral(bytes.copyOf())
+
+            fun takeOwnership(bytes: ByteArray): RawKeyLiteral = RawKeyLiteral(bytes)
+        }
     }
 }
 
@@ -40,7 +83,7 @@ class SqlCipherPassphrase private constructor(
 sealed interface ExistingPassphraseResult {
     /** 已成功通过 Keystore 解封的口令。 */
     data class Available(
-        val passphrase: SqlCipherPassphrase
+        val keyMaterial: DatabaseKeyMaterial
     ) : ExistingPassphraseResult
 
     /** 信封文件不存在。 */
@@ -56,7 +99,7 @@ sealed interface ExistingPassphraseResult {
 sealed interface NewPassphraseResult {
     /** 已创建并持久化的新口令。 */
     data class Available(
-        val passphrase: SqlCipherPassphrase
+        val keyMaterial: DatabaseKeyMaterial
     ) : NewPassphraseResult
 
     /** 创建前发现已有信封，调用方必须重新评估，不可覆盖。 */
@@ -159,7 +202,8 @@ class DatabaseKeyEnvelopeStore(
     private val randomByteSource: SecureRandomByteSource = JcaSecureRandomByteSource()
 ) : DatabasePassphraseEnvelopeStore {
     /** 只读取既有信封，不会调用 getOrCreate 或写入存储。 */
-    override fun loadExisting(): ExistingPassphraseResult {
+    override fun loadExisting(): ExistingPassphraseResult =
+        DawnStartupTrace.section(DawnStartupTrace.KEYSTORE_UNSEAL) {
         val serialized = try {
             atomicByteStore.readOrNull()
         } catch (_: Throwable) {
@@ -174,12 +218,16 @@ class DatabaseKeyEnvelopeStore(
                 ?: return ExistingPassphraseResult.Invalid(KeyEnvelopeFailureReason.KeyUnavailable)
             decrypted = decrypt(envelope, key)
                 ?: return ExistingPassphraseResult.Invalid(KeyEnvelopeFailureReason.UnwrapFailed)
-            if (decrypted.size != SQL_CIPHER_PASSPHRASE_BYTES) {
+            if (decrypted.size != SQL_CIPHER_KEY_BYTES) {
                 return ExistingPassphraseResult.Invalid(KeyEnvelopeFailureReason.UnwrapFailed)
             }
-            val passphrase = SqlCipherPassphrase.takeOwnership(decrypted)
+            val keyMaterial = when (envelope.formatVersion) {
+                LEGACY_ENVELOPE_FORMAT_VERSION -> DatabaseKeyMaterial.LegacyPassphrase.takeOwnership(decrypted)
+                RAW_KEY_ENVELOPE_FORMAT_VERSION -> DatabaseKeyMaterial.RawKeyLiteral.takeOwnership(decrypted)
+                else -> return ExistingPassphraseResult.Invalid(KeyEnvelopeFailureReason.InvalidEnvelopeFormat)
+            }
             decrypted = null
-            return ExistingPassphraseResult.Available(passphrase)
+            return ExistingPassphraseResult.Available(keyMaterial)
         } finally {
             serialized.clearSensitiveBytes()
             decrypted?.clearSensitiveBytes()
@@ -189,14 +237,32 @@ class DatabaseKeyEnvelopeStore(
     /** 创建第一个信封；任何已有字节均拒绝覆盖，即使其格式已损坏。 */
     override fun createNew(): NewPassphraseResult {
         return try {
-            atomicByteStore.withExclusiveLock(::createNewWhileLocked)
+            atomicByteStore.withExclusiveLock {
+                createNewWhileLocked(allowKeyProvisioning = true)
+            }
+        } catch (_: Throwable) {
+            NewPassphraseResult.Failed(KeyEnvelopeFailureReason.ProvisioningFailed)
+        }
+    }
+
+    /**
+     * rekey 专用 staged v2 信封：只能复用刚刚成功解封 v1 的既有 KEK。
+     *
+     * 此路径绝不调用 getOrCreate；别名临时不可用时立即失败，避免覆盖同名 KEK 后让
+     * legacy envelope/pre-image 永久失去解封能力。
+     */
+    internal fun createNewWithExistingKey(): NewPassphraseResult {
+        return try {
+            atomicByteStore.withExclusiveLock {
+                createNewWhileLocked(allowKeyProvisioning = false)
+            }
         } catch (_: Throwable) {
             NewPassphraseResult.Failed(KeyEnvelopeFailureReason.ProvisioningFailed)
         }
     }
 
     /** 在调用方持有跨进程文件锁时完成不可分割的首次信封创建。 */
-    private fun createNewWhileLocked(): NewPassphraseResult {
+    private fun createNewWhileLocked(allowKeyProvisioning: Boolean): NewPassphraseResult {
         val existing = try {
             atomicByteStore.readOrNull()
         } catch (_: Throwable) {
@@ -207,16 +273,21 @@ class DatabaseKeyEnvelopeStore(
             return NewPassphraseResult.ExistingEnvelope
         }
 
-        var passphrase: ByteArray? = null
+        var rawKey: ByteArray? = null
         var serialized: ByteArray? = null
         try {
-            passphrase = randomByteSource.nextBytes(SQL_CIPHER_PASSPHRASE_BYTES)
-            if (passphrase.size != SQL_CIPHER_PASSPHRASE_BYTES) {
+            rawKey = randomByteSource.nextBytes(SQL_CIPHER_KEY_BYTES)
+            if (rawKey.size != SQL_CIPHER_KEY_BYTES) {
                 return NewPassphraseResult.Failed(KeyEnvelopeFailureReason.ProvisioningFailed)
             }
-            val key = (keyProvider.getOrCreate(KEY_ALIAS) as? KeyEncryptionKeyResult.Available)?.key
+            val keyResult = if (allowKeyProvisioning) {
+                keyProvider.getOrCreate(KEY_ALIAS)
+            } else {
+                keyProvider.getExisting(KEY_ALIAS)
+            }
+            val key = (keyResult as? KeyEncryptionKeyResult.Available)?.key
                 ?: return NewPassphraseResult.Failed(KeyEnvelopeFailureReason.KeyUnavailable)
-            val envelope = encrypt(passphrase, key)
+            val envelope = encrypt(rawKey, key, RAW_KEY_ENVELOPE_FORMAT_VERSION)
                 ?: return NewPassphraseResult.Failed(KeyEnvelopeFailureReason.ProvisioningFailed)
             serialized = envelope.encode()
             try {
@@ -224,27 +295,27 @@ class DatabaseKeyEnvelopeStore(
             } catch (_: Throwable) {
                 return NewPassphraseResult.Failed(KeyEnvelopeFailureReason.AtomicWriteFailed)
             }
-            val managedPassphrase = SqlCipherPassphrase.takeOwnership(passphrase)
-            passphrase = null
-            return NewPassphraseResult.Available(managedPassphrase)
+            val material = DatabaseKeyMaterial.RawKeyLiteral.takeOwnership(rawKey)
+            rawKey = null
+            return NewPassphraseResult.Available(material)
         } catch (_: Throwable) {
             return NewPassphraseResult.Failed(KeyEnvelopeFailureReason.ProvisioningFailed)
         } finally {
-            passphrase?.clearSensitiveBytes()
+            rawKey?.clearSensitiveBytes()
             serialized?.clearSensitiveBytes()
         }
     }
 
     /** 使用固定 AAD 认证信封的用途与版本。 */
-    private fun encrypt(passphrase: ByteArray, key: SecretKey): DatabaseKeyEnvelope? = try {
+    private fun encrypt(rawKey: ByteArray, key: SecretKey, formatVersion: Int): DatabaseKeyEnvelope? = try {
         val cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key)
-        cipher.updateAAD(AAD)
+        cipher.updateAAD(aadFor(formatVersion))
         DatabaseKeyEnvelope(
-            formatVersion = ENVELOPE_FORMAT_VERSION,
+            formatVersion = formatVersion,
             keyAliasVersion = KEY_ALIAS_VERSION,
             initializationVector = cipher.iv,
-            ciphertext = cipher.doFinal(passphrase)
+            ciphertext = cipher.doFinal(rawKey)
         )
     } catch (_: Throwable) {
         null
@@ -258,7 +329,7 @@ class DatabaseKeyEnvelopeStore(
             key,
             GCMParameterSpec(GCM_AUTH_TAG_BITS, envelope.initializationVector)
         )
-        cipher.updateAAD(AAD)
+        cipher.updateAAD(aadFor(envelope.formatVersion))
         cipher.doFinal(envelope.ciphertext)
     } catch (_: Throwable) {
         null
@@ -266,7 +337,7 @@ class DatabaseKeyEnvelopeStore(
 
     private companion object {
         /** SQLCipher 随机口令长度。 */
-        const val SQL_CIPHER_PASSPHRASE_BYTES = 32
+        const val SQL_CIPHER_KEY_BYTES = 32
 
         /** AES-GCM 算法名称。 */
         const val AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding"
@@ -274,8 +345,11 @@ class DatabaseKeyEnvelopeStore(
         /** GCM 认证标签长度（位）。 */
         const val GCM_AUTH_TAG_BITS = 128
 
-        /** 信封格式版本。 */
-        const val ENVELOPE_FORMAT_VERSION = 1
+        /** 历史信封：32 字节作为 passphrase 进入 SQLCipher KDF。 */
+        const val LEGACY_ENVELOPE_FORMAT_VERSION = 1
+
+        /** 当前信封：32 字节编码为 SQLCipher raw-key literal。 */
+        const val RAW_KEY_ENVELOPE_FORMAT_VERSION = 2
 
         /** Keystore 别名版本，轮换时递增并兼容读取旧版本。 */
         const val KEY_ALIAS_VERSION = 1
@@ -283,8 +357,8 @@ class DatabaseKeyEnvelopeStore(
         /** 版本化 Keystore 别名。 */
         const val KEY_ALIAS = "com.dawncourse.database.key.v1"
 
-        /** 版本化附加认证数据，绑定信封的用途。 */
-        val AAD = "dawn-course/database-key-envelope/v1".toByteArray(Charsets.UTF_8)
+        fun aadFor(formatVersion: Int): ByteArray =
+            "dawn-course/database-key-envelope/v$formatVersion".toByteArray(Charsets.UTF_8)
     }
 }
 
@@ -324,7 +398,7 @@ private data class DatabaseKeyEnvelope(
             val keyAliasVersion = buffer.int
             val ivLength = buffer.int
             val ciphertextLength = buffer.int
-            if (formatVersion != CURRENT_FORMAT_VERSION || keyAliasVersion != CURRENT_KEY_ALIAS_VERSION) {
+            if (formatVersion !in SUPPORTED_FORMAT_VERSIONS || keyAliasVersion != CURRENT_KEY_ALIAS_VERSION) {
                 return null
             }
             if (ivLength != GCM_IV_BYTES || ciphertextLength != GCM_CIPHERTEXT_BYTES) return null
@@ -345,8 +419,8 @@ private data class DatabaseKeyEnvelope(
         /** 允许的最大信封长度，拒绝意外大文件。 */
         private const val MAX_ENVELOPE_BYTES = 1024
 
-        /** 当前信封格式版本。 */
-        private const val CURRENT_FORMAT_VERSION = 1
+        /** 可读取 v1 旧口令和 v2 raw key。 */
+        private val SUPPORTED_FORMAT_VERSIONS = setOf(1, 2)
 
         /** 当前 Keystore 别名版本。 */
         private const val CURRENT_KEY_ALIAS_VERSION = 1
@@ -362,4 +436,20 @@ private data class DatabaseKeyEnvelope(
 /** 尽力清空临时敏感数组；JVM 不保证不会存在运行时复制。 */
 private fun ByteArray.clearSensitiveBytes() {
     fill(0)
+}
+
+/** 把 32 字节 raw key 编码成 SQLCipher 认可的 67 字节 ASCII 字面量。 */
+private fun ByteArray.toSqlCipherRawLiteral(): ByteArray {
+    require(size == 32) { "SQLCipher raw key 必须为 32 字节" }
+    val digits = "0123456789abcdef".toByteArray(Charsets.US_ASCII)
+    return ByteArray(67).also { output ->
+        output[0] = 'x'.code.toByte()
+        output[1] = '\''.code.toByte()
+        forEachIndexed { index, value ->
+            val unsigned = value.toInt() and 0xff
+            output[2 + index * 2] = digits[unsigned ushr 4]
+            output[3 + index * 2] = digits[unsigned and 0x0f]
+        }
+        output[66] = '\''.code.toByte()
+    }
 }

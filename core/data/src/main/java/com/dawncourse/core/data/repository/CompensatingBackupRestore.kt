@@ -5,6 +5,7 @@ import com.dawncourse.core.domain.model.Course
 import com.dawncourse.core.domain.model.Semester
 import com.dawncourse.core.domain.model.SyncSourceBinding
 import com.dawncourse.core.domain.model.TimetableProfile
+import com.dawncourse.core.data.local.entity.SyncSourceBindingEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -19,7 +20,8 @@ internal data class BackupRestorePreImage(
     /** v6 起运行时唯一选择；旧 selectedSemesterId 仅用于 v1/v2 桥接兼容。 */
     val activeProfileId: Long?,
     val profiles: List<TimetableProfile> = emptyList(),
-    val sourceBindings: List<SyncSourceBinding> = emptyList(),
+    /** 回滚必须保留原始持久化值，不能因未知 Provider 在补偿前再次解析失败。 */
+    val sourceBindings: List<SyncSourceBindingEntity> = emptyList(),
 )
 
 /** 新状态未能应用，但旧状态已经完整补偿恢复。 */
@@ -53,6 +55,7 @@ internal object CompensatingBackupRestore {
             List<Course>,
             List<SyncSourceBinding>,
         ) -> Unit,
+        restorePreImageRoom: suspend (BackupRestorePreImage) -> Unit,
         replaceSettingsAndSelection: suspend (AppSettings, Long?, Long?) -> Unit,
         enterRecoveryRequired: suspend () -> BackupRecoveryActivation
     ): Result<Unit> {
@@ -80,12 +83,7 @@ internal object CompensatingBackupRestore {
             val compensationFailures = withContext(NonCancellable) {
                 buildList {
                     try {
-                        replaceRoom(
-                            preImage.profiles,
-                            preImage.semesters,
-                            preImage.courses,
-                            preImage.sourceBindings,
-                        )
+                        restorePreImageRoom(preImage)
                     } catch (error: Throwable) {
                         add(error)
                     }

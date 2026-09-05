@@ -30,7 +30,10 @@ import com.dawncourse.core.domain.repository.LocalBackupRepository
 import com.dawncourse.core.domain.repository.LlmParseRepository
 import com.dawncourse.core.domain.repository.ParseReportRepository
 import com.dawncourse.core.data.repository.SettingsRepositoryImpl
+import com.dawncourse.core.data.repository.StartupSnapshotRepositoryImpl
+import com.dawncourse.core.data.repository.StartupSnapshotRuntime
 import com.dawncourse.core.domain.repository.SettingsRepository
+import com.dawncourse.core.domain.repository.StartupSnapshotRepository
 import com.dawncourse.core.data.local.dao.SemesterDao
 import com.dawncourse.core.data.repository.SemesterRepositoryImpl
 import com.dawncourse.core.domain.repository.SemesterRepository
@@ -54,6 +57,7 @@ import androidx.datastore.preferences.core.Preferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.dawncourse.core.data.repository.settingsDataStore
 import javax.inject.Singleton
+import java.time.ZoneId
 
 /**
  * 数据库依赖注入模块 (Hilt Module)
@@ -68,7 +72,7 @@ object DatabaseModule {
     /**
      * 提供 [AppDatabase] 实例
      *
-     * @return Runtime 已完成 SQLCipher 与完整性校验的唯一 Room 实例
+     * @return Runtime 已完成 SQLCipher 首次连接与条件化同步校验的唯一 Room 实例
      */
     @Provides
     @Singleton
@@ -104,6 +108,22 @@ object DatabaseModule {
     fun provideSettingsDataStore(
         @ApplicationContext context: Context,
     ): DataStore<Preferences> = context.settingsDataStore
+
+    /**
+     * 启动快照 Runtime 只依赖 no-backup 加密文件、Keystore 与 active_profile_id DataStore。
+     * 这里刻意不接收 AppDatabase/DAO，保证 DawnApp 并行读快照时不会提前解析 Room。
+     */
+    @Provides
+    @Singleton
+    fun provideStartupSnapshotRuntime(
+        repository: StartupSnapshotRepository,
+        activeProfileSelectionStore: com.dawncourse.core.data.repository.ActiveProfileSelectionStore,
+    ): StartupSnapshotRuntime = StartupSnapshotRuntime(
+        repository = repository,
+        activeProfileSelectionStore = activeProfileSelectionStore,
+        nowEpochMillis = System::currentTimeMillis,
+        zoneId = { ZoneId.systemDefault().id },
+    )
 
     @Provides
     @Singleton
@@ -159,6 +179,13 @@ abstract class RepositoryModule {
     abstract fun bindSettingsRepository(
         impl: SettingsRepositoryImpl
     ): SettingsRepository
+
+    /** 绑定独立的启动快照文件仓库；它不依赖 Room。 */
+    @Binds
+    @Singleton
+    abstract fun bindStartupSnapshotRepository(
+        impl: StartupSnapshotRepositoryImpl,
+    ): StartupSnapshotRepository
 
     /**
      * 绑定 [SemesterRepository] 接口到 [SemesterRepositoryImpl] 实现

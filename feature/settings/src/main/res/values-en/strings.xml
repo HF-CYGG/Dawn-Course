@@ -67,5 +67,7 @@
     <string name="sync_credentials_saved">Credentials saved and the auto-update source was rebound</string>
     <string name="sync_credentials_cleared">Credentials and the auto-update binding were cleared</string>
     <string name="sync_credentials_rejected">The account change was not completed; the previous state was preserved</string>
+    <string name="settings_operation_failed">The setting was not saved. Please try again later.</string>
+    <string name="profile_management_load_failed">Timetable data is temporarily unavailable. Please try again later.</string>
     <string name="sync_credentials_inconsistent">The account and auto-update binding did not fully converge. Keep the app open and verify the timetable account state.</string>
 </resources>

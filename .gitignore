@@ -19,6 +19,7 @@ build/
 .gradle-codex/
 .gradle_home/
 .gradle-trae/
+/.gradle-codex/
 
 # Gradle files
 local.properties
