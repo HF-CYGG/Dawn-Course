@@ -538,6 +538,27 @@ class ProfileSelectionCoordinatorInstrumentedTest {
     }
 
     @Test
+    fun importCommitReportsOnlyRowsAcceptedByIgnore() = runBlocking {
+        val profileId = insertProfile("A", 0)
+        val semesterId = insertSemester(profileId)
+        database.timetableProfileDao().updateActiveSemesterId(profileId, semesterId)
+        activeStore.selectProfile(profileId)
+        val duplicate = course(semesterId, originId = 0L, modified = false).toDomain()
+
+        val result = importCommitRepository().commit(
+            ImportCommitRequest(
+                destination = ImportDestination.OverwriteSemester(profileId, semesterId),
+                semester = NewSemesterSpec("学期", 1L, 20),
+                courses = listOf(duplicate, duplicate),
+            ),
+        )
+
+        assertTrue(result is ImportCommitResult.Success)
+        assertEquals(1, (result as ImportCommitResult.Success).committedCourseCount)
+        assertEquals(1, database.courseDao().getCoursesBySemesterOnce(semesterId).size)
+    }
+
+    @Test
     fun importSelectionWriteThenThrowRestoresSelectionAndRoomPreimage() = runBlocking {
         val original = insertProfile("A", 0)
         activeStore.selectProfile(original)

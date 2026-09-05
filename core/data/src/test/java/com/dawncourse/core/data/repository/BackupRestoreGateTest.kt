@@ -81,18 +81,65 @@ class BackupRestoreGateTest {
     }
 
     @Test
-    fun duplicateCourseBusinessKeyFailsBeforeDestructiveRestore() = runBlocking {
+    fun legacyDuplicateCourseBusinessKeyKeepsLowestIdBeforeRestore() = runBlocking {
+        var committedCourses: List<Course>? = null
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                courses = listOf(
+                    course(id = 22L, semesterId = 1L, name = "重复课程"),
+                    course(id = 21L, semesterId = 1L, name = "重复课程"),
+                ),
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(21L), committedCourses?.map(Course::id))
+    }
+
+    @Test
+    fun v4DuplicateCourseBusinessKeyUsesSameDeterministicCleanup() = runBlocking {
+        val profile = TimetableProfile(
+            id = 7L,
+            uuid = "d8b80996-3127-4a4f-a348-ae9110805f56",
+            name = "主课表",
+            activeSemesterId = 11L,
+        )
+        var committedCourses: List<Course>? = null
+
+        val result = BackupRestoreGate.validateThenCommit(
+            validPayload(
+                version = 4,
+                semesters = listOf(semester(id = 11L, profileId = 7L)),
+                courses = listOf(
+                    course(id = 42L, semesterId = 11L, name = "重复课程"),
+                    course(id = 40L, semesterId = 11L, name = "重复课程"),
+                ),
+                selectedSemesterId = null,
+                profiles = listOf(profile),
+                sourceBindings = emptyList(),
+                activeProfileId = 7L,
+            ),
+        ) { validated ->
+            committedCourses = validated.courses
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(40L), committedCourses?.map(Course::id))
+    }
+
+    @Test
+    fun duplicateCourseIdsStillFailBeforeDestructiveRestore() = runBlocking {
         var commitCalled = false
         val result = BackupRestoreGate.validateThenCommit(
             validPayload(
                 courses = listOf(
-                    course(id = 21L, semesterId = 1L, name = "重复课程"),
-                    course(id = 22L, semesterId = 1L, name = "重复课程"),
+                    course(id = 21L, semesterId = 1L, name = "课程 A"),
+                    course(id = 21L, semesterId = 1L, name = "课程 B"),
                 ),
             ),
-        ) {
-            commitCalled = true
-        }
+        ) { commitCalled = true }
 
         assertTrue(result.isFailure)
         assertFalse(commitCalled)

@@ -138,25 +138,15 @@ internal object BackupPayloadValidator {
             course.id
         }
         require(courseIds.distinct().size == courseIds.size) { "备份包含重复课程 ID" }
-        val courseBusinessKeys = courses.map { course ->
-            CourseBusinessKey(
-                semesterId = course.semesterId,
-                name = course.name,
-                dayOfWeek = course.dayOfWeek,
-                startSection = course.startSection,
-                duration = course.duration,
-                startWeek = course.startWeek,
-                endWeek = course.endWeek,
-                weekType = course.weekType,
-                originId = course.originId,
-                isModified = course.isModified,
-            )
-        }
-        require(courseBusinessKeys.distinct().size == courseBusinessKeys.size) {
-            "备份包含重复课程业务键"
-        }
-        val courseById = courses.associateBy { it.id }
-        courses.asSequence()
+        // 旧版本允许同一业务键落入多行；恢复时必须与 v6→v7 迁移一致保留最小 ID，
+        // 否则携带历史重复数据的 v1-v4 备份会在唯一索引处被整体拒绝。
+        val deduplicatedCourses = courses
+            .groupBy { course -> course.backupBusinessKey() }
+            .values
+            .map { duplicates -> duplicates.minBy(Course::id) }
+            .sortedBy(Course::id)
+        val courseById = deduplicatedCourses.associateBy { it.id }
+        deduplicatedCourses.asSequence()
             .filter { course -> course.originId > 0L }
             .groupBy { course -> course.originId }
             .forEach { (originId, family) ->
@@ -213,7 +203,7 @@ internal object BackupPayloadValidator {
         return ValidatedBackupRestore(
             settings = settings,
             semesters = semesters,
-            courses = courses,
+            courses = deduplicatedCourses,
             selectedSemesterId = resolvedSelectedSemesterId,
             profiles = profiles,
             sourceBindings = sourceBindings,
@@ -248,6 +238,20 @@ internal object BackupPayloadValidator {
     ).toString()
 
     private const val LEGACY_PROFILE_ID = 1L
+
+    /** 生成与数据库 index_courses_dedupe 完全一致的备份课程业务键。 */
+    private fun Course.backupBusinessKey(): CourseBusinessKey = CourseBusinessKey(
+        semesterId = semesterId,
+        name = name,
+        dayOfWeek = dayOfWeek,
+        startSection = startSection,
+        duration = duration,
+        startWeek = startWeek,
+        endWeek = endWeek,
+        weekType = weekType,
+        originId = originId,
+        isModified = isModified,
+    )
 
     /** 必须与 CourseEntity.index_courses_dedupe 的列顺序保持同一业务语义。 */
     private data class CourseBusinessKey(

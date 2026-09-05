@@ -133,7 +133,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 }
                 ImportCommitResult.Success(
                     activeContext = mutation.context,
-                    committedCourseCount = request.courses.size,
+                    committedCourseCount = mutation.committedCourseCount,
                 )
             } catch (cancellation: CancellationException) {
                 throw cancellation
@@ -155,10 +155,11 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 require(request.expectedSourceBindingId == null) { "自动更新不能创建新学期" }
                 val profile = requireProfile(destination.profileId)
                 val insertedSemester = insertSemester(profile.id, request.semester)
-                insertCourses(request.courses, insertedSemester.id)
+                val committedCourseCount = insertCourses(request.courses, insertedSemester.id)
                 profileDao.updateActiveSemesterId(profile.id, insertedSemester.id)
                 DatabaseMutation(
                     context = context(profile.copy(activeSemesterId = insertedSemester.id), insertedSemester),
+                    committedCourseCount = committedCourseCount,
                     rollback = Rollback.NewSemester(
                         profileId = profile.id,
                         previousActiveSemesterId = profile.activeSemesterId,
@@ -173,10 +174,11 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 require(name.isNotEmpty()) { "新课表名称不能为空" }
                 val profile = insertProfile(name)
                 val semester = insertSemester(profile.id, request.semester)
-                insertCourses(request.courses, semester.id)
+                val committedCourseCount = insertCourses(request.courses, semester.id)
                 profileDao.updateActiveSemesterId(profile.id, semester.id)
                 DatabaseMutation(
                     context = context(profile.copy(activeSemesterId = semester.id), semester),
+                    committedCourseCount = committedCourseCount,
                     rollback = Rollback.NewProfile(profile.id),
                 )
             }
@@ -193,7 +195,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 )
                 courseDao.deleteCoursesBySemester(oldSemester.id)
                 semesterDao.updateSemester(updatedSemester)
-                insertCourses(request.courses, oldSemester.id)
+                val committedCourseCount = insertCourses(request.courses, oldSemester.id)
                 val activatesDestination = request.expectedSourceBindingId == null
                 if (activatesDestination) profileDao.updateActiveSemesterId(profile.id, oldSemester.id)
                 val resultingProfile = if (activatesDestination) {
@@ -208,6 +210,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 }
                 DatabaseMutation(
                     context = context(resultingProfile, resultingActiveSemester),
+                    committedCourseCount = committedCourseCount,
                     rollback = Rollback.OverwriteSemester(
                         profileId = profile.id,
                         previousActiveSemesterId = profile.activeSemesterId,
@@ -279,10 +282,13 @@ class ImportCommitRepositoryImpl @Inject constructor(
     }
 
     /** 忽略候选对象携带的旧 ID 与 semesterId，防止跨 Profile 写入。 */
-    private suspend fun insertCourses(courses: List<com.dawncourse.core.domain.model.Course>, semesterId: Long) {
-        if (courses.isEmpty()) return
+    private suspend fun insertCourses(
+        courses: List<com.dawncourse.core.domain.model.Course>,
+        semesterId: Long,
+    ): Int {
+        if (courses.isEmpty()) return 0
         // 外部导入路径：命中业务键唯一索引的重复行直接忽略，作为解析层去重之外的兜底。
-        courseDao.insertCoursesIgnoringDuplicates(
+        val insertedRowIds = courseDao.insertCoursesIgnoringDuplicates(
             courses.map { course ->
                 course.copy(
                     id = 0L,
@@ -293,6 +299,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
                 ).toEntity()
             },
         )
+        return countCommittedCourseRows(insertedRowIds)
     }
 
     private suspend fun requireProfile(profileId: Long): TimetableProfileEntity =
@@ -321,6 +328,7 @@ class ImportCommitRepositoryImpl @Inject constructor(
 
     private data class DatabaseMutation(
         val context: ActiveTimetableContext,
+        val committedCourseCount: Int,
         val rollback: Rollback,
     )
 
@@ -341,3 +349,6 @@ class ImportCommitRepositoryImpl @Inject constructor(
         ) : Rollback
     }
 }
+
+/** Room IGNORE 以 -1 表示未插入；提交结果只统计真实落库行。 */
+internal fun countCommittedCourseRows(rowIds: List<Long>): Int = rowIds.count { rowId -> rowId != -1L }
